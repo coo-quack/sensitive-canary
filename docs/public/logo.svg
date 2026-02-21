@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FCD34D"/>
+      <stop offset="100%" stop-color="#B45309"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="7" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+
+  <!-- Branch -->
+  <rect x="60" y="368" width="392" height="22" rx="11" fill="#78350F"/>
+
+  <!-- Tail feathers -->
+  <ellipse cx="122" cy="312" rx="60" ry="15" fill="white" opacity="0.9" transform="rotate(-42 122 312)"/>
+  <ellipse cx="110" cy="330" rx="62" ry="14" fill="white" opacity="0.85" transform="rotate(-22 110 330)"/>
+  <ellipse cx="114" cy="350" rx="57" ry="13" fill="white" opacity="0.8" transform="rotate(0 114 350)"/>
+
+  <!-- Body -->
+  <ellipse cx="268" cy="292" rx="148" ry="106" fill="white" filter="url(#shadow)"/>
+
+  <!-- Wing accent -->
+  <ellipse cx="258" cy="276" rx="97" ry="42" fill="#FDE68A" opacity="0.85" transform="rotate(-12 258 276)"/>
+
+  <!-- Head -->
+  <circle cx="380" cy="192" r="74" fill="white" filter="url(#shadow)"/>
+
+  <!-- Beak -->
+  <polygon points="446,185 484,200 446,215" fill="#F59E0B"/>
+
+  <!-- Eye -->
+  <circle cx="398" cy="178" r="14" fill="#1C1917"/>
+  <circle cx="403" cy="173" r="5" fill="white"/>
+
+  <!-- Left foot -->
+  <path d="M228 368 L206 394 M206 394 L180 406 M206 394 L206 422 M206 394 L230 406"
+        stroke="#78350F" stroke-width="9" stroke-linecap="round" fill="none"/>
+
+  <!-- Right foot -->
+  <path d="M312 368 L334 394 M334 394 L308 406 M334 394 L334 422 M334 394 L358 406"
+        stroke="#78350F" stroke-width="9" stroke-linecap="round" fill="none"/>
+</svg>

@@ -1,0 +1,26 @@
+{
+  "description": "Block secrets and PII before they reach the Anthropic API",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-strip-types \"${CLAUDE_PLUGIN_ROOT}/src/pre-tool-use-hook.ts\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-strip-types \"${CLAUDE_PLUGIN_ROOT}/src/user-prompt-submit-hook.ts\""
+          }
+        ]
+      }
+    ]
+  }
+}
