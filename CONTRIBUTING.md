@@ -21,6 +21,37 @@ npm run fix        # Lint + auto-fix with Biome
 npm run ci         # typecheck + lint + tests (full CI check)
 ```
 
+## Branching Strategy
+
+```
+main
+ ├── develop          ← integration branch
+ │    └── feature/*  ← new features and non-urgent fixes
+ └── hotfix/*        ← urgent production fixes
+```
+
+### Normal development
+
+```
+feature/your-feature  →  develop  →  main (release)
+```
+
+1. Branch from `develop`: `git checkout -b feature/your-feature develop`
+2. Open a PR targeting `develop`
+3. After review and approval, merge into `develop`
+4. When ready to release, open a PR from `develop` → `main`
+
+### Hotfix
+
+For urgent fixes that must go directly to production:
+
+1. Branch from `main`: `git checkout -b hotfix/fix-description main`
+2. Apply the fix and open a PR targeting `main`
+3. After review and approval, merge into `main`
+4. A backport PR to `develop` is created automatically by CI
+
+If the backport PR has conflicts, resolve them manually before merging.
+
 ## Adding a New Detection Rule
 
 1. Add the rule to `src/lib/rules.ts` — define `id`, `description`, `regex`, `category`, and optionally `entropyThreshold`
@@ -31,7 +62,7 @@ npm run ci         # typecheck + lint + tests (full CI check)
 
 ## Release Checklist
 
-When bumping a version, create a `release/vX.Y.Z` branch and open a PR with:
+When bumping a version, open a PR from `develop` → `main` with:
 
 1. Update `version` in `package.json` and `.claude-plugin/plugin.json`
 2. Update `CHANGELOG.md` with a new `## vX.Y.Z (YYYY-MM-DD)` section
@@ -39,10 +70,11 @@ When bumping a version, create a `release/vX.Y.Z` branch and open a PR with:
 3. Review `docs/rules.md` — add/update any changed rules
 4. Review `README.md` — update rule counts and tables if needed
 
+Merging into `main` automatically deploys the documentation site.
+
 ## Pull Requests
 
-- Branch from `main`
-- Follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
+- Follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `hotfix:`, etc.)
 - All tests must pass (`npm test`)
 - Lint must pass (`npm run lint`)
 - One approval required to merge
