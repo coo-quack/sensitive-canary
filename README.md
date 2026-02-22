@@ -4,6 +4,8 @@ A security tool that uses Claude Code's hook system to block secrets and PII fro
 
 No proxy server. No background process. Native Claude Code hooks only.
 
+📖 **[Documentation](https://coo-quack.github.io/sensitive-canary/)** — Installation guide, detection rules reference, and allow tag details.
+
 ---
 
 ## How It Works
