@@ -3,7 +3,7 @@
 [![CI](https://github.com/coo-quack/sensitive-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/coo-quack/sensitive-canary/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A security tool that uses Claude Code's hook system to block secrets and PII from being sent to the Anthropic API — whether they come from your prompts or from files Claude reads.
+A security plugin that prevents unintended data leaks from Claude Code. Automatically detects and blocks secrets and PII — in prompts, file reads, and command executions — before they are sent to the Anthropic API.
 
 No proxy server. No background process. Native Claude Code hooks only.
 
