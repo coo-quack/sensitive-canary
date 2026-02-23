@@ -32,6 +32,29 @@ function writeTranscript(userMessages: string[]): string {
   return p;
 }
 
+function writeTranscriptWithToolResults(
+  entries: Array<{ text: string } | { toolResult: string }>,
+): string {
+  const lines = entries.map((entry) => {
+    if ("text" in entry) {
+      return JSON.stringify({
+        type: "user",
+        message: { role: "user", content: entry.text },
+      });
+    }
+    return JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", content: entry.toolResult }],
+      },
+    });
+  });
+  const p = join(tmpDir, `transcript-${++transcriptSeq}.jsonl`);
+  writeFileSync(p, lines.join("\n"), "utf8");
+  return p;
+}
+
 function runHook(
   toolName: string,
   filePath: string,
@@ -506,6 +529,104 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
       "key=AKIAIOSFODNN7EXAMPLE\n",
     );
     const { exitCode } = runBashHook(`cat ${p}`, {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// ── allow tag consumed after first tool call ──────────────────────────────────
+
+describe("pre-tool-use-hook — allow tag single-use (consumed by first tool call)", () => {
+  it("[allow-all] works when no tool_result has been recorded yet", () => {
+    const transcript = writeTranscriptWithToolResults([
+      { text: "[allow-all] read the config file" },
+    ]);
+    const p = writeFixture(
+      "config-first-call.txt",
+      "key=AKIAIOSFODNN7EXAMPLE\n",
+    );
+    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
+    expect(exitCode).toBe(0);
+  });
+
+  it("[allow-all] is consumed after a tool_result — second call is blocked", () => {
+    const transcript = writeTranscriptWithToolResults([
+      { text: "[allow-all] read all the config files" },
+      { toolResult: "file contents from first read" },
+    ]);
+    const p = writeFixture(
+      "config-second-call.txt",
+      "key=AKIAIOSFODNN7EXAMPLE\n",
+    );
+    const { exitCode, decision } = runHook("Read", p, {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("[allow-secret] is consumed after a tool_result", () => {
+    const transcript = writeTranscriptWithToolResults([
+      { text: "[allow-secret] check these files" },
+      { toolResult: "first tool result" },
+    ]);
+    const p = writeFixture("secret-consumed.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
+    const { exitCode, decision } = runHook("Read", p, {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("[allow-pii] is consumed after a tool_result", () => {
+    const transcript = writeTranscriptWithToolResults([
+      { text: "[allow-pii] read the contacts" },
+      { toolResult: "previous tool output" },
+    ]);
+    const p = writeFixture("pii-consumed.txt", "email=user@example.com\n");
+    const { exitCode, decision } = runHook("Read", p, {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("blocks when latest real user message has no allow tag despite earlier allow", () => {
+    const transcript = writeTranscriptWithToolResults([
+      { text: "[allow-all] read everything" },
+      { toolResult: "some result" },
+      { text: "now do something else" },
+      { toolResult: "another result" },
+    ]);
+    const p = writeFixture(
+      "no-allow-after-new-msg.txt",
+      "key=AKIAIOSFODNN7EXAMPLE\n",
+    );
+    const { exitCode, decision } = runHook("Read", p, {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("[allow-all] consumed for Bash after tool_result", () => {
+    const transcript = writeTranscriptWithToolResults([
+      { text: "[allow-all] run the commands" },
+      { toolResult: "result of first command" },
+    ]);
+    const { exitCode, decision } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("[allow-all] works for Bash when no tool_result yet", () => {
+    const transcript = writeTranscriptWithToolResults([
+      { text: "[allow-all] run the command" },
+    ]);
+    const { exitCode } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(0);
