@@ -15,7 +15,7 @@ Run the following two commands inside a Claude Code session:
 **2. Install the plugin**
 
 ```
-/plugin install sensitive-canary@sensitive-canary
+/plugin install sensitive-canary@coo-quack
 ```
 
 Claude Code will download the plugin and register the hooks automatically. No restart is required.
