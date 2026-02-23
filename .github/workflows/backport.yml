@@ -67,7 +67,7 @@ jobs:
             --base develop \
             --head ${{ steps.branch.outputs.branch }})
 
-          # Auto-merge if no conflicts — wait for CI to pass
+          # Merge if no conflicts — use --auto if required checks exist, else merge directly
           if [ "${{ steps.branch.outputs.conflict }}" != "true" ]; then
-            gh pr merge "$PR_URL" --auto --merge
+            gh pr merge "$PR_URL" --auto --merge || gh pr merge "$PR_URL" --merge
           fi
