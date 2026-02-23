@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.2 (2026-02-23)
+
+### Fixes
+
+- **Scoped package name** — renamed npm package from `sensitive-canary` to `@coo-quack/sensitive-canary`
+- **Homepage** — added `homepage` field pointing to the documentation site
+
+---
+
 ## v0.4.1 (2026-02-23)
 
 ### Improvements
