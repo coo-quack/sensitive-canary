@@ -77,7 +77,7 @@ Add the following to `~/.claude/settings.json`:
 }
 ```
 
-> **Note:** `node_modules` 内の TypeScript は `--experimental-strip-types` で実行できないため、`npx tsx` を使用します。No build step is required.
+> **Note:** Node.js does not support `--experimental-strip-types` for files inside `node_modules`, so `npx tsx` is used instead. No build step is required.
 
 ## Manual Setup (git clone)
 
