@@ -64,13 +64,18 @@ If the backport PR has conflicts, resolve them manually before merging.
 
 When bumping a version, open a PR from `develop` → `main` with:
 
-1. Update `version` in `package.json` and `.claude-plugin/plugin.json`
+1. Update `version` in `package.json` and `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
 2. Update `CHANGELOG.md` with a new `## vX.Y.Z (YYYY-MM-DD)` section
    - `docs/changelog.md` is a symlink to `CHANGELOG.md` — do not edit it separately
+   - This content is automatically used as the GitHub Release notes by `release.yml`
 3. Review `docs/rules.md` — add/update any changed rules
 4. Review `README.md` — update rule counts and tables if needed
 
-Merging into `main` automatically deploys the documentation site.
+After merging into `main`, `release.yml` automatically:
+- Creates a git tag `vX.Y.Z`
+- Creates a GitHub Release with notes extracted from `CHANGELOG.md`
+
+The documentation site is also redeployed automatically on merge to `main`.
 
 ## Pull Requests
 
