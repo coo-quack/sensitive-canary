@@ -73,6 +73,53 @@ export function parseMaskTags(messages: Message[]): Set<string> {
 }
 
 /**
+ * Resolve effective allow and mask tags based on first-occurrence priority.
+ *
+ * For each category dimension ("secret", "pii"), the first matching tag wins.
+ * [allow-all] / [mask-all] resolve both dimensions at once.
+ *
+ * Examples:
+ *   "[allow-secret] [mask-secret] ..." → secret: allow (allow came first)
+ *   "[mask-secret] [allow-secret] ..." → secret: mask  (mask came first)
+ *   "[allow-all]   [mask-secret] ..." → secret: allow, pii: allow
+ *   "[allow-secret] [mask-pii]   ..." → secret: allow, pii: mask
+ */
+export function resolveTagPriority(prompt: string): {
+  effectiveAllow: Set<string>;
+  effectiveMask: Set<string>;
+} {
+  const pattern = /\[(allow|mask)-(all|secret|pii)\]/gi;
+  const effectiveAllow = new Set<string>();
+  const effectiveMask = new Set<string>();
+  const resolved = new Set<string>(); // dimensions already decided: "secret", "pii"
+
+  for (const [, kind, tag] of prompt.matchAll(pattern)) {
+    if (!kind || !tag) continue;
+    const dimensions: string[] =
+      tag.toLowerCase() === "all" ? ["secret", "pii"] : [tag.toLowerCase()];
+
+    for (const dim of dimensions) {
+      if (!resolved.has(dim)) {
+        resolved.add(dim);
+        if (kind.toLowerCase() === "allow") {
+          effectiveAllow.add(dim);
+        } else {
+          effectiveMask.add(dim);
+        }
+      }
+    }
+  }
+
+  // Add "all" to effectiveAllow when both dimensions are allowed
+  // (applyAllowTags checks allowTags.has("all") for a fast-path return)
+  if (effectiveAllow.has("secret") && effectiveAllow.has("pii")) {
+    effectiveAllow.add("all");
+  }
+
+  return { effectiveAllow, effectiveMask };
+}
+
+/**
  * Filter findings by allow tags.
  */
 export function applyAllowTags(

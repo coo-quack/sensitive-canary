@@ -6,6 +6,7 @@ import {
   findingsToLines,
   parseAllowTags,
   parseMaskTags,
+  resolveTagPriority,
   scanMessages,
 } from "../inspector.ts";
 
@@ -101,6 +102,94 @@ describe("parseMaskTags", () => {
       { role: "user", content: "[allow-all] send anyway" },
     ]);
     expect(tags.size).toBe(0);
+  });
+});
+
+// ── resolveTagPriority ────────────────────────────────────────────────────────
+
+describe("resolveTagPriority", () => {
+  it("returns empty sets when no tags are present", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority("hello world");
+    expect(effectiveAllow.size).toBe(0);
+    expect(effectiveMask.size).toBe(0);
+  });
+
+  it("[allow-secret] → effectiveAllow has 'secret'", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[allow-secret] key=abc",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveMask.has("secret")).toBe(false);
+  });
+
+  it("[mask-secret] → effectiveMask has 'secret'", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[mask-secret] key=abc",
+    );
+    expect(effectiveMask.has("secret")).toBe(true);
+    expect(effectiveAllow.has("secret")).toBe(false);
+  });
+
+  it("[allow-secret] before [mask-secret] → allow wins for secret", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[allow-secret] [mask-secret] key=abc",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveMask.has("secret")).toBe(false);
+  });
+
+  it("[mask-secret] before [allow-secret] → mask wins for secret", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[mask-secret] [allow-secret] key=abc",
+    );
+    expect(effectiveMask.has("secret")).toBe(true);
+    expect(effectiveAllow.has("secret")).toBe(false);
+  });
+
+  it("[allow-all] before [mask-secret] → allow wins for both dimensions", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[allow-all] [mask-secret] key=abc",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(true);
+    expect(effectiveMask.size).toBe(0);
+  });
+
+  it("[mask-all] before [allow-secret] → mask wins for both dimensions", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[mask-all] [allow-secret] key=abc",
+    );
+    expect(effectiveMask.has("secret")).toBe(true);
+    expect(effectiveMask.has("pii")).toBe(true);
+    expect(effectiveAllow.size).toBe(0);
+  });
+
+  it("[allow-secret] [mask-pii] → allow for secret, mask for pii", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[allow-secret] [mask-pii] ...",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveMask.has("pii")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(false);
+    expect(effectiveMask.has("secret")).toBe(false);
+  });
+
+  it("[allow-all] → effectiveAllow has 'all'", () => {
+    const { effectiveAllow } = resolveTagPriority("[allow-all] key=abc");
+    expect(effectiveAllow.has("all")).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    const { effectiveAllow } = resolveTagPriority("[Allow-Secret] key=abc");
+    expect(effectiveAllow.has("secret")).toBe(true);
+  });
+
+  it("unknown tag suffix is ignored", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[allow-unknown] key=abc",
+    );
+    expect(effectiveAllow.size).toBe(0);
+    expect(effectiveMask.size).toBe(0);
   });
 });
 
