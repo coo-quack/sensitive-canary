@@ -1,26 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * Claude Code PreToolUse hook.
- *
- * For Read tool calls and file-reading Bash commands (cat, head, tail, …):
- *   - Block if the file is a .env file
- *   - Block if the file contents contain secrets or PII
- *
- * For Bash tool calls in general:
- *   - Block if the command string itself contains secrets or PII
- *     (e.g. `echo AKIAIOSFODNN7EXAMPLE`)
- *   - Block if a referenced env var ($TOKEN) contains secrets or PII
- *
- * Allow tags: if the user's most recent prompt includes an [allow-xxx] tag,
- * the corresponding block is bypassed.  The hook reads allow tags from the
- * session transcript supplied via transcript_path.
- *
- * Exit codes:
- *   0 - allow
- *   2 - block
- */
-
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -42,6 +21,10 @@ interface HookInput {
   };
 }
 
+interface TranscriptLine {
+  message?: Message;
+}
+
 // ── Transcript ────────────────────────────────────────────────────────────────
 
 // Load allow tags from the Claude Code session transcript.
@@ -56,25 +39,15 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
     return new Set();
   }
 
-  // Collect all user messages, then take only the last one
   let lastUserMessage: Message | null = null;
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-      const msg = parsed["message"] as Record<string, unknown> | undefined;
-      if (
-        msg &&
-        // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-        typeof msg["role"] === "string" &&
-        // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-        msg["role"] === "user" &&
-        // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-        msg["content"] !== undefined
-      ) {
-        lastUserMessage = msg as unknown as Message;
+      const parsed = JSON.parse(trimmed) as TranscriptLine;
+      const msg = parsed.message;
+      if (msg?.role === "user" && msg.content !== undefined) {
+        lastUserMessage = msg;
       }
     } catch {
       // skip malformed lines
@@ -87,7 +60,6 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
 
 // ── Bash helpers ──────────────────────────────────────────────────────────────
 
-// Bash commands that read file contents
 const FILE_READ_COMMANDS = new Set([
   "cat",
   "head",
@@ -98,29 +70,19 @@ const FILE_READ_COMMANDS = new Set([
   "nl",
 ]);
 
-/**
- * Extract environment variable names referenced in a shell command string.
- * Matches $VAR and ${VAR} but ignores special variables like $?, $!, $$, $0.
- */
 function extractEnvVarNames(command: string): string[] {
   const names = new Set<string>();
   const re = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
-  let match: RegExpExecArray | null;
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = re.exec(command)) !== null) {
-    names.add((match[1] ?? match[2]) as string);
+  for (const match of command.matchAll(re)) {
+    const name = match[1] ?? match[2];
+    if (name) names.add(name);
   }
   return [...names];
 }
 
-/**
- * Extract file paths targeted by file-reading commands in a shell command string.
- * Handles compound commands split by |, ;, &&, ||.
- */
 function extractFilePathsFromCommand(command: string): string[] {
   const paths: string[] = [];
-  // Split compound commands into segments
-  const segments = command.split(/\s*(?:[|;&]|&&|\|\|)\s*/);
+  const segments = command.split(/\s*[|;&]+\s*/);
 
   for (const seg of segments) {
     const tokens = seg.trim().split(/\s+/).filter(Boolean);
@@ -137,9 +99,7 @@ function extractFilePathsFromCommand(command: string): string[] {
       }
       const tok = tokens[i];
       if (!tok) continue;
-      // Skip flags
       if (tok.startsWith("-")) continue;
-      // Skip redirect operators and their target
       if (tok === ">" || tok === ">>" || tok === "<") {
         skipNext = true;
         continue;
@@ -181,11 +141,14 @@ function buildAllowHints(
   lines.push("  [allow-all]     — bypass all sensitive-canary checks");
   lines.push("");
 
-  const example = hasSecret
-    ? "allow-secret"
-    : hasPii
-      ? "allow-pii"
-      : "allow-all";
+  const example =
+    hasSecret && hasPii
+      ? "allow-all"
+      : hasSecret
+        ? "allow-secret"
+        : hasPii
+          ? "allow-pii"
+          : "allow-all";
   lines.push(`Example: "[${example}] ${exampleContext}"`);
 
   return lines;
@@ -196,7 +159,6 @@ function block(
   detectionLines: string[],
   allowHints: string[],
 ): never {
-  // Human-readable message for the terminal
   const terminalMessage = [
     "",
     `${randomBird()} sensitive-canary: blocked — ${source}`,
@@ -205,7 +167,6 @@ function block(
     "",
   ].join("\n");
 
-  // Write directly to /dev/tty so the user always sees the message
   try {
     const fd = fs.openSync("/dev/tty", "w");
     fs.writeSync(fd, terminalMessage);
@@ -214,7 +175,6 @@ function block(
     process.stderr.write(terminalMessage);
   }
 
-  // Structured reason for Claude — explain the block and how to allow it
   const reasonLines = [
     `sensitive-canary blocked: ${source}`,
     "",
@@ -238,8 +198,6 @@ function block(
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
-  // 1. .env / .env.* — blocked unconditionally by name.
-  //    Any allow tag ([allow-secret], [allow-pii], [allow-all]) bypasses this.
   if (isBlockedEnvFile(filePath)) {
     if (allowTags.size > 0) return;
     block(
@@ -251,18 +209,14 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     );
   }
 
-  // 2. Read and scan contents for secrets/PII.
   let content: string;
   try {
     content = fs.readFileSync(filePath, "utf8");
   } catch {
-    return; // file unreadable — let the tool handle the error
+    return;
   }
 
-  const findings = applyAllowTags(
-    dedupeFindings(scan(content, filePath)),
-    allowTags,
-  );
+  const findings = applyAllowTags(dedupeFindings(scan(content)), allowTags);
   if (findings.length === 0) return;
 
   block(
@@ -292,29 +246,22 @@ process.stdin.on("end", () => {
   const tool = data.tool_name ?? "";
   const input = data.tool_input ?? {};
 
-  // Load allow tags from the session transcript (empty set if unavailable)
   const allowTags = data.transcript_path
     ? loadAllowTagsFromTranscript(data.transcript_path)
     : new Set<string>();
 
-  // ── Read tool ──────────────────────────────────────────────────────────────
   if (tool === "Read") {
     scanFile(input.file_path ?? "", allowTags);
     process.exit(0);
   }
 
-  // ── Bash tool ──────────────────────────────────────────────────────────────
   if (tool === "Bash") {
     const command = input.command ?? "";
 
-    // 1. Expand env vars referenced in the command and scan their values
     for (const varName of extractEnvVarNames(command)) {
       const value = process.env[varName];
       if (!value) continue;
-      const findings = applyAllowTags(
-        dedupeFindings(scan(value, `$${varName}`)),
-        allowTags,
-      );
+      const findings = applyAllowTags(dedupeFindings(scan(value)), allowTags);
       if (findings.length === 0) continue;
       block(
         `bash command: ${command.slice(0, 80)}`,
@@ -327,9 +274,8 @@ process.stdin.on("end", () => {
       );
     }
 
-    // 2. Scan the command string itself (catches inline literals like `echo AKIA…`)
     const cmdFindings = applyAllowTags(
-      dedupeFindings(scan(command, "(bash command)")),
+      dedupeFindings(scan(command)),
       allowTags,
     );
     if (cmdFindings.length > 0) {
@@ -344,7 +290,6 @@ process.stdin.on("end", () => {
       );
     }
 
-    // 3. For file-reading commands, scan each referenced file
     for (const fp of extractFilePathsFromCommand(command)) {
       scanFile(fp, allowTags);
     }
@@ -352,6 +297,5 @@ process.stdin.on("end", () => {
     process.exit(0);
   }
 
-  // All other tools — allow
   process.exit(0);
 });

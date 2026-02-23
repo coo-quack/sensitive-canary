@@ -18,7 +18,8 @@ function parseHookOutput(stdout: string) {
   }
 }
 
-/** Write a fake Claude Code session transcript and return its path. */
+let transcriptSeq = 0;
+
 function writeTranscript(userMessages: string[]): string {
   const lines = userMessages.map((content) =>
     JSON.stringify({
@@ -26,7 +27,7 @@ function writeTranscript(userMessages: string[]): string {
       message: { role: "user", content },
     }),
   );
-  const p = join(tmpDir, `transcript-${Date.now()}.jsonl`);
+  const p = join(tmpDir, `transcript-${++transcriptSeq}.jsonl`);
   writeFileSync(p, lines.join("\n"), "utf8");
   return p;
 }
@@ -204,7 +205,6 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
       "A=AKIAIOSFODNN7EXAMPLE\nB=AKIAIOSFODNN7EXAMPLE\n",
     );
     const { reason } = runHook("Read", p);
-    // "[Secret] ... (aws-access-key):" should appear exactly once
     const count = (reason ?? "").split("[Secret]").length - 1;
     expect(count).toBe(1);
   });
@@ -279,54 +279,20 @@ describe("pre-tool-use-hook — Bash tool (command string)", () => {
 // ── Bash tool — file-reading command blocking ─────────────────────────────────
 
 describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
-  it("blocks cat on a file with secrets", () => {
+  it.each([
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "bat",
+    "nl",
+  ])("blocks %s on a file with secrets", (cmd) => {
     const p = writeFixture(
-      "creds-cat.txt",
-      "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n",
+      `creds-${cmd}.txt`,
+      "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n",
     );
-    const { exitCode, decision } = runBashHook(`cat ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks head on a file with secrets", () => {
-    const p = writeFixture("creds-head.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`head -5 ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks tail on a file with secrets", () => {
-    const p = writeFixture("creds-tail.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`tail -10 ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks nl on a file with secrets", () => {
-    const p = writeFixture("creds-nl.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`nl ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks bat on a file with secrets", () => {
-    const p = writeFixture("creds-bat.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`bat ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks less on a file with secrets", () => {
-    const p = writeFixture("creds-less.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`less ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks more on a file with secrets", () => {
-    const p = writeFixture("creds-more.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`more ${p}`);
+    const { exitCode, decision } = runBashHook(`${cmd} ${p}`);
     expect(exitCode).toBe(2);
     expect(decision).toBe("block");
   });
@@ -439,8 +405,8 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
 
   it("[allow-all] in the latest message is respected even with older messages", () => {
     const transcript = writeTranscript([
-      "please help me with the config", // older message — no tag
-      "[allow-all] yes read everything", // latest message — has tag
+      "please help me with the config",
+      "[allow-all] yes read everything",
     ]);
     const p = writeFixture(
       "config-allow-latest.txt",
@@ -452,8 +418,8 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
 
   it("old [allow-all] in a past message is NOT respected when latest message has no tag", () => {
     const transcript = writeTranscript([
-      "[allow-all] read this file", // older message — has tag
-      "now do something else", // latest message — no tag
+      "[allow-all] read this file",
+      "now do something else",
     ]);
     const p = writeFixture(
       "config-old-allow.txt",
