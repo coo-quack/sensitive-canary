@@ -62,9 +62,9 @@ jobs:
           gh pr create \
             --title "chore: backport #${{ github.event.pull_request.number }} to develop" \
             --body "$(cat <<'EOF'
-Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to \`develop\`.
+          Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to `develop`.
 
-If this PR contains conflicts, resolve them before merging.
+          If this PR contains conflicts, resolve them before merging.
           EOF
           )" \
             --base develop \
