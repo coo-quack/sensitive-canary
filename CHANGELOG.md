@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.3.1 (2026-02-23)
+
+### Fixes
+
+- **Bird emoji in PreToolUse block reason** — the bird emoji now appears in the block message shown by Claude Code, not only in the terminal output
+
+---
+
+## v0.3.0 (2026-02-23)
 
 ### Features
 

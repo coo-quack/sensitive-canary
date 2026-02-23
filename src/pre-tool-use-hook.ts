@@ -175,8 +175,9 @@ function block(
     process.stderr.write(terminalMessage);
   }
 
+  const bird = randomBird();
   const reasonLines = [
-    `sensitive-canary blocked: ${source}`,
+    `${bird} sensitive-canary blocked: ${source}`,
     "",
     ...detectionLines,
     "",
