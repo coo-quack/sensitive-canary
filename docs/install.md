@@ -124,7 +124,24 @@ When a block is triggered, sensitive-canary tells Claude which tag to suggest. Y
 [allow-secret] Please review my .env.example file at /path/to/.env.example
 ```
 
-Allow tags apply only to the message they appear in. They do not persist across turns.
+Allow tags apply only to the message they appear in. They do not persist across turns. Tags are case-insensitive.
+
+## Mask Tags
+
+`[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content before it is sent.
+
+If you use a mask tag, sensitive-canary will display an explanation and suggest the appropriate allow tag instead:
+
+```
+🐦 sensitive-canary: prompt masking is not supported
+
+  Prompt content cannot be rewritten by hooks in Claude Code.
+  To send anyway, use an allow tag instead:
+    [allow-secret]  — allow secrets
+    [allow-all]     — bypass all sensitive-canary checks
+```
+
+To proceed, replace the mask tag with the corresponding allow tag, or redact the value manually before sending.
 
 ## Uninstall
 
