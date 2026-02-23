@@ -19,6 +19,8 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if git ls-remote --tags origin "v$VERSION" | grep -q "v$VERSION"; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif npm view "sensitive-canary@$VERSION" version 2>/dev/null; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
@@ -29,17 +31,35 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+      - run: npm run ci
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create git tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           VERSION="v${{ needs.check.outputs.version }}"
-          git tag "$VERSION"
-          git push origin "$VERSION"
+          if git ls-remote --tags origin "$VERSION" | grep -q "$VERSION"; then
+            echo "Tag $VERSION already exists, skipping"
+          else
+            git tag "$VERSION"
+            git push origin "$VERSION"
+          fi
 
       - name: Extract changelog
         id: changelog
