@@ -38,18 +38,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Cherry-pick commits from the merged PR
-          COMMITS=$(git log origin/develop..origin/main --reverse --format="%H")
-          for COMMIT in $COMMITS; do
-            git cherry-pick $COMMIT || {
-              echo "Cherry-pick conflict on $COMMIT — leaving for manual resolution"
-              git cherry-pick --abort 2>/dev/null || true
-              git checkout origin/develop -- .
-              git add -A
-              git commit -m "chore: partial backport (conflicts — resolve manually)"
-              break
-            }
-          done
+          # Merge main into the backport branch
+          if git merge origin/main --no-edit; then
+            echo "conflict=false" >> $GITHUB_OUTPUT
+          else
+            echo "conflict=true" >> $GITHUB_OUTPUT
+            git merge --abort
+            git merge origin/main --no-edit -s ours
+          fi
 
           git push origin $BRANCH
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
@@ -59,13 +55,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ "${{ steps.branch.outputs.conflict }}" = "true" ]; then
+            BODY="Automated backport of #${{ github.event.pull_request.number }} to \`develop\`.\n\n⚠️ **Merge conflict detected.** The branch was created with \`-s ours\` to allow PR creation. You must manually resolve the conflicts before merging."
+          else
+            BODY="Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to \`develop\`."
+          fi
+
           gh pr create \
             --title "chore: backport #${{ github.event.pull_request.number }} to develop" \
-            --body "$(cat <<'EOF'
-          Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to `develop`.
-
-          If this PR contains conflicts, resolve them before merging.
-          EOF
-          )" \
+            --body "$(echo -e "$BODY")" \
             --base develop \
             --head ${{ steps.branch.outputs.branch }}
