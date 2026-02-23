@@ -71,7 +71,7 @@ Install in two commands from inside a Claude Code session:
 **2. Install the plugin**
 
 ```
-/plugin install sensitive-canary@sensitive-canary
+/plugin install sensitive-canary@coo-quack
 ```
 
 Done. The hooks are enabled automatically.
