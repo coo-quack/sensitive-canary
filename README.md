@@ -57,18 +57,73 @@ Install in two commands from inside a Claude Code session:
 
 Done. The hooks are enabled automatically.
 
+> **Keeping up to date:** Third-party marketplaces have auto-update disabled by default. To receive automatic updates, run `/plugin` → **Marketplaces** tab → select the marketplace → **Enable auto-update**. You can also update manually from the same tab. See [Discover and install plugins](https://docs.anthropic.com/en/docs/claude-code/discover-plugins) for details.
+
 <details>
-<summary>Manual setup</summary>
+<summary>npm install</summary>
 
-If you prefer to configure hooks without the plugin system:
+Install locally via npm and configure hooks manually:
 
-**1. Clone the repository**
+```bash
+npm install -g sensitive-canary
+```
+
+Update to the latest version:
+
+```bash
+npm update -g sensitive-canary
+```
+
+Then add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx $(npm root -g)/sensitive-canary/src/user-prompt-submit-hook.ts"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx $(npm root -g)/sensitive-canary/src/pre-tool-use-hook.ts"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+> **Note:** `node_modules` 内の TypeScript は `--experimental-strip-types` で実行できないため、`npx tsx` を使用します。
+
+</details>
+
+<details>
+<summary>Manual setup (git clone)</summary>
+
+Clone the repository and configure hooks manually:
 
 ```bash
 git clone https://github.com/coo-quack/sensitive-canary.git ~/sensitive-canary
 ```
 
-**2. Register the hooks in `~/.claude/settings.json`**
+Update to the latest version:
+
+```bash
+cd ~/sensitive-canary && git pull
+```
+
+Then add to `~/.claude/settings.json`:
 
 ```json
 {

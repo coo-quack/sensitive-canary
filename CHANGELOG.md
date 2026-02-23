@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1 (2026-02-23)
+
+### Improvements
+
+- **npm publish automation** — release workflow now publishes to npm with provenance on merge to main
+- **Package metadata** — added `repository` and `files` fields, removed `private: true` for npm publishing
+- **npm install docs** — added `npm install -g` setup instructions to README and docs
+
+---
+
 ## v0.4.0 (2026-02-23)
 
 ### Features
