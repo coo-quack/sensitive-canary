@@ -74,7 +74,7 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 |---------|-------------|-------|
 | `pii-email` | Email Address | Standard RFC 5322-like pattern |
 | `pii-credit-card` | Credit Card Number | Visa, Mastercard, Amex, Discover; validated with Luhn algorithm |
-| `pii-ssn` | US Social Security Number | Excludes invalid prefixes (000, 666, 9xx) |
+| `pii-ssn` | US Social Security Number | Excludes invalid area (000, 666, 9xx), group (00), and serial (0000) numbers |
 | `pii-phone-us` | US Phone Number | With or without country code |
 | `pii-phone-jp` | Japanese Phone Number | Area code + subscriber number format |
 | `pii-postal-jp` | Japanese Postal Code | Requires `〒` prefix to avoid false positives |
@@ -94,7 +94,33 @@ All blocks can be bypassed by including an allow tag in your prompt. Allow tags 
 | `[allow-pii]` | All findings with `category: pii` |
 | `[allow-all]` | All findings regardless of category |
 
-**Note on mask tags:** `[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but not supported for prompts — Claude Code does not allow hooks to rewrite prompt content. If you use a mask tag, sensitive-canary will explain this and suggest the appropriate allow tag instead.
+Tags are **case-insensitive**: `[ALLOW-SECRET]` and `[Allow-Secret]` work the same as `[allow-secret]`.
+
+### Mask Tags
+
+`[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content before it is sent to the API.
+
+If you include a mask tag in your prompt, sensitive-canary shows an explanation and suggests the equivalent allow tag instead. The prompt is not sent until you resend with an allow tag or redact the value manually.
+
+| Mask tag | Suggested allow tag |
+|----------|---------------------|
+| `[mask-secret]` | `[allow-secret]` |
+| `[mask-pii]` | `[allow-pii]` |
+| `[mask-all]` | `[allow-all]` |
+
+### Allow + Mask Tag Priority
+
+When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag that appears first wins** for each category dimension (`secret`, `pii`).
+
+| Example | secret | pii |
+|---------|--------|-----|
+| `[allow-secret] [mask-secret] …` | allow | — |
+| `[mask-secret] [allow-secret] …` | mask (unsupported) | — |
+| `[allow-all] [mask-secret] …` | allow | allow |
+| `[mask-all] [allow-secret] …` | mask (unsupported) | mask (unsupported) |
+| `[allow-secret] [mask-pii] …` | allow | mask (unsupported) |
+
+`[allow-all]` and `[mask-all]` resolve both dimensions at once.
 
 ## .env File Blocking
 
@@ -102,7 +128,7 @@ All blocks can be bypassed by including an allow tag in your prompt. Allow tags 
 
 Files that end in `.env` but don't start with a dot (e.g. `production.env`) are handled by content scanning rather than name-based blocking.
 
-Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) bypasses the name-based block.
+Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) bypasses the name-based block. When an allow tag is present, the file is passed through **immediately without scanning** its contents.
 
 ## Bash Command Scanning
 
@@ -110,4 +136,4 @@ When Claude uses the `Bash` tool, sensitive-canary checks three things:
 
 1. **Environment variables** — any `$VAR` or `${VAR}` references in the command are looked up in the current environment; if their values contain secrets or PII, the command is blocked.
 2. **Command string** — the raw command is scanned (catches inline secrets like `echo AKIAIOSFODNN7EXAMPLE`).
-3. **File-reading commands** — for `cat`, `head`, `tail`, `less`, `more`, `bat`, `nl`, the target files are read and scanned before the command runs.
+3. **File-reading commands** — for `cat`, `head`, `tail`, `less`, `more`, `bat`, `nl`, the target files are read and scanned before the command runs. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently.

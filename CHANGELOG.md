@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- **Allow + Mask tag priority** — when both `[allow-*]` and `[mask-*]` tags appear in the same prompt, the first occurrence wins per category (`secret`, `pii`). `[allow-all]` and `[mask-all]` resolve both dimensions at once.
+
+### Fixes
+
+- Plugin install command corrected to `sensitive-canary@coo-quack`
+
+---
+
 ## v0.1.0 (2026-02-22)
 
 Initial release.

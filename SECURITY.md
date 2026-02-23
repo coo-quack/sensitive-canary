@@ -36,6 +36,7 @@ sensitive-canary is a best-effort guard, not a guaranteed security boundary:
 - **Entropy filtering** — Generic rules use Shannon entropy thresholds to reduce false positives. Low-entropy values that happen to be real secrets may pass through.
 - **Allow tags** — Any block can be bypassed by the user with `[allow-secret]`, `[allow-pii]`, or `[allow-all]`. This is intentional — the tool assists, not enforces.
 - **Hook execution** — If the Node.js process fails to start (e.g., wrong Node version), the hook exits 0 (pass) to avoid blocking Claude entirely.
+- **Parse errors** — If the hook input cannot be parsed (malformed JSON from Claude Code), the hook exits 0 (pass) as a fail-open fallback.
 - **Scope** — Only `Read` and `Bash` tool calls are intercepted. Other tool types are not scanned.
 
 ---

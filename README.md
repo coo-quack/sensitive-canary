@@ -192,9 +192,44 @@ To intentionally bypass a block, include the appropriate tag in your **current p
 **Important notes:**
 
 - Tags are read from the **current user message only**. Tags in previous messages are ignored — there is no risk of an accidental persistent bypass.
+- Tags are case-insensitive: `[ALLOW-SECRET]` and `[Allow-Secret]` are equivalent to `[allow-secret]`.
 - `[allow-secret]` does not bypass PII blocks (and vice versa).
 - The name-based block on `.env`/`.env.*` files can be bypassed by any of the three allow tags.
 - Allow tags filter the scan results — the scan itself always runs. The `.env`/`.env.*` name block is the only exception: when an allow tag is present, the file is passed through immediately without scanning.
+
+## Mask tags
+
+`[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content, so masking before sending is not possible.
+
+If you include a mask tag, sensitive-canary will explain this and list what was detected:
+
+```
+> [mask-secret] My key is AKIAIOSFODNN7EXAMPLE, can you review this?
+
+🐦 sensitive-canary: prompt masking is not supported
+
+  [mask-secret] cannot mask prompt content.
+  The following sensitive data was detected:
+
+  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+
+  Please choose one of the following:
+
+  1. Manually redact the values above and resubmit
+  2. To send as-is, add an allow tag to your prompt:
+       [allow-secret]  — allow secrets
+       [allow-all]     — bypass all sensitive-canary checks
+```
+
+### Allow + Mask tag priority
+
+When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag that appears first wins** for each category (`secret`, `pii`). `[allow-all]` and `[mask-all]` resolve both categories at once.
+
+| Example | Result |
+|---------|--------|
+| `[allow-secret] [mask-secret] …` | secret allowed |
+| `[mask-secret] [allow-secret] …` | masking not supported error |
+| `[allow-secret] [mask-pii] …` | secret allowed, PII mask error |
 
 ---
 
