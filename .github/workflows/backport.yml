@@ -61,8 +61,13 @@ jobs:
             BODY="Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to \`develop\`."
           fi
 
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "chore: backport #${{ github.event.pull_request.number }} to develop" \
             --body "$(echo -e "$BODY")" \
             --base develop \
-            --head ${{ steps.branch.outputs.branch }}
+            --head ${{ steps.branch.outputs.branch }})
+
+          # Auto-merge if no conflicts — wait for CI to pass
+          if [ "${{ steps.branch.outputs.conflict }}" != "true" ]; then
+            gh pr merge "$PR_URL" --auto --merge
+          fi
