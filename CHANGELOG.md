@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.3 (2026-02-23)
+
+### Documentation
+
+- Replace Japanese text with English in npm install instructions
+
+---
+
 ## v0.4.2 (2026-02-23)
 
 ### Fixes
