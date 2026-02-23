@@ -218,7 +218,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     block(
       filePath,
       [
-        "⚠️  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
+        `${randomBird()}  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.`,
       ],
       buildAllowHints(`please read ${filePath}`, [], true),
     );
@@ -237,7 +237,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   block(
     filePath,
     [
-      "⚠️  Blocked: file contains sensitive data",
+      `${randomBird()}  Blocked: file contains sensitive data`,
       "",
       ...findingsToLines(findings),
     ],
@@ -281,7 +281,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          `⚠️  Blocked: environment variable $${varName} contains sensitive data`,
+          `${randomBird()}  Blocked: environment variable $${varName} contains sensitive data`,
           "",
           ...findingsToLines(findings),
         ],
@@ -297,7 +297,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          "⚠️  Blocked: bash command contains sensitive data",
+          `${randomBird()}  Blocked: bash command contains sensitive data`,
           "",
           ...findingsToLines(cmdFindings),
         ],
