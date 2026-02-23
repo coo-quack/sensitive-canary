@@ -130,18 +130,25 @@ Allow tags apply only to the message they appear in. They do not persist across 
 
 `[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content before it is sent.
 
-If you use a mask tag, sensitive-canary will display an explanation and suggest the appropriate allow tag instead:
+If you use a mask tag, sensitive-canary will display an explanation and list what was detected:
 
 ```
 🐦 sensitive-canary: prompt masking is not supported
 
-  Prompt content cannot be rewritten by hooks in Claude Code.
-  To send anyway, use an allow tag instead:
-    [allow-secret]  — allow secrets
-    [allow-all]     — bypass all sensitive-canary checks
+  [mask-secret] cannot mask prompt content.
+  The following sensitive data was detected:
+
+  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+
+  Please choose one of the following:
+
+  1. Manually redact the values above and resubmit
+  2. To send as-is, add an allow tag to your prompt:
+       [allow-secret]  — allow secrets
+       [allow-all]     — bypass all sensitive-canary checks
 ```
 
-To proceed, replace the mask tag with the corresponding allow tag, or redact the value manually before sending.
+To proceed, either manually redact the sensitive value and resubmit, or replace the mask tag with the corresponding allow tag.
 
 ## Uninstall
 

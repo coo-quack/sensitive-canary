@@ -201,20 +201,25 @@ To intentionally bypass a block, include the appropriate tag in your **current p
 
 `[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content, so masking before sending is not possible.
 
-If you include a mask tag, sensitive-canary will explain this and suggest the appropriate allow tag:
+If you include a mask tag, sensitive-canary will explain this and list what was detected:
 
 ```
 > [mask-secret] My key is AKIAIOSFODNN7EXAMPLE, can you review this?
 
 🐦 sensitive-canary: prompt masking is not supported
 
-  Prompt content cannot be rewritten by hooks in Claude Code.
-  To send anyway, use an allow tag instead:
-    [allow-secret]  — allow secrets
-    [allow-all]     — bypass all sensitive-canary checks
-```
+  [mask-secret] cannot mask prompt content.
+  The following sensitive data was detected:
 
-To proceed, replace `[mask-secret]` with `[allow-secret]` in your prompt, or redact the value manually before sending.
+  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+
+  Please choose one of the following:
+
+  1. Manually redact the values above and resubmit
+  2. To send as-is, add an allow tag to your prompt:
+       [allow-secret]  — allow secrets
+       [allow-all]     — bypass all sensitive-canary checks
+```
 
 ### Allow + Mask tag priority
 
