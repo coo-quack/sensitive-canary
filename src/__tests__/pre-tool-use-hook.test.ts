@@ -143,6 +143,12 @@ describe("pre-tool-use-hook — .env/.env.* unconditional block", () => {
     expect(reason).toContain("[allow-pii]");
     expect(reason).toContain("[allow-all]");
   });
+
+  it("includes a bird emoji in .env block reason", () => {
+    const p = writeFixture(".env.bird", "KEY=value");
+    const { reason } = runHook("Read", p);
+    expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
+  });
 });
 
 // ── clean file ────────────────────────────────────────────────────────────────
@@ -190,6 +196,12 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
     const { reason } = runHook("Read", p);
     expect(reason).toContain("[allow-secret]");
     expect(reason).toContain("[allow-all]");
+  });
+
+  it("includes a bird emoji in the reason", () => {
+    const p = writeFixture("bird.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
+    const { reason } = runHook("Read", p);
+    expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
   });
 
   it("includes [allow-pii] and [allow-all] hints in reason for PII", () => {
@@ -273,6 +285,11 @@ describe("pre-tool-use-hook — Bash tool (command string)", () => {
   it("includes aws-access-key in reason for inline secret", () => {
     const { reason } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
     expect(reason).toContain("aws-access-key");
+  });
+
+  it("includes a bird emoji in the reason for Bash block", () => {
+    const { reason } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
+    expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
   });
 });
 
