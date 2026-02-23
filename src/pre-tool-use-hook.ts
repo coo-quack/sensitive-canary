@@ -27,10 +27,18 @@ interface TranscriptLine {
 
 // ── Transcript ────────────────────────────────────────────────────────────────
 
+// Returns true when the message contains at least one text content block
+// (or is a plain string). Tool-result-only messages are not real user input.
+function hasTextContent(msg: Message): boolean {
+  if (typeof msg.content === "string") return true;
+  return msg.content.some((b) => b.type === "text");
+}
+
 // Load allow tags from the Claude Code session transcript.
 // Transcript format (JSONL): { "type": "user"|"assistant", "message": { role, content }, … }
-// Only the most recent user message is consulted — older messages would make allow tags
-// persist unintentionally across turns.
+// Only the most recent user *text* message is consulted, and only if no tool_result
+// entries have been recorded after it. This means allow tags are consumed by the first
+// tool call — subsequent tool calls in the same AI turn will be blocked.
 function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
   let raw: string;
   try {
@@ -40,6 +48,7 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
   }
 
   let lastUserMessage: Message | null = null;
+  let toolResultAfterLastText = false;
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -47,14 +56,19 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
       const parsed = JSON.parse(trimmed) as TranscriptLine;
       const msg = parsed.message;
       if (msg?.role === "user" && msg.content !== undefined) {
-        lastUserMessage = msg;
+        if (hasTextContent(msg)) {
+          lastUserMessage = msg;
+          toolResultAfterLastText = false;
+        } else {
+          toolResultAfterLastText = true;
+        }
       }
     } catch {
       // skip malformed lines
     }
   }
 
-  if (!lastUserMessage) return new Set();
+  if (!lastUserMessage || toolResultAfterLastText) return new Set();
   return parseAllowTags([lastUserMessage]);
 }
 
@@ -204,7 +218,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     block(
       filePath,
       [
-        "⚠️  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
+        `${randomBird()}  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.`,
       ],
       buildAllowHints(`please read ${filePath}`, [], true),
     );
@@ -223,7 +237,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   block(
     filePath,
     [
-      "⚠️  Blocked: file contains sensitive data",
+      `${randomBird()}  Blocked: file contains sensitive data`,
       "",
       ...findingsToLines(findings),
     ],
@@ -267,7 +281,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          `⚠️  Blocked: environment variable $${varName} contains sensitive data`,
+          `${randomBird()}  Blocked: environment variable $${varName} contains sensitive data`,
           "",
           ...findingsToLines(findings),
         ],
@@ -283,7 +297,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          "⚠️  Blocked: bash command contains sensitive data",
+          `${randomBird()}  Blocked: bash command contains sensitive data`,
           "",
           ...findingsToLines(cmdFindings),
         ],

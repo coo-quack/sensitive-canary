@@ -111,7 +111,7 @@ Prompts containing secrets or PII are blocked before being sent.
 ```
 > My AWS key is AKIAIOSFODNN7EXAMPLE. Can you review this code?
 
-⚠️  sensitive-canary: sensitive data detected — blocked
+🐤  sensitive-canary: sensitive data detected — blocked
 
   [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
 
@@ -135,7 +135,7 @@ To allow it through, add the suggested tag:
 
 📄 sensitive-canary: blocked — /path/to/.env
 
-⚠️  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.
+🐤  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.
 
 To allow this, the user must add an allow tag to their next prompt:
   [allow-secret]  — allow secrets
@@ -154,7 +154,7 @@ Non-`.env` files are also blocked if their contents contain secrets or PII.
 
 📄 sensitive-canary: blocked — /path/to/config.yaml
 
-⚠️  Blocked: file contains sensitive data
+🐤  Blocked: file contains sensitive data
 
   [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
 ```
