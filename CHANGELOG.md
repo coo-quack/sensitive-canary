@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.0 (2026-02-23)
+
+### Features
+
+- **Allow tags are now single-use** — allow tags are consumed after the first tool call, preventing unintended persistent bypass across multiple tool uses in the same turn
+
+### Fixes
+
+- **Random bird emoji in block messages** — PreToolUse block messages now use `randomBird()` instead of a hardcoded emoji, matching the existing behavior in other messages
+
+### Docs
+
+- **README restructured** — new section order: Why → Quick Start → What Happens → Detection Rules → How It Works → Allow Tags
+- **Docs site headings unified** — "How It Works" → "What Happens", "What Gets Detected" → "Detection Rules" for consistency with README
+
+---
+
 ## v0.3.1 (2026-02-23)
 
 ### Fixes
