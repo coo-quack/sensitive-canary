@@ -4,7 +4,6 @@ export interface Finding {
   category: "secret" | "pii";
   matchRedacted: string;
   secretValue: string;
-  location: string;
 }
 
 interface Rule {
@@ -17,10 +16,7 @@ interface Rule {
   category: "secret" | "pii";
 }
 
-/**
- * Luhn algorithm checksum validation for credit card numbers.
- * Returns true if the number (digits only) passes the Luhn check.
- */
+// Luhn algorithm checksum validation. Returns true if the number (digits only) passes.
 export function luhn(str: string): boolean {
   const digits = str.replace(/\D/g, "");
   let sum = 0;
@@ -37,9 +33,7 @@ export function luhn(str: string): boolean {
   return sum % 10 === 0;
 }
 
-/**
- * Shannon entropy of a string (bits per character, 0-8 scale)
- */
+// Shannon entropy (bits per character, 0–8 scale)
 export function entropy(str: string): number {
   if (str.length === 0) return 0;
   const freq: Record<string, number> = {};
@@ -53,18 +47,11 @@ export function entropy(str: string): number {
   return h;
 }
 
-/**
- * Secret and PII detection rules.
- * Patterns are sourced from gitleaks and TruffleHog detector definitions.
- *
- * Each rule:
- *   id               - unique identifier
- *   description      - human-readable name
- *   regex            - RegExp (with /g flag) to match against text
- *   secretGroup      - capture group index containing the secret (default: 0 = full match)
- *   entropyThreshold - minimum entropy required (optional, to reduce false positives)
- *   category         - 'secret' | 'pii'
- */
+// Patterns sourced from gitleaks and TruffleHog detector definitions.
+// Each rule:
+//   regex        — must have /g flag
+//   secretGroup  — capture group containing the secret (default: 0 = full match)
+//   entropyThreshold — skip match if entropy(secretValue) is below threshold
 
 // ── Secrets ───────────────────────────────────────────────────────────────────
 
@@ -285,27 +272,17 @@ const PII_RULES: Rule[] = [
 
 export const RULES: Rule[] = [...SECRET_RULES, ...PII_RULES];
 
-/**
- * Redact a matched string: show first 4 + **** + last 4 chars
- */
+// Show first 4 + **** + last 4 chars; fully mask strings of 8 chars or fewer
 export function redact(str: string): string {
-  if (!str) return "****";
   if (str.length <= 8) return "****";
   return `${str.slice(0, 4)}****${str.slice(-4)}`;
 }
 
-/**
- * Scan text with all rules, return array of findings.
- */
-export function scan(text: string, location: string): Finding[] {
+export function scan(text: string): Finding[] {
   const findings: Finding[] = [];
 
   for (const rule of RULES) {
-    rule.regex.lastIndex = 0;
-
-    let match: RegExpExecArray | null;
-    // biome-ignore lint/suspicious/noAssignInExpressions: standard regex exec loop pattern
-    while ((match = rule.regex.exec(text)) !== null) {
+    for (const match of text.matchAll(rule.regex)) {
       const secretValue =
         rule.secretGroup != null ? match[rule.secretGroup] : match[0];
 
@@ -323,7 +300,6 @@ export function scan(text: string, location: string): Finding[] {
         category: rule.category,
         matchRedacted: redact(secretValue),
         secretValue,
-        location,
       });
     }
   }

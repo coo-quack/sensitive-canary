@@ -5,9 +5,7 @@ import {
   dedupeFindings,
   findingsToLines,
   parseAllowTags,
-  parseMaskTags,
   resolveTagPriority,
-  scanMessages,
 } from "../inspector.ts";
 
 // ── parseAllowTags ────────────────────────────────────────────────────────────
@@ -57,51 +55,6 @@ describe("parseAllowTags", () => {
       },
     ]);
     expect(tags.has("secret")).toBe(true);
-  });
-});
-
-// ── parseMaskTags ─────────────────────────────────────────────────────────────
-
-describe("parseMaskTags", () => {
-  it("returns empty set when no tags are present", () => {
-    const tags = parseMaskTags([{ role: "user", content: "hello" }]);
-    expect(tags.size).toBe(0);
-  });
-
-  it("parses [mask-all]", () => {
-    const tags = parseMaskTags([{ role: "user", content: "[mask-all] send" }]);
-    expect(tags.has("all")).toBe(true);
-  });
-
-  it("parses [mask-secret]", () => {
-    const tags = parseMaskTags([
-      { role: "user", content: "[mask-secret] here is my key" },
-    ]);
-    expect(tags.has("secret")).toBe(true);
-  });
-
-  it("parses [mask-pii]", () => {
-    const tags = parseMaskTags([{ role: "user", content: "[mask-pii] ok" }]);
-    expect(tags.has("pii")).toBe(true);
-  });
-
-  it("is case-insensitive", () => {
-    const tags = parseMaskTags([{ role: "user", content: "[Mask-Secret]" }]);
-    expect(tags.has("secret")).toBe(true);
-  });
-
-  it("ignores tags in assistant messages", () => {
-    const tags = parseMaskTags([
-      { role: "assistant", content: "[mask-all] assistant said this" },
-    ]);
-    expect(tags.size).toBe(0);
-  });
-
-  it("does not pick up [allow-xxx] tags", () => {
-    const tags = parseMaskTags([
-      { role: "user", content: "[allow-all] send anyway" },
-    ]);
-    expect(tags.size).toBe(0);
   });
 });
 
@@ -161,6 +114,7 @@ describe("resolveTagPriority", () => {
     );
     expect(effectiveMask.has("secret")).toBe(true);
     expect(effectiveMask.has("pii")).toBe(true);
+    expect(effectiveMask.has("all")).toBe(true);
     expect(effectiveAllow.size).toBe(0);
   });
 
@@ -177,6 +131,11 @@ describe("resolveTagPriority", () => {
   it("[allow-all] → effectiveAllow has 'all'", () => {
     const { effectiveAllow } = resolveTagPriority("[allow-all] key=abc");
     expect(effectiveAllow.has("all")).toBe(true);
+  });
+
+  it("[mask-all] → effectiveMask has 'all'", () => {
+    const { effectiveMask } = resolveTagPriority("[mask-all] key=abc");
+    expect(effectiveMask.has("all")).toBe(true);
   });
 
   it("is case-insensitive", () => {
@@ -203,7 +162,6 @@ describe("applyAllowTags", () => {
       category: "secret",
       matchRedacted: "AKIA****",
       secretValue: "AKIATEST",
-      location: "test",
     },
     {
       ruleId: "pii-email",
@@ -211,7 +169,6 @@ describe("applyAllowTags", () => {
       category: "pii",
       matchRedacted: "user****",
       secretValue: "user@example.com",
-      location: "test",
     },
   ];
 
@@ -256,7 +213,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST",
-        location: "a",
       },
       {
         ruleId: "aws-access-key",
@@ -264,7 +220,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST",
-        location: "b",
       },
     ];
     expect(dedupeFindings(findings)).toHaveLength(1);
@@ -278,7 +233,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST1",
-        location: "a",
       },
       {
         ruleId: "aws-access-key",
@@ -286,7 +240,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST2",
-        location: "b",
       },
     ];
     expect(dedupeFindings(findings)).toHaveLength(2);
@@ -304,7 +257,6 @@ describe("findingsToLines", () => {
         category: "secret",
         matchRedacted: "AKIA****MPLE",
         secretValue: "AKIAIOSFODNN7EXAMPLE",
-        location: "test",
       },
     ];
     const lines = findingsToLines(findings);
@@ -321,126 +273,9 @@ describe("findingsToLines", () => {
         category: "pii",
         matchRedacted: "user****",
         secretValue: "user@example.com",
-        location: "test",
       },
     ];
     const lines = findingsToLines(findings);
     expect(lines[0]).toBe("  [PII] Email Address (pii-email): user****");
-  });
-});
-
-// ── scanMessages ──────────────────────────────────────────────────────────────
-
-describe("scanMessages", () => {
-  it("detects a secret in a user message", () => {
-    const findings = scanMessages([
-      { role: "user", content: "my key is AKIAIOSFODNN7EXAMPLE" },
-    ]);
-    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
-  });
-
-  it("does not scan assistant messages", () => {
-    const findings = scanMessages([
-      {
-        role: "assistant",
-        content: "here is an example key: AKIAIOSFODNN7EXAMPLE",
-      },
-    ]);
-    expect(findings).toHaveLength(0);
-  });
-
-  it("respects [allow-all] in the same message", () => {
-    const findings = scanMessages([
-      {
-        role: "user",
-        content: "[allow-all] my key is AKIAIOSFODNN7EXAMPLE",
-      },
-    ]);
-    expect(findings).toHaveLength(0);
-  });
-
-  it("respects [allow-secret] to bypass a secret", () => {
-    const findings = scanMessages([
-      {
-        role: "user",
-        content: "[allow-secret] my key is AKIAIOSFODNN7EXAMPLE",
-      },
-    ]);
-    expect(findings).toHaveLength(0);
-  });
-
-  it("deduplicates the same secret appearing multiple times", () => {
-    const findings = scanMessages([
-      {
-        role: "user",
-        content: "key1=AKIAIOSFODNN7EXAMPLE key2=AKIAIOSFODNN7EXAMPLE",
-      },
-    ]);
-    const aws = findings.filter((f) => f.ruleId === "aws-access-key");
-    expect(aws).toHaveLength(1);
-  });
-
-  it("returns empty array for clean messages", () => {
-    const findings = scanMessages([
-      { role: "user", content: "hello, how are you?" },
-    ]);
-    expect(findings).toHaveLength(0);
-  });
-
-  it("detects a secret in ContentBlock[] content", () => {
-    const findings = scanMessages([
-      {
-        role: "user",
-        content: [{ type: "text", text: "my key is AKIAIOSFODNN7EXAMPLE" }],
-      },
-    ]);
-    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
-  });
-
-  it("scans tool_result content (string) inside a user message", () => {
-    const findings = scanMessages([
-      {
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            content: "key: AKIAIOSFODNN7EXAMPLE",
-          },
-        ],
-      },
-    ]);
-    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
-  });
-
-  it("scans tool_result content (ContentBlock[]) inside a user message", () => {
-    const findings = scanMessages([
-      {
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            content: [{ type: "text", text: "key: AKIAIOSFODNN7EXAMPLE" }],
-          },
-        ],
-      },
-    ]);
-    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
-  });
-
-  it("scans across multiple user messages", () => {
-    const findings = scanMessages([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "hi there" },
-      { role: "user", content: "my key is AKIAIOSFODNN7EXAMPLE" },
-    ]);
-    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
-  });
-
-  it("allow tag in one message applies to all messages", () => {
-    const findings = scanMessages([
-      { role: "user", content: "[allow-secret] first message" },
-      { role: "user", content: "my key is AKIAIOSFODNN7EXAMPLE" },
-    ]);
-    expect(findings).toHaveLength(0);
   });
 });

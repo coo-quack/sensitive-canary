@@ -148,8 +148,7 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
-    // [mask-all] resolves to [mask-secret] + [mask-pii] per dimension
-    expect(stderr).toContain("[mask-secret]");
+    expect(stderr).toContain("[mask-all]");
   });
 
   it("[mask-secret] with only PII falls through to normal block", () => {

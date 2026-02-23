@@ -1,13 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * Claude Code UserPromptSubmit hook.
- *
- * - Secrets/PII detected → exit 2 (block)
- * - [allow-xxx] tag present → exit 0 (allow)
- * - Nothing detected       → exit 0 (allow)
- */
-
 import {
   applyAllowTags,
   dedupeFindings,
@@ -35,25 +27,18 @@ process.stdin.on("end", () => {
 
   const prompt = data.prompt ?? "";
 
-  // Scan for secrets/PII
-  const allFindings = scan(prompt, "prompt");
+  const allFindings = scan(prompt);
 
   if (allFindings.length === 0) process.exit(0);
 
-  // Resolve effective allow/mask tags based on first-occurrence priority.
-  // For each category dimension, whichever tag type appears first in the
-  // prompt wins. [allow-all] / [mask-all] resolve both dimensions at once.
   const { effectiveAllow, effectiveMask } = resolveTagPriority(prompt);
 
-  // Apply effective allow tags
   const afterAllow: Finding[] = dedupeFindings(
     applyAllowTags(allFindings, effectiveAllow),
   );
 
   if (afterAllow.length === 0) process.exit(0);
 
-  // [mask-xxx] tag: prompt masking is not supported — inform user
-  // Only for findings whose dimension was resolved to mask (not allow).
   const maskableFindings = afterAllow.filter(
     (f) =>
       (f.category === "secret" && effectiveMask.has("secret")) ||
@@ -63,10 +48,12 @@ process.stdin.on("end", () => {
   if (maskableFindings.length > 0) {
     const hasSecret = maskableFindings.some((f) => f.category === "secret");
     const hasPii = maskableFindings.some((f) => f.category === "pii");
-    const usedTags = (["secret", "pii"] as const)
-      .filter((d) => effectiveMask.has(d))
-      .map((d) => `[mask-${d}]`)
-      .join(", ");
+    const usedTags = effectiveMask.has("all")
+      ? "[mask-all]"
+      : (["secret", "pii"] as const)
+          .filter((d) => effectiveMask.has(d))
+          .map((d) => `[mask-${d}]`)
+          .join(", ");
     const maskBlockLines = [
       "",
       `${randomBird()} sensitive-canary: prompt masking is not supported`,
@@ -89,7 +76,6 @@ process.stdin.on("end", () => {
     process.exit(2);
   }
 
-  // Findings not covered by allow or mask — block
   const unique: Finding[] = afterAllow.filter(
     (f) =>
       !(f.category === "secret" && effectiveMask.has("secret")) &&
