@@ -73,7 +73,7 @@ Install with two commands inside a Claude Code session:
 
 After installation, restart Claude Code and the hooks are active. No additional configuration needed.
 
-### How It Works
+### What Happens
 
 Just use Claude Code as usual. sensitive-canary runs in the background and automatically scans at three points:
 
@@ -85,7 +85,7 @@ When sensitive data is detected, the action is blocked and the terminal shows wh
 
 See [installation guide →](/install) for manual setup options.
 
-## What Gets Detected
+## Detection Rules
 
 | Category | Examples |
 |----------|---------|

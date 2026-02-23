@@ -11,47 +11,28 @@ No proxy server. No background process. Native Claude Code hooks only.
 
 ---
 
-## How It Works
+## Why sensitive-canary?
 
-### ① UserPromptSubmit hook
+Claude Code is a powerful development tool, but file reads and command executions can inadvertently send secrets and personal information to the Anthropic API. API keys in `.env` files, tokens embedded in config files, credentials pasted into the terminal — once sent to the API, they leave your machine.
 
-Runs just before a prompt is sent to the API.
+**sensitive-canary intercepts them before they are sent, preventing unintended data leaks.**
 
-```
-User presses Enter
-      ↓
-UserPromptSubmit hook
-      ↓ scans prompt
-      ├─ secret / PII detected AND no matching [allow-xxx] tag → block (exit 2)
-      └─ nothing detected OR tag present → pass (exit 0)
-```
+| Without sensitive-canary | With sensitive-canary |
+|--------------------------|----------------------|
+| `cat .env` → full contents sent to Claude ❌ | Blocked by name before Claude reads it ✅ |
+| Paste `AKIAIOSFODNN7EXAMPLE` in prompt ❌ | Blocked before the API call is made ✅ |
+| Tool result contains user@email.com ❌ | PII detected and blocked ✅ |
+| `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
-When blocked, the terminal shows what was detected and how to bypass it.
-
-### ② PreToolUse hook
-
-Runs just before Claude calls the `Read` or `Bash` tool.
-
-```
-Claude calls Read / Bash tool
-      ↓
-PreToolUse hook
-      ↓
-      ── Read tool ─────────────────────────────────────────────────────
-      │  1. filename is .env / .env.* → blocked unconditionally
-      │  2. file contents contain secret / PII → blocked
-      └─ Bash tool ─────────────────────────────────────────────────────
-         1. env var values referenced in the command contain secret / PII → blocked
-         2. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
-         3. cat / head / tail / etc. targeting a file → file contents scanned
-```
-
-When blocked, Claude receives a JSON response explaining the reason and is prompted to tell the user.
-The terminal also receives a direct message (via `/dev/tty`).
+- **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
+- **29 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **Entropy filtering** — reduces false positives on low-entropy values
+- **Luhn validation** — credit card numbers are validated, not just pattern-matched
+- **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
 ---
 
-## Installation
+## Quick Start
 
 ### Requirements
 
@@ -76,9 +57,8 @@ Install in two commands from inside a Claude Code session:
 
 Done. The hooks are enabled automatically.
 
----
-
-### Manual setup
+<details>
+<summary>Manual setup</summary>
 
 If you prefer to configure hooks without the plugin system:
 
@@ -118,9 +98,11 @@ git clone https://github.com/coo-quack/sensitive-canary.git ~/sensitive-canary
 }
 ```
 
+</details>
+
 ---
 
-## Usage
+## What Happens
 
 ### Prompt blocked
 
@@ -177,9 +159,7 @@ Non-`.env` files are also blocked if their contents contain secrets or PII.
   [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
 ```
 
----
-
-## Allow tags
+### Allow tags
 
 To intentionally bypass a block, include the appropriate tag in your **current prompt**.
 
@@ -189,47 +169,7 @@ To intentionally bypass a block, include the appropriate tag in your **current p
 | `[allow-pii]` | Skip all PII-category checks |
 | `[allow-all]` | Skip all sensitive-canary checks |
 
-**Important notes:**
-
-- Tags are read from the **current user message only**. Tags in previous messages are ignored — there is no risk of an accidental persistent bypass.
-- Tags are case-insensitive: `[ALLOW-SECRET]` and `[Allow-Secret]` are equivalent to `[allow-secret]`.
-- `[allow-secret]` does not bypass PII blocks (and vice versa).
-- The name-based block on `.env`/`.env.*` files can be bypassed by any of the three allow tags.
-- Allow tags filter the scan results — the scan itself always runs. The `.env`/`.env.*` name block is the only exception: when an allow tag is present, the file is passed through immediately without scanning.
-
-## Mask tags
-
-`[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content, so masking before sending is not possible.
-
-If you include a mask tag, sensitive-canary will explain this and list what was detected:
-
-```
-> [mask-secret] My key is AKIAIOSFODNN7EXAMPLE, can you review this?
-
-🐦 sensitive-canary: prompt masking is not supported
-
-  [mask-secret] cannot mask prompt content.
-  The following sensitive data was detected:
-
-  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
-
-  Please choose one of the following:
-
-  1. Manually redact the values above and resubmit
-  2. To send as-is, add an allow tag to your prompt:
-       [allow-secret]  — allow secrets
-       [allow-all]     — bypass all sensitive-canary checks
-```
-
-### Allow + Mask tag priority
-
-When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag that appears first wins** for each category (`secret`, `pii`). `[allow-all]` and `[mask-all]` resolve both categories at once.
-
-| Example | Result |
-|---------|--------|
-| `[allow-secret] [mask-secret] …` | secret allowed |
-| `[mask-secret] [allow-secret] …` | masking not supported error |
-| `[allow-secret] [mask-pii] …` | secret allowed, PII mask error |
+> **Note:** Tags are read from the **current user message only**. Tags in previous messages are ignored — there is no risk of an accidental persistent bypass. Tags are case-insensitive. `[allow-secret]` does not bypass PII blocks (and vice versa). The name-based block on `.env`/`.env.*` files can be bypassed by any of the three allow tags.
 
 ---
 
@@ -275,6 +215,86 @@ When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag t
 | `pii-ipv4` | IPv4 address (RFC 1918 private ranges only) | — |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
+
+---
+
+## How It Works
+
+### ① UserPromptSubmit hook
+
+Runs just before a prompt is sent to the API.
+
+```
+User presses Enter
+      ↓
+UserPromptSubmit hook
+      ↓ scans prompt
+      ├─ secret / PII detected AND no matching [allow-xxx] tag → block (exit 2)
+      └─ nothing detected OR tag present → pass (exit 0)
+```
+
+When blocked, the terminal shows what was detected and how to bypass it.
+
+### ② PreToolUse hook
+
+Runs just before Claude calls the `Read` or `Bash` tool.
+
+```
+Claude calls Read / Bash tool
+      ↓
+PreToolUse hook
+      ↓
+      ── Read tool ─────────────────────────────────────────────────────
+      │  1. filename is .env / .env.* → blocked unconditionally
+      │  2. file contents contain secret / PII → blocked
+      └─ Bash tool ─────────────────────────────────────────────────────
+         1. env var values referenced in the command contain secret / PII → blocked
+         2. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
+         3. cat / head / tail / etc. targeting a file → file contents scanned
+```
+
+When blocked, Claude receives a JSON response explaining the reason and is prompted to tell the user.
+The terminal also receives a direct message (via `/dev/tty`).
+
+---
+
+## Allow Tags (detailed)
+
+Allow tags filter the scan results — the scan itself always runs. The `.env`/`.env.*` name block is the only exception: when an allow tag is present, the file is passed through immediately without scanning.
+
+### Mask tags
+
+`[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content, so masking before sending is not possible.
+
+If you include a mask tag, sensitive-canary will explain this and list what was detected:
+
+```
+> [mask-secret] My key is AKIAIOSFODNN7EXAMPLE, can you review this?
+
+🐦 sensitive-canary: prompt masking is not supported
+
+  [mask-secret] cannot mask prompt content.
+  The following sensitive data was detected:
+
+  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+
+  Please choose one of the following:
+
+  1. Manually redact the values above and resubmit
+  2. To send as-is, add an allow tag to your prompt:
+       [allow-secret]  — allow secrets
+       [allow-all]     — bypass all sensitive-canary checks
+```
+
+### Allow + Mask tag priority
+
+When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag that appears first wins** for each category (`secret`, `pii`). `[allow-all]` and `[mask-all]` resolve both categories at once.
+
+| Example | Result |
+|---------|--------|
+| `[allow-secret] [mask-secret] …` | secret allowed |
+| `[mask-secret] [allow-secret] …` | masking not supported error |
+| `[allow-secret] [mask-pii] …` | secret allowed, PII mask error |
 
 ---
 
