@@ -65,13 +65,13 @@ Done. The hooks are enabled automatically.
 Install locally via npm and configure hooks manually:
 
 ```bash
-npm install -g sensitive-canary
+npm install -g @coo-quack/sensitive-canary
 ```
 
 Update to the latest version:
 
 ```bash
-npm update -g sensitive-canary
+npm update -g @coo-quack/sensitive-canary
 ```
 
 Then add to `~/.claude/settings.json`:
@@ -84,7 +84,7 @@ Then add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/sensitive-canary/src/user-prompt-submit-hook.ts"
+            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/user-prompt-submit-hook.ts"
           }
         ]
       }
@@ -95,7 +95,7 @@ Then add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/sensitive-canary/src/pre-tool-use-hook.ts"
+            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/pre-tool-use-hook.ts"
           }
         ]
       }
