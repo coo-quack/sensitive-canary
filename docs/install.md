@@ -20,14 +20,79 @@ Run the following two commands inside a Claude Code session:
 
 Claude Code will download the plugin and register the hooks automatically. No restart is required.
 
-## Manual Setup
+### Updating
 
-If you prefer to configure hooks manually, clone the repository and point your hooks configuration at the scripts.
+Third-party marketplaces have auto-update disabled by default. To receive automatic updates:
+
+1. Run `/plugin` → **Marketplaces** tab
+2. Select the marketplace → **Enable auto-update**
+
+You can also update manually from the same tab. See [Discover and install plugins](https://docs.anthropic.com/en/docs/claude-code/discover-plugins) for details.
+
+## npm Install
+
+Install globally via npm and configure hooks in your settings:
+
+**1. Install the package**
+
+```bash
+npm install -g sensitive-canary
+```
+
+Update to the latest version:
+
+```bash
+npm update -g sensitive-canary
+```
+
+**2. Register hooks**
+
+Add the following to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx $(npm root -g)/sensitive-canary/src/pre-tool-use-hook.ts"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx $(npm root -g)/sensitive-canary/src/user-prompt-submit-hook.ts"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+> **Note:** `node_modules` 内の TypeScript は `--experimental-strip-types` で実行できないため、`npx tsx` を使用します。No build step is required.
+
+## Manual Setup (git clone)
+
+Clone the repository and point your hooks configuration at the scripts:
 
 **1. Clone the repository**
 
 ```bash
 git clone https://github.com/coo-quack/sensitive-canary.git ~/.claude/plugins/sensitive-canary
+```
+
+Update to the latest version:
+
+```bash
+cd ~/.claude/plugins/sensitive-canary && git pull
 ```
 
 **2. Install dependencies**
