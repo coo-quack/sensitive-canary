@@ -7,7 +7,7 @@ on:
 
 jobs:
   backport:
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'hotfix/')
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -33,12 +33,12 @@ jobs:
         if: steps.check.outputs.needed == 'true'
         id: branch
         run: |
-          BRANCH="backport/hotfix-${{ github.event.pull_request.number }}-to-develop"
+          BRANCH="backport/pr-${{ github.event.pull_request.number }}-to-develop"
           git checkout -b $BRANCH origin/develop
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Cherry-pick commits from the hotfix PR
+          # Cherry-pick commits from the merged PR
           COMMITS=$(git log origin/develop..origin/main --reverse --format="%H")
           for COMMIT in $COMMITS; do
             git cherry-pick $COMMIT || {
@@ -60,9 +60,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr create \
-            --title "chore: backport hotfix #${{ github.event.pull_request.number }} to develop" \
+            --title "chore: backport #${{ github.event.pull_request.number }} to develop" \
             --body "$(cat <<'EOF'
-          Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to \`develop\`.
+          Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to `develop`.
 
           If this PR contains conflicts, resolve them before merging.
           EOF
