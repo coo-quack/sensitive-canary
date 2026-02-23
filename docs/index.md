@@ -4,7 +4,7 @@ layout: home
 hero:
   name: sensitive-canary
   text: Secrets and PII guard for Claude Code
-  tagline: Automatically blocks AWS keys, tokens, emails, credit cards, and more before they leave your machine
+  tagline: A security plugin that prevents unintended data leaks from Claude Code. Automatically detects and blocks AWS keys, tokens, email addresses, credit card numbers, and more before they are sent to the API.
   image:
     src: /logo.svg
     alt: sensitive-canary
@@ -42,9 +42,9 @@ features:
 
 ## Why sensitive-canary?
 
-Secrets and PII end up in AI conversations more often than you'd expect — pasted from a terminal, echoed in a config file, or embedded in a tool result. Once they reach the API, they leave your machine.
+Claude Code is a powerful development tool, but file reads and command executions can inadvertently send secrets and personal information to the Anthropic API. API keys in `.env` files, tokens embedded in config files, credentials pasted into the terminal — once sent to the API, they leave your machine.
 
-**sensitive-canary intercepts them first.**
+**sensitive-canary intercepts them before they are sent, preventing unintended data leaks.**
 
 | Without sensitive-canary | With sensitive-canary |
 |--------------------------|----------------------|
@@ -61,14 +61,31 @@ Secrets and PII end up in AI conversations more often than you'd expect — past
 
 ## Quick Start
 
+Install with two commands inside a Claude Code session:
+
 ```bash
-# Install as a Claude Code plugin
-claude plugin install coo-quack/sensitive-canary
+# 1. Register the marketplace
+/plugin marketplace add coo-quack/sensitive-canary
+
+# 2. Install the plugin
+/plugin install sensitive-canary@coo-quack
 ```
 
-Once installed, sensitive-canary runs automatically on every session. See [installation →](/install) for manual setup options.
+After installation, restart Claude Code and the hooks are active. No additional configuration needed.
 
-## What Gets Detected
+### What Happens
+
+Just use Claude Code as usual. sensitive-canary runs in the background and automatically scans at three points:
+
+- **On prompt submission** — checks your input for secrets and PII before it reaches the API
+- **On file read** — checks file names and contents before Claude reads them
+- **On command execution** — checks Bash commands and environment variable values for secrets
+
+When sensitive data is detected, the action is blocked and the terminal shows what was found. To intentionally allow it, add `[allow-secret]` or `[allow-all]` to your prompt.
+
+See [installation guide →](/install) for manual setup options.
+
+## Detection Rules
 
 | Category | Examples |
 |----------|---------|

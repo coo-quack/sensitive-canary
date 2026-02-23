@@ -80,7 +80,7 @@ Check your Node.js version:
 node --version
 ```
 
-## How It Works
+## What Happens
 
 sensitive-canary adds two hooks to your Claude Code session:
 
