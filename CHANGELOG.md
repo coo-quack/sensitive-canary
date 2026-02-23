@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0 (2026-02-23)
+
+### Added
+
+- **CONTRIBUTING.md** — branching strategy, release checklist, and contribution guide
+- **LICENSE** — MIT License
+- **SECURITY.md** — security policy, limitations, and vulnerability reporting
+- **CI workflow** — separate jobs for typecheck, lint, format check, and test; runs on PRs to `main` and `develop`
+- **Release workflow** — auto-creates git tag and GitHub Release on merge to `main`
+- **Backport workflow** — auto-creates PR to `develop` when a `hotfix/*` PR merges to `main`
+- **Documentation site** — VitePress docs deployed to GitHub Pages
+
 ## v0.1.0 (2026-02-22)
 
 Initial release.

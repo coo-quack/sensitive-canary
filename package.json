@@ -1,6 +1,6 @@
 {
   "name": "sensitive-canary",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Claude Code hooks that block secrets and PII before they reach the Anthropic API",
   "private": true,
   "type": "module",
@@ -11,8 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src",
+    "lint": "biome lint src",
     "format": "biome format --write src",
+    "format:check": "biome ci --linter-enabled=false src",
     "fix": "biome check --write src",
     "ci": "tsc --noEmit && biome check src && vitest run",
     "docs:dev": "vitepress dev docs",

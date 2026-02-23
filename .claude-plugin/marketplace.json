@@ -1,5 +1,5 @@
 {
-  "name": "sensitive-canary",
+  "name": "coo-quack",
   "owner": {
     "name": "coo-quack"
   },
@@ -14,7 +14,7 @@
         "repo": "coo-quack/sensitive-canary"
       },
       "description": "Blocks secrets and PII before they reach the Anthropic API",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "license": "MIT",
       "keywords": ["security", "secrets", "pii", "hooks"]
     }
