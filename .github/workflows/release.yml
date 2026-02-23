@@ -19,7 +19,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if git ls-remote --tags origin "v$VERSION" | grep -q "v$VERSION"; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
-          elif npm view "sensitive-canary@$VERSION" version 2>/dev/null; then
+          elif npm view "@coo-quack/sensitive-canary@$VERSION" version 2>/dev/null; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
