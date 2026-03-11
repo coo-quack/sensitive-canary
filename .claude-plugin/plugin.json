@@ -1,11 +1,16 @@
 {
   "name": "sensitive-canary",
   "description": "Blocks secrets and PII before they reach the Anthropic API",
-  "version": "0.4.0",
+  "version": "0.4.4",
   "author": {
     "name": "coo-quack"
   },
   "repository": "https://github.com/coo-quack/sensitive-canary",
   "license": "MIT",
-  "keywords": ["security", "secrets", "pii", "hooks"]
+  "keywords": [
+    "security",
+    "secrets",
+    "pii",
+    "hooks"
+  ]
 }

@@ -1,4 +1,12 @@
 # Changelog
+## v0.4.4 (2026-03-11)
+
+### Chores
+
+- Add Renovate configuration with automerge on CI success
+- Migrate from npm to pnpm
+- Update GitHub Actions workflows to use pnpm
+
 
 ## v0.4.3 (2026-02-23)
 
