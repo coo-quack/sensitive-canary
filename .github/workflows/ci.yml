@@ -13,42 +13,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-      - run: npm install
-      - run: npm run typecheck
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm run typecheck
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-      - run: npm install
-      - run: npm run lint
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm run lint
 
   format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-      - run: npm install
-      - run: npm run format:check
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm run format:check
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-      - run: npm install
-      - run: npm test
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm test
