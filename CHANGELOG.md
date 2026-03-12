@@ -8,6 +8,10 @@
 - Add Renovate configuration with automerge on CI success
 - Add pnpm version specification for GitHub Actions
 
+### Documentation
+
+- Update install instructions from npm to pnpm
+
 ### Fixes
 
 - Fix capitalization in project title
