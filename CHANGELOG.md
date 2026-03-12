@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.4 (2026-03-12)
+
+### Improvements
+
+- Migrate from npm to pnpm
+- Add Renovate configuration with automerge on CI success
+- Add pnpm version specification for GitHub Actions
+
+### Documentation
+
+- Update install instructions from npm to pnpm
+- Capitalize project title to Sensitive Canary across docs
+
+### Fixes
+
+- Fix capitalization in project title
+
+---
+
 ## v0.4.3 (2026-02-23)
 
 ### Documentation

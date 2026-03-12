@@ -1,7 +1,7 @@
 import { defineConfig } from "vitepress";
 
 export default defineConfig({
-	title: "sensitive-canary",
+	title: "Sensitive Canary",
 	description: "Claude Code hooks that guard secrets and PII before they reach the API",
 	base: "/sensitive-canary/",
 
