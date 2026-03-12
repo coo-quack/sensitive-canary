@@ -5,6 +5,8 @@ on:
     types: [closed]
     branches: [main]
 
+permissions: {}
+
 jobs:
   backport:
     if: github.event.pull_request.merged == true
