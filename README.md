@@ -1,6 +1,6 @@
 # Sensitive Canary
 
-[![CI](https://github.com/coo-quack/sensitive-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/coo-quack/sensitive-canary/actions/workflows/ci.yml)
+[![CI](https://github.com/coo-quack/sensitive-canary/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo-quack/sensitive-canary/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A security plugin that prevents unintended data leaks from Claude Code. Automatically detects and blocks secrets and PII — in prompts, file reads, and command executions — before they are sent to the Anthropic API.
