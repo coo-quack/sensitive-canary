@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.6 (2026-03-12)
+
+### Security
+
+- Add explicit permissions to all workflow jobs
+- Resolve Dependabot security alerts via pnpm overrides
+
+---
+
 ## v0.4.5 (2026-03-12)
 
 ### Fixes
