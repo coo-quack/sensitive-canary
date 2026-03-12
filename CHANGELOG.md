@@ -11,6 +11,7 @@
 ### Documentation
 
 - Update install instructions from npm to pnpm
+- Capitalize project title to Sensitive Canary across docs
 
 ### Fixes
 
