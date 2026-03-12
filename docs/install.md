@@ -1,6 +1,6 @@
 # Installation
 
-sensitive-canary runs as a set of Claude Code hooks. The recommended way is to install it as a plugin.
+Sensitive Canary runs as a set of Claude Code hooks. The recommended way is to install it as a plugin.
 
 ## Claude Code Plugin
 
@@ -29,20 +29,20 @@ Third-party marketplaces have auto-update disabled by default. To receive automa
 
 You can also update manually from the same tab. See [Discover and install plugins](https://docs.anthropic.com/en/docs/claude-code/discover-plugins) for details.
 
-## npm Install
+## pnpm Install
 
-Install globally via npm and configure hooks in your settings:
+Install globally via pnpm and configure hooks in your settings:
 
 **1. Install the package**
 
 ```bash
-npm install -g @coo-quack/sensitive-canary
+pnpm add -g @coo-quack/sensitive-canary
 ```
 
 Update to the latest version:
 
 ```bash
-npm update -g @coo-quack/sensitive-canary
+pnpm update -g @coo-quack/sensitive-canary
 ```
 
 **2. Register hooks**
@@ -58,7 +58,7 @@ Add the following to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/pre-tool-use-hook.ts"
+            "command": "pnpm -s dlx tsx $(pnpm root -g)/@coo-quack/sensitive-canary/src/pre-tool-use-hook.ts"
           }
         ]
       }
@@ -68,7 +68,7 @@ Add the following to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/user-prompt-submit-hook.ts"
+            "command": "pnpm -s dlx tsx $(pnpm root -g)/@coo-quack/sensitive-canary/src/user-prompt-submit-hook.ts"
           }
         ]
       }
@@ -77,7 +77,7 @@ Add the following to `~/.claude/settings.json`:
 }
 ```
 
-> **Note:** Node.js does not support `--experimental-strip-types` for files inside `node_modules`, so `npx tsx` is used instead. No build step is required.
+> **Note:** Node.js does not support `--experimental-strip-types` for files inside `node_modules`, so `pnpm dlx tsx` is used instead. No build step is required.
 
 ## Manual Setup (git clone)
 
@@ -99,7 +99,7 @@ cd ~/.claude/plugins/sensitive-canary && git pull
 
 ```bash
 cd ~/.claude/plugins/sensitive-canary
-npm install
+pnpm install
 ```
 
 **3. Register hooks**
@@ -147,7 +147,7 @@ node --version
 
 ## What Happens
 
-sensitive-canary adds two hooks to your Claude Code session:
+Sensitive Canary adds two hooks to your Claude Code session:
 
 ### UserPromptSubmit hook
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-sensitive-canary is a **local-only security tool** that runs entirely within your terminal as Claude Code hooks. It does not:
+Sensitive Canary is a **local-only security tool** that runs entirely within your terminal as Claude Code hooks. It does not:
 
 - Send data to external servers
 - Log data to files or remote services
@@ -13,9 +13,9 @@ All scanning is performed **locally** and **in-memory**.
 
 ---
 
-## What sensitive-canary Protects Against
+## What Sensitive Canary Protects Against
 
-sensitive-canary intercepts secrets and PII before they leave your machine:
+Sensitive Canary intercepts secrets and PII before they leave your machine:
 
 | Risk | Hook | How it helps |
 |------|------|--------------|

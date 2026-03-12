@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing to sensitive-canary!
+Thanks for your interest in contributing to Sensitive Canary!
 
 ## Development Setup
 
