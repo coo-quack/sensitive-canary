@@ -1,6 +1,6 @@
 # Installation
 
-sensitive-canary runs as a set of Claude Code hooks. The recommended way is to install it as a plugin.
+Sensitive Canary runs as a set of Claude Code hooks. The recommended way is to install it as a plugin.
 
 ## Claude Code Plugin
 
@@ -147,7 +147,7 @@ node --version
 
 ## What Happens
 
-sensitive-canary adds two hooks to your Claude Code session:
+Sensitive Canary adds two hooks to your Claude Code session:
 
 ### UserPromptSubmit hook
 

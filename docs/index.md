@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: sensitive-canary
+  name: Sensitive Canary
   text: Secrets and PII guard for Claude Code
   tagline: A security plugin that prevents unintended data leaks from Claude Code. Automatically detects and blocks AWS keys, tokens, email addresses, credit card numbers, and more before they are sent to the API.
   image:
     src: /logo.svg
-    alt: sensitive-canary
+    alt: Sensitive Canary
   actions:
     - theme: brand
       text: Get Started
@@ -40,13 +40,13 @@ features:
     details: Install once as a Claude Code plugin. No API keys, no servers, no configuration files needed.
 ---
 
-## Why sensitive-canary?
+## Why Sensitive Canary?
 
 Claude Code is a powerful development tool, but file reads and command executions can inadvertently send secrets and personal information to the Anthropic API. API keys in `.env` files, tokens embedded in config files, credentials pasted into the terminal — once sent to the API, they leave your machine.
 
-**sensitive-canary intercepts them before they are sent, preventing unintended data leaks.**
+**Sensitive Canary intercepts them before they are sent, preventing unintended data leaks.**
 
-| Without sensitive-canary | With sensitive-canary |
+| Without Sensitive Canary | With Sensitive Canary |
 |--------------------------|----------------------|
 | `cat .env` → full contents sent to Claude ❌ | Blocked by name before Claude reads it ✅ |
 | Paste `AKIAIOSFODNN7EXAMPLE` in prompt ❌ | Blocked before the API call is made ✅ |
