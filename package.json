@@ -32,9 +32,11 @@
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
-  "overrides": {
-    "rollup": "^4.59.0",
-    "esbuild": "^0.25.0"
+  "pnpm": {
+    "overrides": {
+      "rollup": "^4.59.0",
+      "esbuild": "^0.25.0"
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
