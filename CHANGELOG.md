@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.5 (2026-03-12)
+
+### Fixes
+
+- Scope CI badge to main branch
+
+---
+
 ## v0.4.4 (2026-03-12)
 
 ### Improvements
