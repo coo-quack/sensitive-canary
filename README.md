@@ -25,7 +25,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **29 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **31 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
@@ -230,15 +230,17 @@ To intentionally bypass a block, include the appropriate tag in your **current p
 
 ## Detection rules
 
-### Secrets (22 rules)
+### Secrets (24 rules)
 
 | Rule ID | Description |
 |---|---|
 | `aws-access-key` | AWS Access Key ID |
+| `gcp-api-key` | Google Cloud API Key |
 | `private-key` | PEM Private Key (RSA / EC / DSA / PGP / OpenSSH) |
 | `github-pat` | GitHub Personal Access Token |
 | `github-fine-grained` | GitHub Fine-Grained Token |
 | `gitlab-pat` | GitLab Personal Access Token |
+| `npm-token` | npm Access Token |
 | `slack-token` | Slack Token |
 | `slack-webhook` | Slack Webhook URL |
 | `discord-webhook` | Discord Webhook URL |
