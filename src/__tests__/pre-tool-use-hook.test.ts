@@ -245,16 +245,40 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
   });
 });
 
-// ── binary file skipping ──────────────────────────────────────────────────────
+// ── binary file handling ─────────────────────────────────────────────────────
 
-describe("pre-tool-use-hook — binary file skipping", () => {
-  it("skips a binary file containing NUL bytes even if it has a secret pattern", () => {
+describe("pre-tool-use-hook — binary file handling", () => {
+  it("blocks when a secret appears before the first NUL byte", () => {
     const content = Buffer.concat([
       Buffer.from("key=AKIAIOSFODNN7EXAMPLE\n"),
       Buffer.from([0x00]),
-      Buffer.from("more data"),
+      Buffer.from("binary data"),
     ]);
-    const p = join(tmpDir, "binary.bin");
+    const p = join(tmpDir, "binary-secret-before-nul.bin");
+    writeFileSync(p, content);
+    const { exitCode, decision } = runHook("Read", p);
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("allows a binary file when no secret appears before the first NUL byte", () => {
+    const content = Buffer.concat([
+      Buffer.from("clean text\n"),
+      Buffer.from([0x00]),
+      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
+    ]);
+    const p = join(tmpDir, "binary-secret-after-nul.bin");
+    writeFileSync(p, content);
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+  });
+
+  it("allows a binary file that starts with NUL", () => {
+    const content = Buffer.concat([
+      Buffer.from([0x00]),
+      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
+    ]);
+    const p = join(tmpDir, "binary-nul-start.bin");
     writeFileSync(p, content);
     const { exitCode } = runHook("Read", p);
     expect(exitCode).toBe(0);

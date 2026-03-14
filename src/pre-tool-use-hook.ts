@@ -268,9 +268,12 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       fs.closeSync(fd);
     }
     const data = buf.subarray(0, bytesRead);
-    // Skip binary files: if NUL byte exists in the first 8KB, assume binary
-    if (data.subarray(0, 8192).includes(0)) return;
-    content = data.toString("utf8");
+    // Binary files: scan only the text prefix before the first NUL byte
+    const nulIndex = data.indexOf(0);
+    content = (nulIndex === -1 ? data : data.subarray(0, nulIndex)).toString(
+      "utf8",
+    );
+    if (content.length === 0) return;
   } catch {
     return;
   }
