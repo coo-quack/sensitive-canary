@@ -245,6 +245,96 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
   });
 });
 
+// ── binary file handling ─────────────────────────────────────────────────────
+
+describe("pre-tool-use-hook — binary file handling", () => {
+  it("blocks when a secret appears before the first NUL byte", () => {
+    const content = Buffer.concat([
+      Buffer.from("key=AKIAIOSFODNN7EXAMPLE\n"),
+      Buffer.from([0x00]),
+      Buffer.from("binary data"),
+    ]);
+    const p = join(tmpDir, "binary-secret-before-nul.bin");
+    writeFileSync(p, content);
+    const { exitCode, decision } = runHook("Read", p);
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("allows a binary file when no secret appears before the first NUL byte", () => {
+    const content = Buffer.concat([
+      Buffer.from("clean text\n"),
+      Buffer.from([0x00]),
+      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
+    ]);
+    const p = join(tmpDir, "binary-secret-after-nul.bin");
+    writeFileSync(p, content);
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+  });
+
+  it("allows a binary file that starts with NUL", () => {
+    const content = Buffer.concat([
+      Buffer.from([0x00]),
+      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
+    ]);
+    const p = join(tmpDir, "binary-nul-start.bin");
+    writeFileSync(p, content);
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// ── file size limit ──────────────────────────────────────────────────────────
+
+describe("pre-tool-use-hook — file size limit (1 MB)", () => {
+  it("blocks when a secret is within the first 1 MB", () => {
+    const padding = Buffer.alloc(512 * 1024, "x"); // 512 KB
+    const secret = Buffer.from("\nkey=AKIAIOSFODNN7EXAMPLE\n");
+    const p = join(tmpDir, "large-secret-start.txt");
+    writeFileSync(p, Buffer.concat([padding, secret]));
+    const { exitCode, decision } = runHook("Read", p);
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("allows when a secret is beyond the first 1 MB", () => {
+    const padding = Buffer.alloc(1_048_576 + 1, "x"); // 1 MB + 1 byte
+    const secret = Buffer.from("\nkey=AKIAIOSFODNN7EXAMPLE\n");
+    const p = join(tmpDir, "large-secret-end.txt");
+    writeFileSync(p, Buffer.concat([padding, secret]));
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// ── transcript tail read ────────────────────────────────────────────────────
+
+describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {
+  it("[allow-all] in a large transcript (>64KB) is respected when near the end", () => {
+    // Build a transcript larger than 64KB with the allow tag in the last message
+    const filler = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "x".repeat(1024) },
+    });
+    const fillerLines = Array.from({ length: 70 }, () => filler).join("\n");
+    const allowLine = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "[allow-all] read everything" },
+    });
+    const transcriptContent = `${fillerLines}\n${allowLine}\n`;
+    const tp = join(tmpDir, "large-transcript.jsonl");
+    writeFileSync(tp, transcriptContent, "utf8");
+
+    const p = writeFixture(
+      "large-transcript-test.txt",
+      "key=AKIAIOSFODNN7EXAMPLE\n",
+    );
+    const { exitCode } = runHook("Read", p, { transcriptPath: tp });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // ── Bash tool — env var expansion ────────────────────────────────────────────
 
 describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {

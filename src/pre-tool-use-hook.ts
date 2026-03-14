@@ -25,6 +25,15 @@ interface TranscriptLine {
   message?: Message;
 }
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// Maximum bytes to read when scanning file contents for secrets/PII.
+// Files larger than this are scanned up to this limit; the remainder is skipped.
+const MAX_SCAN_BYTES = 1_048_576; // 1 MB
+
+// Maximum bytes to read from the tail of a transcript file.
+const MAX_TRANSCRIPT_TAIL_BYTES = 65_536; // 64 KB
+
 // ── Transcript ────────────────────────────────────────────────────────────────
 
 // Returns true when the message contains at least one text content block
@@ -42,7 +51,25 @@ function hasTextContent(msg: Message): boolean {
 function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
   let raw: string;
   try {
-    raw = fs.readFileSync(transcriptPath, "utf8");
+    const stat = fs.statSync(transcriptPath);
+    if (stat.size <= MAX_TRANSCRIPT_TAIL_BYTES) {
+      raw = fs.readFileSync(transcriptPath, "utf8");
+    } else {
+      const buf = Buffer.alloc(MAX_TRANSCRIPT_TAIL_BYTES);
+      const fd = fs.openSync(transcriptPath, "r");
+      try {
+        const bytesRead = fs.readSync(
+          fd,
+          buf,
+          0,
+          MAX_TRANSCRIPT_TAIL_BYTES,
+          stat.size - MAX_TRANSCRIPT_TAIL_BYTES,
+        );
+        raw = buf.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
   } catch {
     return new Set();
   }
@@ -173,9 +200,10 @@ function block(
   detectionLines: string[],
   allowHints: string[],
 ): never {
+  const bird = randomBird();
   const terminalMessage = [
     "",
-    `${randomBird()} sensitive-canary: blocked — ${source}`,
+    `${bird} sensitive-canary: blocked — ${source}`,
     "",
     ...detectionLines,
     "",
@@ -183,13 +211,15 @@ function block(
 
   try {
     const fd = fs.openSync("/dev/tty", "w");
-    fs.writeSync(fd, terminalMessage);
-    fs.closeSync(fd);
+    try {
+      fs.writeSync(fd, terminalMessage);
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     process.stderr.write(terminalMessage);
   }
 
-  const bird = randomBird();
   const reasonLines = [
     `${bird} sensitive-canary blocked: ${source}`,
     "",
@@ -218,7 +248,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     block(
       filePath,
       [
-        `${randomBird()}  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.`,
+        "Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
       ],
       buildAllowHints(`please read ${filePath}`, [], true),
     );
@@ -226,7 +256,24 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   let content: string;
   try {
-    content = fs.readFileSync(filePath, "utf8");
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) return;
+    const bytesToRead = Math.min(stat.size, MAX_SCAN_BYTES);
+    const buf = Buffer.alloc(bytesToRead);
+    const fd = fs.openSync(filePath, "r");
+    let bytesRead: number;
+    try {
+      bytesRead = fs.readSync(fd, buf, 0, bytesToRead, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const data = buf.subarray(0, bytesRead);
+    // Binary files: scan only the text prefix before the first NUL byte
+    const nulIndex = data.indexOf(0);
+    content = (nulIndex === -1 ? data : data.subarray(0, nulIndex)).toString(
+      "utf8",
+    );
+    if (content.length === 0) return;
   } catch {
     return;
   }
@@ -236,11 +283,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   block(
     filePath,
-    [
-      `${randomBird()}  Blocked: file contains sensitive data`,
-      "",
-      ...findingsToLines(findings),
-    ],
+    ["Blocked: file contains sensitive data", "", ...findingsToLines(findings)],
     buildAllowHints(`please read ${filePath}`, findings),
   );
 }
@@ -281,7 +324,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          `${randomBird()}  Blocked: environment variable $${varName} contains sensitive data`,
+          `Blocked: environment variable $${varName} contains sensitive data`,
           "",
           ...findingsToLines(findings),
         ],
@@ -297,7 +340,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          `${randomBird()}  Blocked: bash command contains sensitive data`,
+          "Blocked: bash command contains sensitive data",
           "",
           ...findingsToLines(cmdFindings),
         ],
