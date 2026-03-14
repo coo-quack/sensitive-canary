@@ -12,7 +12,7 @@ Install or update from [nodejs.org](https://nodejs.org/).
 
 ## Hooks not running after install
 
-1. **Check plugin status** — run `/plugin` and verify sensitive-canary is listed and enabled. Plugin hooks should activate immediately after install without a restart. If they still don't work, try restarting Claude Code
+1. **Check plugin status** — run `/plugin` and verify sensitive-canary is listed and enabled. Plugin hooks should activate immediately after install without a restart. If they still don't work, try restarting Claude Code.
 2. **Check hooks config** — for manual installs, verify the hooks entries exist in `~/.claude/settings.json`
 
 ## False positives
