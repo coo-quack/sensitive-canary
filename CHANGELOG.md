@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.5.0 (2026-03-14)
+
+### Features
+
+- Add Google Cloud API Key (`gcp-api-key`) detection rule
+- Add npm Access Token (`npm-token`) detection rule
+
+### Fixes
+
+- Prevent `openai-key` (legacy) rule from overlapping with `openai-project-key` and `anthropic-key` via negative lookahead
+- Use nullish coalescing (`??`) in `entropy()` for correct semantics under `noUncheckedIndexedAccess`
+- Remove unreachable `unique` filter in `user-prompt-submit-hook`
+- Consolidate `randomBird()` calls in `block()` for consistent emoji across terminal and JSON output
+- Fix fd leaks in file read and `/dev/tty` write paths with `try/finally`
+- Use `bytesRead` return value from `fs.readSync` to avoid NUL-filled buffer tails
+- Scan text prefix before first NUL byte in binary files instead of skipping entirely
+
+### Performance
+
+- Read only the last 64 KB of transcript files for allow-tag resolution
+- Skip binary content after first NUL byte to avoid pointless regex scanning
+
+### Documentation
+
+- Unify documentation site structure with Getting Started and Troubleshooting pages
+- Symlink `docs/contributing.md` to root `CONTRIBUTING.md`
+
+---
+
 ## v0.4.6 (2026-03-12)
 
 ### Security

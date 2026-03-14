@@ -285,29 +285,6 @@ describe("pre-tool-use-hook — binary file handling", () => {
   });
 });
 
-// ── file size limit ──────────────────────────────────────────────────────────
-
-describe("pre-tool-use-hook — file size limit (1 MB)", () => {
-  it("blocks when a secret is within the first 1 MB", () => {
-    const padding = Buffer.alloc(512 * 1024, "x"); // 512 KB
-    const secret = Buffer.from("\nkey=AKIAIOSFODNN7EXAMPLE\n");
-    const p = join(tmpDir, "large-secret-start.txt");
-    writeFileSync(p, Buffer.concat([padding, secret]));
-    const { exitCode, decision } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("allows when a secret is beyond the first 1 MB", () => {
-    const padding = Buffer.alloc(1_048_576 + 1, "x"); // 1 MB + 1 byte
-    const secret = Buffer.from("\nkey=AKIAIOSFODNN7EXAMPLE\n");
-    const p = join(tmpDir, "large-secret-end.txt");
-    writeFileSync(p, Buffer.concat([padding, secret]));
-    const { exitCode } = runHook("Read", p);
-    expect(exitCode).toBe(0);
-  });
-});
-
 // ── transcript tail read ────────────────────────────────────────────────────
 
 describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {

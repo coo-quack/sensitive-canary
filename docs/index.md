@@ -54,7 +54,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **29 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **31 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere

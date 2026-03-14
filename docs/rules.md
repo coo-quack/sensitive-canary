@@ -9,6 +9,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | Rule ID | Description | Pattern |
 |---------|-------------|---------|
 | `aws-access-key` | AWS Access Key ID | `AKIA`, `ASIA`, `AGPA`, `AIDA`, `AROA`, … + 16 uppercase alphanumeric chars |
+| `gcp-api-key` | Google Cloud API Key | `AIza` + 35 alphanumeric/dash/underscore chars |
 
 ### Source Control
 
@@ -17,6 +18,12 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `github-pat` | GitHub Personal Access Token (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` prefix) |
 | `github-fine-grained` | GitHub Fine-Grained Token (`github_pat_` prefix) |
 | `gitlab-pat` | GitLab Personal Access Token (`glpat-` prefix) |
+
+### Package Registries
+
+| Rule ID | Description |
+|---------|-------------|
+| `npm-token` | npm Access Token (`npm_` prefix + 36 alphanumeric chars) |
 
 ### AI Services
 

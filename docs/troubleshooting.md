@@ -25,7 +25,7 @@ If legitimate content is being blocked:
 
 ## .env files always blocked
 
-This is by design. `.env` and `.env.*` files are blocked unconditionally by filename, regardless of their contents. Use `[allow-all]` if you need Claude to read an `.env` file intentionally.
+This is by design. `.env` and `.env.*` files are blocked unconditionally by filename, regardless of their contents. Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) will bypass this block if you need Claude to read an `.env` file intentionally.
 
 ## Plugin not found after marketplace registration
 

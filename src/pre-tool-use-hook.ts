@@ -27,10 +27,6 @@ interface TranscriptLine {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-// Maximum bytes to read when scanning file contents for secrets/PII.
-// Files larger than this are scanned up to this limit; the remainder is skipped.
-const MAX_SCAN_BYTES = 1_048_576; // 1 MB
-
 // Maximum bytes to read from the tail of a transcript file.
 const MAX_TRANSCRIPT_TAIL_BYTES = 65_536; // 64 KB
 
@@ -248,7 +244,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     block(
       filePath,
       [
-        "Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
+        "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
       ],
       buildAllowHints(`please read ${filePath}`, [], true),
     );
@@ -256,21 +252,10 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   let content: string;
   try {
-    const stat = fs.statSync(filePath);
-    if (stat.size === 0) return;
-    const bytesToRead = Math.min(stat.size, MAX_SCAN_BYTES);
-    const buf = Buffer.alloc(bytesToRead);
-    const fd = fs.openSync(filePath, "r");
-    let bytesRead: number;
-    try {
-      bytesRead = fs.readSync(fd, buf, 0, bytesToRead, 0);
-    } finally {
-      fs.closeSync(fd);
-    }
-    const data = buf.subarray(0, bytesRead);
+    const raw = fs.readFileSync(filePath);
     // Binary files: scan only the text prefix before the first NUL byte
-    const nulIndex = data.indexOf(0);
-    content = (nulIndex === -1 ? data : data.subarray(0, nulIndex)).toString(
+    const nulIndex = raw.indexOf(0);
+    content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(
       "utf8",
     );
     if (content.length === 0) return;
@@ -283,7 +268,11 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   block(
     filePath,
-    ["Blocked: file contains sensitive data", "", ...findingsToLines(findings)],
+    [
+      "🚫 Blocked: file contains sensitive data",
+      "",
+      ...findingsToLines(findings),
+    ],
     buildAllowHints(`please read ${filePath}`, findings),
   );
 }
@@ -324,7 +313,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          `Blocked: environment variable $${varName} contains sensitive data`,
+          `🚫 Blocked: environment variable $${varName} contains sensitive data`,
           "",
           ...findingsToLines(findings),
         ],
@@ -340,7 +329,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          "Blocked: bash command contains sensitive data",
+          "🚫 Blocked: bash command contains sensitive data",
           "",
           ...findingsToLines(cmdFindings),
         ],
