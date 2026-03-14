@@ -41,4 +41,4 @@ Tags apply only to the message they appear in. They do not persist across turns.
 ## Next Steps
 
 - [Installation](/install) — alternative installation methods
-- [Detection Rules](/rules) — all 29 detection rules explained
+- [Detection Rules](/rules) — all 31 detection rules explained
