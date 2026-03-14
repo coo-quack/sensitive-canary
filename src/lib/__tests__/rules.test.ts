@@ -68,6 +68,26 @@ describe("scan — secrets", () => {
     expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
   });
 
+  it("detects a GCP API key", () => {
+    const findings = scan(`key=AIzaSyC${"A".repeat(32)}`);
+    expect(findings.some((f) => f.ruleId === "gcp-api-key")).toBe(true);
+  });
+
+  it("does not flag a string starting with AIza but too short", () => {
+    const findings = scan("AIzaSyC_short");
+    expect(findings.some((f) => f.ruleId === "gcp-api-key")).toBe(false);
+  });
+
+  it("detects an npm access token", () => {
+    const findings = scan(`npm_${"A".repeat(36)}`);
+    expect(findings.some((f) => f.ruleId === "npm-token")).toBe(true);
+  });
+
+  it("does not flag npm_ with insufficient length", () => {
+    const findings = scan("npm_shorttoken");
+    expect(findings.some((f) => f.ruleId === "npm-token")).toBe(false);
+  });
+
   it("detects a PEM private key header (RSA)", () => {
     const findings = scan("-----BEGIN RSA PRIVATE KEY-----");
     expect(findings.some((f) => f.ruleId === "private-key")).toBe(true);

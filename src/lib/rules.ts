@@ -65,6 +65,12 @@ const SECRET_RULES: Rule[] = [
     category: "secret",
   },
   {
+    id: "gcp-api-key",
+    description: "Google Cloud API Key",
+    regex: /AIza[0-9A-Za-z_-]{35}/g,
+    category: "secret",
+  },
+  {
     id: "private-key",
     description: "PEM Private Key",
     // Covers RSA, EC, DSA, PGP, and OpenSSH private keys
@@ -89,6 +95,14 @@ const SECRET_RULES: Rule[] = [
     id: "gitlab-pat",
     description: "GitLab Personal Access Token",
     regex: /glpat-[A-Za-z0-9_=-]{20,22}/g,
+    category: "secret",
+  },
+
+  // Package registries
+  {
+    id: "npm-token",
+    description: "npm Access Token",
+    regex: /npm_[A-Za-z0-9]{36}/g,
     category: "secret",
   },
 
