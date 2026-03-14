@@ -255,10 +255,12 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   }
 
   let content: string;
+  let fileSize: number;
   try {
     const stat = fs.statSync(filePath);
-    if (stat.size === 0) return;
-    const bytesToRead = Math.min(stat.size, MAX_SCAN_BYTES);
+    fileSize = stat.size;
+    if (fileSize === 0) return;
+    const bytesToRead = Math.min(fileSize, MAX_SCAN_BYTES);
     const buf = Buffer.alloc(bytesToRead);
     const fd = fs.openSync(filePath, "r");
     let bytesRead: number;
@@ -276,6 +278,22 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     if (content.length === 0) return;
   } catch {
     return;
+  }
+
+  const truncated = fileSize > MAX_SCAN_BYTES;
+  if (truncated) {
+    const sizeMB = (fileSize / 1_048_576).toFixed(1);
+    const warning = `\n${randomBird()} sensitive-canary: warning — ${filePath} is ${sizeMB} MB; only the first 1 MB was scanned.\n`;
+    try {
+      const ttyFd = fs.openSync("/dev/tty", "w");
+      try {
+        fs.writeSync(ttyFd, warning);
+      } finally {
+        fs.closeSync(ttyFd);
+      }
+    } catch {
+      process.stderr.write(warning);
+    }
   }
 
   const findings = applyAllowTags(dedupeFindings(scan(content)), allowTags);
