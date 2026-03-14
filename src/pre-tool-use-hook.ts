@@ -25,6 +25,15 @@ interface TranscriptLine {
   message?: Message;
 }
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// Maximum bytes to read when scanning file contents for secrets/PII.
+// Files larger than this are scanned up to this limit; the remainder is skipped.
+const MAX_SCAN_BYTES = 1_048_576; // 1 MB
+
+// Maximum bytes to read from the tail of a transcript file.
+const MAX_TRANSCRIPT_TAIL_BYTES = 65_536; // 64 KB
+
 // ── Transcript ────────────────────────────────────────────────────────────────
 
 // Returns true when the message contains at least one text content block
@@ -42,7 +51,22 @@ function hasTextContent(msg: Message): boolean {
 function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
   let raw: string;
   try {
-    raw = fs.readFileSync(transcriptPath, "utf8");
+    const stat = fs.statSync(transcriptPath);
+    if (stat.size <= MAX_TRANSCRIPT_TAIL_BYTES) {
+      raw = fs.readFileSync(transcriptPath, "utf8");
+    } else {
+      const buf = Buffer.alloc(MAX_TRANSCRIPT_TAIL_BYTES);
+      const fd = fs.openSync(transcriptPath, "r");
+      fs.readSync(
+        fd,
+        buf,
+        0,
+        MAX_TRANSCRIPT_TAIL_BYTES,
+        stat.size - MAX_TRANSCRIPT_TAIL_BYTES,
+      );
+      fs.closeSync(fd);
+      raw = buf.toString("utf8");
+    }
   } catch {
     return new Set();
   }
@@ -226,7 +250,16 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   let content: string;
   try {
-    content = fs.readFileSync(filePath, "utf8");
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) return;
+    const bytesToRead = Math.min(stat.size, MAX_SCAN_BYTES);
+    const buf = Buffer.alloc(bytesToRead);
+    const fd = fs.openSync(filePath, "r");
+    fs.readSync(fd, buf, 0, bytesToRead, 0);
+    fs.closeSync(fd);
+    // Skip binary files: if NUL byte exists in the first 8KB, assume binary
+    if (buf.subarray(0, 8192).includes(0)) return;
+    content = buf.toString("utf8");
   } catch {
     return;
   }

@@ -245,6 +245,22 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
   });
 });
 
+// ── binary file skipping ──────────────────────────────────────────────────────
+
+describe("pre-tool-use-hook — binary file skipping", () => {
+  it("skips a binary file containing NUL bytes even if it has a secret pattern", () => {
+    const content = Buffer.concat([
+      Buffer.from("key=AKIAIOSFODNN7EXAMPLE\n"),
+      Buffer.from([0x00]),
+      Buffer.from("more data"),
+    ]);
+    const p = join(tmpDir, "binary.bin");
+    writeFileSync(p, content);
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // ── Bash tool — env var expansion ────────────────────────────────────────────
 
 describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {
