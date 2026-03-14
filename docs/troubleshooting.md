@@ -1,0 +1,40 @@
+# Troubleshooting
+
+## Node.js version too old
+
+Sensitive Canary requires Node.js **22.6.0** or later for `--experimental-strip-types`.
+
+```bash
+node --version
+```
+
+Install or update from [nodejs.org](https://nodejs.org/).
+
+## Hooks not running after install
+
+1. **Restart Claude Code** — hooks are loaded at startup
+2. **Check plugin status** — run `/plugin` and verify sensitive-canary is listed and enabled
+3. **Check hooks config** — for manual installs, verify the hooks entries exist in `~/.claude/settings.json`
+
+## False positives
+
+If legitimate content is being blocked:
+
+- Add `[allow-secret]`, `[allow-pii]`, or `[allow-all]` to your prompt to bypass the check for that message
+- Allow tags apply only to the current message and do not persist
+
+## .env files always blocked
+
+This is by design. `.env` and `.env.*` files are blocked unconditionally by filename, regardless of their contents. Use `[allow-all]` if you need Claude to read an `.env` file intentionally.
+
+## Plugin not found after marketplace registration
+
+Verify the marketplace was registered correctly:
+
+1. Run `/plugin` and check the **Marketplaces** tab
+2. Ensure `coo-quack/sensitive-canary` appears in the list
+3. Try running `/plugin install sensitive-canary@coo-quack` again
+
+## Still stuck?
+
+[Open an issue](https://github.com/coo-quack/sensitive-canary/issues) on GitHub.
