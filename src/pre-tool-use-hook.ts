@@ -211,8 +211,11 @@ function block(
 
   try {
     const fd = fs.openSync("/dev/tty", "w");
-    fs.writeSync(fd, terminalMessage);
-    fs.closeSync(fd);
+    try {
+      fs.writeSync(fd, terminalMessage);
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     process.stderr.write(terminalMessage);
   }
