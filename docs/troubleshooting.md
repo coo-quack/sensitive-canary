@@ -12,9 +12,8 @@ Install or update from [nodejs.org](https://nodejs.org/).
 
 ## Hooks not running after install
 
-1. **Restart Claude Code** — hooks are loaded at startup
-2. **Check plugin status** — run `/plugin` and verify sensitive-canary is listed and enabled
-3. **Check hooks config** — for manual installs, verify the hooks entries exist in `~/.claude/settings.json`
+1. **Check plugin status** — run `/plugin` and verify sensitive-canary is listed and enabled. Plugin hooks should activate immediately after install without a restart. If they still don't work, try restarting Claude Code
+2. **Check hooks config** — for manual installs, verify the hooks entries exist in `~/.claude/settings.json`
 
 ## False positives
 
@@ -22,6 +21,7 @@ If legitimate content is being blocked:
 
 - Add `[allow-secret]`, `[allow-pii]`, or `[allow-all]` to your prompt to bypass the check for that message
 - Allow tags apply only to the current message and do not persist
+- For PreToolUse hooks, allow tags are single-use — they are consumed by the first tool call. If Claude performs multiple tool calls, you may need to include the tag again
 
 ## .env files always blocked
 
