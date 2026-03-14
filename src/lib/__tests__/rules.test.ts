@@ -174,6 +174,16 @@ describe("scan — secrets", () => {
     expect(findings.some((f) => f.ruleId === "openai-key")).toBe(true);
   });
 
+  it("does not flag sk-proj-* as openai-key (legacy)", () => {
+    const findings = scan("sk-proj-Xk9mP2qR7vL4nW1sYj3cBz8dEf5gHiKoNpQuTxMn");
+    expect(findings.some((f) => f.ruleId === "openai-key")).toBe(false);
+  });
+
+  it("does not flag sk-ant-* as openai-key (legacy)", () => {
+    const findings = scan(`sk-ant-${"A".repeat(95)}`);
+    expect(findings.some((f) => f.ruleId === "openai-key")).toBe(false);
+  });
+
   it("detects an OpenAI project API key", () => {
     const findings = scan("sk-proj-Xk9mP2qR7vL4nW1sYj3cBz8dEf5gHiKoNpQuTxMn");
     expect(findings.some((f) => f.ruleId === "openai-project-key")).toBe(true);
