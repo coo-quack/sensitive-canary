@@ -19,9 +19,8 @@
 
 ### Performance
 
-- Limit file content scanning to first 1 MB to prevent OOM on large files
 - Read only the last 64 KB of transcript files for allow-tag resolution
-- Skip binary files (NUL in first bytes) to avoid pointless regex scanning
+- Skip binary content after first NUL byte to avoid pointless regex scanning
 
 ### Documentation
 
