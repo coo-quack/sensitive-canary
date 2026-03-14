@@ -37,7 +37,7 @@ export function luhn(str: string): boolean {
 export function entropy(str: string): number {
   if (str.length === 0) return 0;
   const freq: Record<string, number> = {};
-  for (const ch of str) freq[ch] = (freq[ch] || 0) + 1;
+  for (const ch of str) freq[ch] = (freq[ch] ?? 0) + 1;
   let h = 0;
   const n = str.length;
   for (const count of Object.values(freq)) {
@@ -164,7 +164,7 @@ const SECRET_RULES: Rule[] = [
   {
     id: "openai-key",
     description: "OpenAI API Key (legacy)",
-    regex: /sk-[A-Za-z0-9]{48}/g,
+    regex: /sk-(?!proj-|ant-)[A-Za-z0-9]{48}/g,
     category: "secret",
   },
   {

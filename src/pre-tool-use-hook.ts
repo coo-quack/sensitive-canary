@@ -173,9 +173,10 @@ function block(
   detectionLines: string[],
   allowHints: string[],
 ): never {
+  const bird = randomBird();
   const terminalMessage = [
     "",
-    `${randomBird()} sensitive-canary: blocked — ${source}`,
+    `${bird} sensitive-canary: blocked — ${source}`,
     "",
     ...detectionLines,
     "",
@@ -189,7 +190,6 @@ function block(
     process.stderr.write(terminalMessage);
   }
 
-  const bird = randomBird();
   const reasonLines = [
     `${bird} sensitive-canary blocked: ${source}`,
     "",
@@ -218,7 +218,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     block(
       filePath,
       [
-        `${randomBird()}  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.`,
+        "Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
       ],
       buildAllowHints(`please read ${filePath}`, [], true),
     );
@@ -236,11 +236,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   block(
     filePath,
-    [
-      `${randomBird()}  Blocked: file contains sensitive data`,
-      "",
-      ...findingsToLines(findings),
-    ],
+    ["Blocked: file contains sensitive data", "", ...findingsToLines(findings)],
     buildAllowHints(`please read ${filePath}`, findings),
   );
 }
@@ -281,7 +277,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          `${randomBird()}  Blocked: environment variable $${varName} contains sensitive data`,
+          `Blocked: environment variable $${varName} contains sensitive data`,
           "",
           ...findingsToLines(findings),
         ],
@@ -297,7 +293,7 @@ process.stdin.on("end", () => {
       block(
         `bash command: ${command.slice(0, 80)}`,
         [
-          `${randomBird()}  Blocked: bash command contains sensitive data`,
+          "Blocked: bash command contains sensitive data",
           "",
           ...findingsToLines(cmdFindings),
         ],
