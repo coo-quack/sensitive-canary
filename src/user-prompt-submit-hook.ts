@@ -76,22 +76,14 @@ process.stdin.on("end", () => {
     process.exit(2);
   }
 
-  const unique: Finding[] = afterAllow.filter(
-    (f) =>
-      !(f.category === "secret" && effectiveMask.has("secret")) &&
-      !(f.category === "pii" && effectiveMask.has("pii")),
-  );
-
-  if (unique.length === 0) process.exit(0);
-
-  const hasSecret = unique.some((f) => f.category === "secret");
-  const hasPii = unique.some((f) => f.category === "pii");
+  const hasSecret = afterAllow.some((f) => f.category === "secret");
+  const hasPii = afterAllow.some((f) => f.category === "pii");
 
   const blockLines = [
     "",
     `${randomBird()} sensitive-canary: sensitive data detected — blocked`,
     "",
-    ...findingsToLines(unique),
+    ...findingsToLines(afterAllow),
     "",
     "To allow, add a tag to your prompt:",
     ...(hasSecret ? ["  [allow-secret]  — allow secrets"] : []),

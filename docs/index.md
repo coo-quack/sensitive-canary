@@ -11,7 +11,7 @@ hero:
   actions:
     - theme: brand
       text: Get Started
-      link: /install
+      link: /getting-started
     - theme: alt
       text: Detection Rules
       link: /rules
@@ -54,36 +54,10 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **29 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **31 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
-
-## Quick Start
-
-Install with two commands inside a Claude Code session:
-
-```bash
-# 1. Register the marketplace
-/plugin marketplace add coo-quack/sensitive-canary
-
-# 2. Install the plugin
-/plugin install sensitive-canary@coo-quack
-```
-
-After installation, restart Claude Code and the hooks are active. No additional configuration needed.
-
-### What Happens
-
-Just use Claude Code as usual. sensitive-canary runs in the background and automatically scans at three points:
-
-- **On prompt submission** — checks your input for secrets and PII before it reaches the API
-- **On file read** — checks file names and contents before Claude reads them
-- **On command execution** — checks Bash commands and environment variable values for secrets
-
-When sensitive data is detected, the action is blocked and the terminal shows what was found. To intentionally allow it, add `[allow-secret]` or `[allow-all]` to your prompt.
-
-See [installation guide →](/install) for manual setup options.
 
 ## Detection Rules
 

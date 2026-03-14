@@ -37,7 +37,7 @@ export function luhn(str: string): boolean {
 export function entropy(str: string): number {
   if (str.length === 0) return 0;
   const freq: Record<string, number> = {};
-  for (const ch of str) freq[ch] = (freq[ch] || 0) + 1;
+  for (const ch of str) freq[ch] = (freq[ch] ?? 0) + 1;
   let h = 0;
   const n = str.length;
   for (const count of Object.values(freq)) {
@@ -65,6 +65,12 @@ const SECRET_RULES: Rule[] = [
     category: "secret",
   },
   {
+    id: "gcp-api-key",
+    description: "Google Cloud API Key",
+    regex: /AIza[0-9A-Za-z_-]{35}/g,
+    category: "secret",
+  },
+  {
     id: "private-key",
     description: "PEM Private Key",
     // Covers RSA, EC, DSA, PGP, and OpenSSH private keys
@@ -89,6 +95,14 @@ const SECRET_RULES: Rule[] = [
     id: "gitlab-pat",
     description: "GitLab Personal Access Token",
     regex: /glpat-[A-Za-z0-9_=-]{20,22}/g,
+    category: "secret",
+  },
+
+  // Package registries
+  {
+    id: "npm-token",
+    description: "npm Access Token",
+    regex: /npm_[A-Za-z0-9]{36}/g,
     category: "secret",
   },
 
@@ -164,7 +178,7 @@ const SECRET_RULES: Rule[] = [
   {
     id: "openai-key",
     description: "OpenAI API Key (legacy)",
-    regex: /sk-[A-Za-z0-9]{48}/g,
+    regex: /sk-(?!proj-|ant-)[A-Za-z0-9]{48}/g,
     category: "secret",
   },
   {
