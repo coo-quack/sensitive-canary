@@ -57,15 +57,18 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
     } else {
       const buf = Buffer.alloc(MAX_TRANSCRIPT_TAIL_BYTES);
       const fd = fs.openSync(transcriptPath, "r");
-      fs.readSync(
-        fd,
-        buf,
-        0,
-        MAX_TRANSCRIPT_TAIL_BYTES,
-        stat.size - MAX_TRANSCRIPT_TAIL_BYTES,
-      );
-      fs.closeSync(fd);
-      raw = buf.toString("utf8");
+      try {
+        const bytesRead = fs.readSync(
+          fd,
+          buf,
+          0,
+          MAX_TRANSCRIPT_TAIL_BYTES,
+          stat.size - MAX_TRANSCRIPT_TAIL_BYTES,
+        );
+        raw = buf.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        fs.closeSync(fd);
+      }
     }
   } catch {
     return new Set();
@@ -255,11 +258,16 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     const bytesToRead = Math.min(stat.size, MAX_SCAN_BYTES);
     const buf = Buffer.alloc(bytesToRead);
     const fd = fs.openSync(filePath, "r");
-    fs.readSync(fd, buf, 0, bytesToRead, 0);
-    fs.closeSync(fd);
+    let bytesRead: number;
+    try {
+      bytesRead = fs.readSync(fd, buf, 0, bytesToRead, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const data = buf.subarray(0, bytesRead);
     // Skip binary files: if NUL byte exists in the first 8KB, assume binary
-    if (buf.subarray(0, 8192).includes(0)) return;
-    content = buf.toString("utf8");
+    if (data.subarray(0, 8192).includes(0)) return;
+    content = data.toString("utf8");
   } catch {
     return;
   }
