@@ -37,6 +37,8 @@ sensitive-canary is a best-effort guard, not a guaranteed security boundary:
 - **Allow tags** — Any block can be bypassed by the user with `[allow-secret]`, `[allow-pii]`, or `[allow-all]`. This is intentional — the tool assists, not enforces.
 - **Hook execution** — If the Node.js process fails to start (e.g., wrong Node version), the hook exits 0 (pass) to avoid blocking Claude entirely.
 - **Parse errors** — If the hook input cannot be parsed (malformed JSON from Claude Code), the hook exits 0 (pass) as a fail-open fallback.
+- **File size limit** — Only the first 1 MB of a file is scanned. Secrets beyond this boundary are not detected.
+- **Binary files** — Binary files are detected by the presence of a NUL byte. Only the text portion before the first NUL is scanned; content after the NUL is not checked.
 - **Scope** — Only `Read` and `Bash` tool calls are intercepted. Other tool types are not scanned.
 
 ---

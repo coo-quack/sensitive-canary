@@ -188,9 +188,9 @@ To allow it through, add the suggested tag:
 ```
 > Read .env
 
-📄 sensitive-canary: blocked — /path/to/.env
+🐤 sensitive-canary: blocked — /path/to/.env
 
-🐤  Blocked: .env and .env.* files contain secrets and must not be read into the conversation.
+Blocked: .env and .env.* files contain secrets and must not be read into the conversation.
 
 To allow this, the user must add an allow tag to their next prompt:
   [allow-secret]  — allow secrets
@@ -207,9 +207,9 @@ Non-`.env` files are also blocked if their contents contain secrets or PII.
 ```
 > Read config.yaml
 
-📄 sensitive-canary: blocked — /path/to/config.yaml
+🐤 sensitive-canary: blocked — /path/to/config.yaml
 
-🐤  Blocked: file contains sensitive data
+Blocked: file contains sensitive data
 
   [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
 ```
