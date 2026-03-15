@@ -79,6 +79,7 @@ jobs:
           echo "$NOTES" > /tmp/release-notes.md
 
       - name: Create GitHub Release
+        id: gh_release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -89,9 +90,11 @@ jobs:
             gh release create "$VERSION" \
               --title "$VERSION" \
               --notes-file /tmp/release-notes.md
+            echo "created=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Sync marketplace
+        if: steps.gh_release.outputs.created == 'true'
         env:
           GH_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
         run: |
