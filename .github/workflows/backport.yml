@@ -1,75 +1,41 @@
-name: Backport to develop
+name: Sync main to develop
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
 
 permissions: {}
 
+concurrency:
+  group: sync-main-to-develop
+  cancel-in-progress: false
+
 jobs:
-  backport:
-    if: github.event.pull_request.merged == true
+  sync:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Check if backport is needed
+      - name: Check if sync is needed
         id: check
         run: |
           git fetch origin develop
-          DIFF=$(git log origin/develop..origin/main --oneline)
-          if [ -n "$DIFF" ]; then
-            echo "needed=true" >> $GITHUB_OUTPUT
-          else
+          if git merge-base --is-ancestor origin/main origin/develop; then
             echo "needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "needed=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create backport branch
+      - name: Merge main into develop
         if: steps.check.outputs.needed == 'true'
-        id: branch
         run: |
-          BRANCH="backport/pr-${{ github.event.pull_request.number }}-to-develop"
-          git checkout -b $BRANCH origin/develop
+          git checkout -B develop origin/develop
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Merge main into the backport branch
-          if git merge origin/main --no-edit; then
-            echo "conflict=false" >> $GITHUB_OUTPUT
-          else
-            echo "conflict=true" >> $GITHUB_OUTPUT
-            git merge --abort
-            git merge origin/main --no-edit -s ours
-          fi
-
-          git push origin $BRANCH
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-
-      - name: Create backport PR
-        if: steps.check.outputs.needed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "${{ steps.branch.outputs.conflict }}" = "true" ]; then
-            BODY="Automated backport of #${{ github.event.pull_request.number }} to \`develop\`.\n\n⚠️ **Merge conflict detected.** The branch was created with \`-s ours\` to allow PR creation. You must manually resolve the conflicts before merging."
-          else
-            BODY="Automated backport of #${{ github.event.pull_request.number }} **${{ github.event.pull_request.title }}** to \`develop\`."
-          fi
-
-          PR_URL=$(gh pr create \
-            --title "chore: backport #${{ github.event.pull_request.number }} to develop" \
-            --body "$(echo -e "$BODY")" \
-            --base develop \
-            --head ${{ steps.branch.outputs.branch }})
-
-          # Merge if no conflicts — use --auto if required checks exist, else merge directly
-          if [ "${{ steps.branch.outputs.conflict }}" != "true" ]; then
-            gh pr merge "$PR_URL" --auto --merge || gh pr merge "$PR_URL" --merge
-          fi
+          git merge origin/main --no-edit
+          git push origin develop

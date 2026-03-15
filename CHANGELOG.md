@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.5.1 (2026-03-15)
+
+### Fixes
+
+- Remove `marketplace.json` and sync marketplace via `repository_dispatch` on release
+- Gate marketplace sync on actual release creation to prevent duplicate dispatches
+- Update marketplace registration commands across README and docs to point to `coo-quack/claude-code-marketplace`
+- Remove stale `marketplace.json` references from `CONTRIBUTING.md` and `README.md`
+- Simplify backport workflow to direct main-to-develop merge
+
+---
+
 ## v0.5.0 (2026-03-14)
 
 ### Features
