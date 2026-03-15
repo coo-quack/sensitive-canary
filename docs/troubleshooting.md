@@ -32,7 +32,7 @@ This is by design. `.env` and `.env.*` files are blocked unconditionally by file
 Verify the marketplace was registered correctly:
 
 1. Run `/plugin` and check the **Marketplaces** tab
-2. Ensure `coo-quack/sensitive-canary` appears in the list
+2. Ensure `coo-quack/claude-code-marketplace` appears in the list
 3. Try running `/plugin install sensitive-canary@coo-quack` again
 
 ## Still stuck?

@@ -64,7 +64,7 @@ If the backport PR has conflicts, resolve them manually before merging.
 
 When bumping a version, open a PR from `develop` → `main` with:
 
-1. Update `version` in `package.json` and `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+1. Update `version` in `package.json` and `.claude-plugin/plugin.json`
 2. Update `CHANGELOG.md` with a new `## vX.Y.Z (YYYY-MM-DD)` section
    - `docs/changelog.md` is a symlink to `CHANGELOG.md` — do not edit it separately
    - This content is automatically used as the GitHub Release notes by `release.yml`

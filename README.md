@@ -46,7 +46,7 @@ Install in two commands from inside a Claude Code session:
 **1. Register the marketplace**
 
 ```
-/plugin marketplace add coo-quack/sensitive-canary
+/plugin marketplace add coo-quack/claude-code-marketplace
 ```
 
 **2. Install the plugin**
@@ -360,7 +360,6 @@ When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag t
 ```
 .claude-plugin/
   plugin.json                  plugin manifest
-  marketplace.json             marketplace catalog
 hooks/
   hooks.json                   Claude Code hook configuration
 src/
