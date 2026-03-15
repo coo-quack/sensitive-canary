@@ -46,7 +46,7 @@ Install in two commands from inside a Claude Code session:
 **1. Register the marketplace**
 
 ```
-/plugin marketplace add coo-quack/sensitive-canary
+/plugin marketplace add coo-quack/claude-code-marketplace
 ```
 
 **2. Install the plugin**
