@@ -22,7 +22,7 @@ jobs:
           version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm run typecheck
@@ -38,7 +38,7 @@ jobs:
           version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm run lint
@@ -54,7 +54,7 @@ jobs:
           version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm run format:check
@@ -70,7 +70,7 @@ jobs:
           version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm test
