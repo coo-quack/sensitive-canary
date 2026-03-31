@@ -1,6 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended"
+  ],
   "dependencyDashboard": true,
   "osvVulnerabilityAlerts": true,
   "lockFileMaintenance": {
@@ -10,19 +12,33 @@
   "packageRules": [
     {
       "description": "Automerge all updates when CI passes",
-      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "automerge": true,
-      "automergeType": "pr"
+      "automergeType": "pr",
+      "minimumReleaseAge": "7 days"
     },
     {
       "description": "Update package managers",
-      "matchPackagePatterns": ["npm", "pnpm", "bun"],
+      "matchPackagePatterns": [
+        "npm",
+        "pnpm",
+        "bun"
+      ],
       "enabled": true
     },
     {
       "description": "Group all devDependencies",
-      "matchDepTypes": ["devDependencies"],
+      "matchDepTypes": [
+        "devDependencies"
+      ],
       "groupName": "devDependencies"
     }
-  ]
+  ],
+  "minimumReleaseAge": "7 days"
 }
