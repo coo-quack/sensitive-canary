@@ -20,6 +20,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Disable cached GITHUB_TOKEN so we can push with the App token below.
+          persist-credentials: false
 
       - name: Check if sync is needed
         id: check
@@ -34,7 +36,7 @@ jobs:
       - name: Mint app token
         if: steps.check.outputs.needed == 'true'
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.BACKPORT_APP_ID }}
           private-key: ${{ secrets.BACKPORT_APP_PRIVATE_KEY }}
