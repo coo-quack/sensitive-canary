@@ -14,8 +14,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v7
@@ -32,13 +31,26 @@ jobs:
             echo "needed=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Mint app token
+        if: steps.check.outputs.needed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.BACKPORT_APP_ID }}
+          private-key: ${{ secrets.BACKPORT_APP_PRIVATE_KEY }}
+
       - name: Prepare sync branch
         if: steps.check.outputs.needed == 'true'
         id: branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           BRANCH="chore/sync-main-to-develop-${{ github.run_id }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          SLUG="${{ steps.app-token.outputs.app-slug }}"
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${SLUG}[bot]@users.noreply.github.com"
+          # Push via app token so subsequent workflows (CI) fire on the new branch.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git checkout -B "$BRANCH" origin/develop
           git merge origin/main --no-edit
           git push origin "$BRANCH"
@@ -47,7 +59,7 @@ jobs:
       - name: Open PR and enable auto-merge
         if: steps.check.outputs.needed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           PR_URL=$(gh pr create \
             --base develop \
