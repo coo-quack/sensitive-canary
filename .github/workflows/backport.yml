@@ -20,6 +20,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Disable cached GITHUB_TOKEN so we can push with the App token below.
+          persist-credentials: false
 
       - name: Check if sync is needed
         id: check
