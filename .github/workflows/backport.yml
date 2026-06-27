@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v7
@@ -31,11 +32,26 @@ jobs:
             echo "needed=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Merge main into develop
+      - name: Prepare sync branch
         if: steps.check.outputs.needed == 'true'
+        id: branch
         run: |
-          git checkout -B develop origin/develop
+          BRANCH="chore/sync-main-to-develop-${{ github.run_id }}"
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH" origin/develop
           git merge origin/main --no-edit
-          git push origin develop
+          git push origin "$BRANCH"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Open PR and enable auto-merge
+        if: steps.check.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_URL=$(gh pr create \
+            --base develop \
+            --head "${{ steps.branch.outputs.branch }}" \
+            --title "chore: sync main to develop" \
+            --body "Automated sync of main into develop. Auto-merges once CI passes.")
+          gh pr merge --auto --merge "$PR_URL"
