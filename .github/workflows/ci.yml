@@ -16,13 +16,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
-          version: latest
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm run typecheck
@@ -32,13 +30,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
-          version: latest
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm run lint
@@ -48,13 +44,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
-          version: latest
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm run format:check
@@ -64,13 +58,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
-          version: latest
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+          node-version: '24'
           cache: 'pnpm'
       - run: pnpm install
       - run: pnpm test
