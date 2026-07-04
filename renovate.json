@@ -21,7 +21,7 @@
       ],
       "automerge": true,
       "automergeType": "pr",
-      "minimumReleaseAge": "7 days"
+      "minimumReleaseAge": "1 day"
     },
     {
       "description": "Update package managers",
@@ -40,5 +40,5 @@
       "groupName": "devDependencies"
     }
   ],
-  "minimumReleaseAge": "7 days"
+  "minimumReleaseAge": "1 day"
 }
