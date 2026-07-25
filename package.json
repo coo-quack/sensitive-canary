@@ -36,7 +36,7 @@
     "@biomejs/biome": "^2.4.4",
     "@types/node": "^25.3.0",
     "typescript": "^7.0.0",
-    "vitepress": "^1.6.4",
+    "vitepress": "2.0.0-alpha.18",
     "vitest": "^4.0.18"
   },
   "packageManager": "pnpm@11.17.0"
