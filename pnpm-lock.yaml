@@ -12,19 +12,19 @@ importers:
   .:
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.4.4
+        specifier: 2.5.3
         version: 2.5.3
       '@types/node':
-        specifier: ^25.3.0
+        specifier: 25.9.5
         version: 25.9.5
       typescript:
-        specifier: ^7.0.0
+        specifier: 7.0.2
         version: 7.0.2
       vitepress:
         specifier: 2.0.0-alpha.18
         version: 2.0.0-alpha.18(@types/node@25.9.5)(postcss@8.5.23)(typescript@7.0.2)
       vitest:
-        specifier: ^4.0.18
+        specifier: 4.1.10
         version: 4.1.10(@types/node@25.9.5)(vite@8.1.4(@types/node@25.9.5))
 
 packages:
