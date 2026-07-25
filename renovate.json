@@ -1,49 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ],
-  "dependencyDashboard": true,
-  "osvVulnerabilityAlerts": true,
-  "lockFileMaintenance": {
-    "enabled": true,
-    "automerge": true
-  },
+  "extends": ["github>coo-quack/renovate-config"],
   "packageRules": [
-    {
-      "description": "Automerge all updates when CI passes",
-      "matchUpdateTypes": [
-        "major",
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
-      "automerge": true,
-      "automergeType": "pr",
-      "minimumReleaseAge": "1 day"
-    },
-    {
-      "description": "Update package managers",
-      "matchPackagePatterns": [
-        "npm",
-        "pnpm",
-        "bun"
-      ],
-      "enabled": true
-    },
-    {
-      "description": "Group all devDependencies",
-      "matchDepTypes": [
-        "devDependencies"
-      ],
-      "groupName": "devDependencies"
-    },
     {
       "description": "Skip broken pnpm 11.12.0 (self-installer regression)",
       "matchPackageNames": ["pnpm"],
       "allowedVersions": "<11.12.0 || >11.12.0"
     }
-  ],
-  "minimumReleaseAge": "1 day"
+  ]
 }
