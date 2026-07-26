@@ -33,11 +33,11 @@
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.4",
-    "@types/node": "^25.3.0",
-    "typescript": "^6.0.0",
-    "vitepress": "^1.6.4",
-    "vitest": "^4.0.18"
+    "@biomejs/biome": "2.5.3",
+    "@types/node": "25.9.5",
+    "typescript": "7.0.2",
+    "vitepress": "2.0.0-alpha.18",
+    "vitest": "4.1.10"
   },
-  "packageManager": "pnpm@11.9.0"
+  "packageManager": "pnpm@11.17.0"
 }

@@ -1,44 +1,16 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ],
-  "dependencyDashboard": true,
-  "osvVulnerabilityAlerts": true,
-  "lockFileMaintenance": {
-    "enabled": true,
-    "automerge": true
-  },
+  "extends": ["github>coo-quack/renovate-config"],
   "packageRules": [
     {
-      "description": "Automerge all updates when CI passes",
-      "matchUpdateTypes": [
-        "major",
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
-      "automerge": true,
-      "automergeType": "pr",
-      "minimumReleaseAge": "1 day"
+      "description": "Skip broken pnpm 11.12.0 (self-installer regression)",
+      "matchPackageNames": ["pnpm"],
+      "allowedVersions": "<11.12.0 || >11.12.0"
     },
     {
-      "description": "Update package managers",
-      "matchPackagePatterns": [
-        "npm",
-        "pnpm",
-        "bun"
-      ],
-      "enabled": true
-    },
-    {
-      "description": "Group all devDependencies",
-      "matchDepTypes": [
-        "devDependencies"
-      ],
-      "groupName": "devDependencies"
+      "description": "vitepress is on a 2.0 alpha, which it needs in order to run on the vite 8 that vitest requires. Renovate follows the unstable channel once the current version is unstable, so alpha releases would otherwise reach main unread. The docs job in CI proves the site still builds; whether an alpha is worth taking is a person's call. Drop this rule when 2.0 goes stable.",
+      "matchPackageNames": ["vitepress"],
+      "automerge": false
     }
-  ],
-  "minimumReleaseAge": "1 day"
+  ]
 }
