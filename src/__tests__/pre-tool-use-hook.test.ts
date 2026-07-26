@@ -386,23 +386,18 @@ describe("pre-tool-use-hook — Bash tool (command string)", () => {
 // ── Bash tool — file-reading command blocking ─────────────────────────────────
 
 describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
-  it.each([
-    "cat",
-    "head",
-    "tail",
-    "less",
-    "more",
-    "bat",
-    "nl",
-  ])("blocks %s on a file with secrets", (cmd) => {
-    const p = writeFixture(
-      `creds-${cmd}.txt`,
-      "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode, decision } = runBashHook(`${cmd} ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
+  it.each(["cat", "head", "tail", "less", "more", "bat", "nl"])(
+    "blocks %s on a file with secrets",
+    (cmd) => {
+      const p = writeFixture(
+        `creds-${cmd}.txt`,
+        "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n",
+      );
+      const { exitCode, decision } = runBashHook(`${cmd} ${p}`);
+      expect(exitCode).toBe(2);
+      expect(decision).toBe("block");
+    },
+  );
 
   it("blocks cat on a file with PII", () => {
     const p = writeFixture("contacts-bash.txt", "Email: user@example.com\n");
