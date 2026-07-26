@@ -33,7 +33,7 @@
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.3",
+    "@biomejs/biome": "2.5.5",
     "@types/node": "25.9.5",
     "typescript": "7.0.2",
     "vitepress": "2.0.0-alpha.18",
