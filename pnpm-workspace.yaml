@@ -3,7 +3,7 @@ overrides:
   # postcss reaches the tree through vite and as a peer of vitepress, both of
   # which allow ^8.5.x. Updating the lockfile in place leaves it on 8.5.17
   # regardless of that, so the version is pinned here and Renovate moves it.
-  postcss: 8.5.23
+  postcss: 8.5.24
 
 # Supply-chain policy: reject packages published less than 1 day ago (minutes)
 minimumReleaseAge: 1440
