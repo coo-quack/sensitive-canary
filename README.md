@@ -25,7 +25,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **49 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE)
 - **Context gating** — postal codes and FIGS phone numbers require a nearby label, reducing false positives on bare digit sequences
 - **Entropy filtering** — reduces false positives on low-entropy values

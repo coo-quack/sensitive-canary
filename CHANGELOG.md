@@ -14,7 +14,7 @@
   - Postal codes for JP, US/EU/KR (5/9-digit), and CN (6-digit)
   - Public IPv4 and IPv6 addresses (reserved ranges excluded)
 - Add context gating for noisy rules
-  - Rules with `requireContext` only fire when a nearby context word (phone, ZIP, IP, etc.) is found within ~2 sentences of the match
+  - Rules with `requireContext` only fire when a nearby context word (phone, ZIP, IP, etc.) is found within a small window around the match (default: 3 tokens ≈ 24 characters)
   - Reduces false positives on bare digit sequences without sacrificing detection when labels are present
 - Move all rule definitions to JSON (`src/lib/default-config.json`)
   - Rules are now data, not code — the full set can be inspected and modified without editing TypeScript

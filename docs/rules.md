@@ -149,7 +149,7 @@ Variable-length Italian and German phone numbers, and bare 5/9-digit postal code
 
 National ID numbers rely on their checksums instead and do not require context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
-Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.) so that example IPs like `8.8.8.8` and tutorials do not fire unless a label such as `ip` or `address` is nearby. The existing `pii-ipv4` rule still flags RFC 1918 private ranges without context.
+Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.) so that example IPs like `8.8.8.8` and tutorials do not fire unless a label such as `ip`, `ipv4`, or `ipv6` is nearby. The existing `pii-ipv4` rule still flags RFC 1918 private ranges without context.
 
 ### Credit Card Validation
 

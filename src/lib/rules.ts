@@ -591,7 +591,7 @@ function buildRules(): Rule[] {
         `sensitive-canary: invalid contextWindow in user config, ignoring\n`,
       );
     }
-    if (userConfig.rules?.length) {
+    if (Array.isArray(userConfig.rules) && userConfig.rules.length) {
       const userRules: Rule[] = [];
       for (const rc of userConfig.rules) {
         try {
