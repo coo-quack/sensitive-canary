@@ -95,8 +95,8 @@ export function luhn(str: string): boolean {
 
 // Japanese Individual Number (My Number): 12 digits, weighted checksum over the
 // first 11 digits with weights 6,5,4,3,2,7,6,5,4,3,2. The 12th digit is
-// 11 - (sum mod 11); a remainder of 0 or 1 is an invalid number.
-// Spec: 地方公共団体情報システム機構 (JIPTEC).
+// 11 - (sum mod 11); when the remainder is 0 or 1, the check digit is 0.
+// Spec: 地方公共団体情報システム機構 (J-LIS).
 export function validateMyNumber(input: string): boolean {
   const digits = input.replace(/\D/g, "");
   if (digits.length !== 12) return false;
@@ -106,8 +106,8 @@ export function validateMyNumber(input: string): boolean {
     sum += parseInt(digits[i] ?? "", 10) * (weights[i] ?? 0);
   }
   const remainder = sum % 11;
-  if (remainder <= 1) return false;
-  return 11 - remainder === parseInt(digits[11] ?? "", 10);
+  const checkDigit = remainder <= 1 ? 0 : 11 - remainder;
+  return checkDigit === parseInt(digits[11] ?? "", 10);
 }
 
 // French NIR (Numéro de sécurité sociale / INSEE): 15 digits, 2-digit check key

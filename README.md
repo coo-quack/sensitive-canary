@@ -340,7 +340,7 @@ Invalid rules (bad regex, missing fields) are skipped with a warning on stderr. 
 
 ## Detection rules
 
-### Secrets (24 rules)
+### Secrets (39 rules)
 
 | Rule ID | Description |
 |---|---|
@@ -364,6 +364,21 @@ Invalid rules (bad regex, missing fields) are skipped with a warning on stderr. 
 | `openai-key` | OpenAI API Key (legacy format) |
 | `openai-project-key` | OpenAI Project API Key (`sk-proj-` prefix) *(entropy ≥ 3.5)* |
 | `anthropic-key` | Anthropic API Key |
+| `replicate-token` | Replicate API Token |
+| `huggingface-token` | Hugging Face Access Token |
+| `groq-key` | Groq API Key |
+| `openrouter-key` | OpenRouter API Key |
+| `xai-key` | xAI (Grok) API Key |
+| `perplexity-key` | Perplexity API Key |
+| `digitalocean-pat` | DigitalOcean Personal Access Token |
+| `square-access-token` | Square Access Token |
+| `mapbox-token` | Mapbox Token |
+| `sentry-user-token` | Sentry User Auth Token |
+| `sentry-org-token` | Sentry Organization Auth Token |
+| `atlassian-token` | Atlassian API Token |
+| `linear-key` | Linear API Key |
+| `postman-key` | Postman API Key |
+| `supabase-key` | Supabase Personal Access Token |
 | `jwt` | JSON Web Token (JWT) |
 | `generic-secret` | Generic API key / secret assignment *(entropy ≥ 3.5)* |
 | `env-assignment` | `.env`-style secret assignment *(entropy ≥ 3.0)* |
@@ -401,7 +416,7 @@ Invalid rules (bad regex, missing fields) are skipped with a warning on stderr. 
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
 
-National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, GB 11643-1999 for the Chinese Resident Identity Card, and the NTS (Hometax) standard algorithm for the Korean BRN.
+National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (J-LIS) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, GB 11643-1999 for the Chinese Resident Identity Card, and the NTS (Hometax) standard algorithm for the Korean BRN.
 
 ### Context gating
 

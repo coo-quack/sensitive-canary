@@ -249,6 +249,75 @@ describe("scan — secrets", () => {
   });
 });
 
+// ── scan: expanded secrets ───────────────────────────────────────────────────
+
+describe("scan — expanded secrets (AI, cloud, SaaS)", () => {
+  it("detects a Replicate token", () => {
+    const findings = scan(`r8_${"A".repeat(37)}`);
+    expect(findings.some((f) => f.ruleId === "replicate-token")).toBe(true);
+  });
+
+  it("detects a Hugging Face token", () => {
+    const findings = scan(`hf_${"a".repeat(34)}`);
+    expect(findings.some((f) => f.ruleId === "huggingface-token")).toBe(true);
+  });
+
+  it("detects a Groq API key", () => {
+    const findings = scan(`gsk_${"A".repeat(52)}`);
+    expect(findings.some((f) => f.ruleId === "groq-key")).toBe(true);
+  });
+
+  it("detects an OpenRouter API key", () => {
+    const findings = scan(`sk-or-v1-${"a".repeat(64)}`);
+    expect(findings.some((f) => f.ruleId === "openrouter-key")).toBe(true);
+  });
+
+  it("detects an xAI (Grok) API key", () => {
+    const findings = scan(`xai-${"A".repeat(80)}`);
+    expect(findings.some((f) => f.ruleId === "xai-key")).toBe(true);
+  });
+
+  it("detects a Perplexity API key", () => {
+    const findings = scan(`pplx-${"a".repeat(48)}`);
+    expect(findings.some((f) => f.ruleId === "perplexity-key")).toBe(true);
+  });
+
+  it("detects a DigitalOcean PAT", () => {
+    const findings = scan(`dop_v1_${"a".repeat(64)}`);
+    expect(findings.some((f) => f.ruleId === "digitalocean-pat")).toBe(true);
+  });
+
+  it("detects a Square access token", () => {
+    const findings = scan(`EAAA${"A".repeat(60)}`);
+    expect(findings.some((f) => f.ruleId === "square-access-token")).toBe(true);
+  });
+
+  it("detects a Sentry user auth token", () => {
+    const findings = scan(`sntryu_${"a".repeat(64)}`);
+    expect(findings.some((f) => f.ruleId === "sentry-user-token")).toBe(true);
+  });
+
+  it("detects an Atlassian API token", () => {
+    const findings = scan(`ATATT3${"A".repeat(180)}`);
+    expect(findings.some((f) => f.ruleId === "atlassian-token")).toBe(true);
+  });
+
+  it("detects a Linear API key", () => {
+    const findings = scan(`lin_api_${"a".repeat(40)}`);
+    expect(findings.some((f) => f.ruleId === "linear-key")).toBe(true);
+  });
+
+  it("detects a Postman API key", () => {
+    const findings = scan(`PMAK-${"a".repeat(24)}-${"b".repeat(34)}`);
+    expect(findings.some((f) => f.ruleId === "postman-key")).toBe(true);
+  });
+
+  it("detects a Supabase PAT", () => {
+    const findings = scan(`sbp_${"a".repeat(40)}`);
+    expect(findings.some((f) => f.ruleId === "supabase-key")).toBe(true);
+  });
+});
+
 // ── scan: PII ─────────────────────────────────────────────────────────────────
 
 describe("scan — PII", () => {

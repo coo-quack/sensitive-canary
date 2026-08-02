@@ -32,6 +32,19 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `openai-key` | OpenAI API Key — legacy format (`sk-` + 48 chars) |
 | `openai-project-key` | OpenAI Project API Key (`sk-proj-` prefix, entropy-filtered) |
 | `anthropic-key` | Anthropic API Key (`sk-ant-` prefix) |
+| `replicate-token` | Replicate API Token (`r8_` prefix) |
+| `huggingface-token` | Hugging Face Access Token (`hf_` prefix) |
+| `groq-key` | Groq API Key (`gsk_` prefix) |
+| `openrouter-key` | OpenRouter API Key (`sk-or-v1-` prefix) |
+| `xai-key` | xAI (Grok) API Key (`xai-` prefix) |
+| `perplexity-key` | Perplexity API Key (`pplx-` prefix) |
+
+### Cloud / IaaS
+
+| Rule ID | Description |
+|---------|-------------|
+| `digitalocean-pat` | DigitalOcean Personal Access Token (`dop_v1_` prefix) |
+| `supabase-key` | Supabase Personal Access Token (`sbp_` prefix) |
 
 ### Communication
 
@@ -49,6 +62,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `stripe-secret-key` | Stripe Secret Key (`sk_live_` / `sk_test_` prefix) |
 | `stripe-restricted-key` | Stripe Restricted Key (`rk_live_` / `rk_test_` prefix) |
+| `square-access-token` | Square Access Token (`EAAA` prefix) |
 
 ### Email Services
 
@@ -65,6 +79,17 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `jwt` | JSON Web Token (three Base64URL segments separated by `.`) |
 | `private-key` | PEM Private Key header (`-----BEGIN … PRIVATE KEY-----`) |
 | `connection-string` | Database connection string with embedded credentials |
+
+### SaaS / Developer Tools
+
+| Rule ID | Description |
+|---------|-------------|
+| `mapbox-token` | Mapbox Token (`pk.` / `sk.` JWT prefix) |
+| `sentry-user-token` | Sentry User Auth Token (`sntryu_` prefix) |
+| `sentry-org-token` | Sentry Organization Auth Token (`sntrys_` JWT prefix) |
+| `atlassian-token` | Atlassian (Jira/Confluence) API Token (`ATATT3` prefix) |
+| `linear-key` | Linear API Key (`lin_api_` prefix) |
+| `postman-key` | Postman API Key (`PMAK-` prefix) |
 
 ### Generic / Env-based
 
@@ -109,7 +134,7 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 
 National ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE) are matched by pattern **and** validated against their official checksum algorithm. A digit sequence that looks right but fails the checksum is not flagged. The algorithms follow each issuing authority's published spec:
 
-- **My Number**: 地方公共団体情報システム機構 (JIPTEC)
+- **My Number**: 地方公共団体情報システム機構 (J-LIS)
 - **NIR**: INSEE / décret n°82-103 (97 − N mod 97)
 - **Codice Fiscale**: Agenzia delle Entrate, DM 12 giugno 2007 (mod 26)
 - **Steuer-IdNr.**: Bundeszentralamt für Steuern (ISO/IEC 7064 MOD 11,10)

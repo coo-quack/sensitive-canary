@@ -23,6 +23,18 @@
   - Create `~/.config/sensitive-canary/config.json` or set `SENSITIVE_CANARY_CONFIG` to a custom path
   - Add new rules, override built-in rules by id, and set a custom `contextWindow`
   - Invalid rules are skipped with a warning; the rest of the config loads normally
+- Expand secret detection coverage (39 secret rules, up from 24)
+  - AI services: Replicate, Hugging Face, Groq, OpenRouter, xAI (Grok), Perplexity
+  - Cloud / IaaS: DigitalOcean PAT, Supabase PAT
+  - Payment: Square access token
+  - SaaS / Dev tools: Mapbox, Sentry (user + org tokens), Atlassian, Linear, Postman
+
+### Fixes
+
+- Fix My Number checksum: when the weighted-sum remainder is 0 or 1, the check digit is 0 (not invalid). Valid My Numbers ending in 0 were previously rejected.
+- Correct spec source abbreviation: JIPTEC → J-LIS (地方公共団体情報システム機構)
+- Harden `compileRule`: force `g` flag on regex, validate `regex` field, warn on unknown validator name
+- Pass `secretValue` (not full match) to validator so `secretGroup` + `validate` works in user rules
 
 ---
 

@@ -123,6 +123,96 @@
       "category": "secret"
     },
     {
+      "id": "replicate-token",
+      "description": "Replicate API Token",
+      "regex": "r8_[0-9A-Za-z_]{37}",
+      "category": "secret"
+    },
+    {
+      "id": "huggingface-token",
+      "description": "Hugging Face Access Token",
+      "regex": "hf_[a-zA-Z0-9]{34}",
+      "category": "secret"
+    },
+    {
+      "id": "groq-key",
+      "description": "Groq API Key",
+      "regex": "gsk_[A-Za-z0-9]{52}",
+      "category": "secret"
+    },
+    {
+      "id": "openrouter-key",
+      "description": "OpenRouter API Key",
+      "regex": "sk-or-v1-[0-9a-f]{64}",
+      "category": "secret"
+    },
+    {
+      "id": "xai-key",
+      "description": "xAI (Grok) API Key",
+      "regex": "xai-[0-9A-Za-z_]{80}",
+      "category": "secret"
+    },
+    {
+      "id": "perplexity-key",
+      "description": "Perplexity API Key",
+      "regex": "pplx-[a-zA-Z0-9]{48}",
+      "category": "secret"
+    },
+    {
+      "id": "digitalocean-pat",
+      "description": "DigitalOcean Personal Access Token",
+      "regex": "dop_v1_[a-f0-9]{64}",
+      "category": "secret"
+    },
+    {
+      "id": "square-access-token",
+      "description": "Square Access Token",
+      "regex": "EAAA[a-zA-Z0-9\\-_+=]{60}",
+      "category": "secret"
+    },
+    {
+      "id": "mapbox-token",
+      "description": "Mapbox Token",
+      "regex": "(?:pk|sk)\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "sentry-user-token",
+      "description": "Sentry User Auth Token",
+      "regex": "sntryu_[a-f0-9]{64}",
+      "category": "secret"
+    },
+    {
+      "id": "sentry-org-token",
+      "description": "Sentry Organization Auth Token",
+      "regex": "sntrys_eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "atlassian-token",
+      "description": "Atlassian API Token",
+      "regex": "ATATT3[A-Za-z0-9_\\-=]{180,}",
+      "category": "secret"
+    },
+    {
+      "id": "linear-key",
+      "description": "Linear API Key",
+      "regex": "lin_api_[a-z0-9]{40}",
+      "category": "secret"
+    },
+    {
+      "id": "postman-key",
+      "description": "Postman API Key",
+      "regex": "PMAK-[a-f0-9]{24}-[a-f0-9]{34}",
+      "category": "secret"
+    },
+    {
+      "id": "supabase-key",
+      "description": "Supabase Personal Access Token",
+      "regex": "sbp_[a-z0-9]{40}",
+      "category": "secret"
+    },
+    {
       "id": "jwt",
       "description": "JSON Web Token (JWT)",
       "regex": "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
