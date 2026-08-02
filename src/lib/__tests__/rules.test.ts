@@ -1022,6 +1022,79 @@ describe("compileRule", () => {
   });
 });
 
+// ── compileRule: schema validation ───────────────────────────────────────────
+
+describe("compileRule — schema validation", () => {
+  const valid = {
+    id: "test",
+    description: "Test",
+    regex: "\\d+",
+    category: "pii" as const,
+  };
+
+  it("rejects missing id", () => {
+    expect(() => compileRule({ ...valid, id: "" } as never)).toThrow('"id"');
+  });
+
+  it("rejects missing description", () => {
+    expect(() => compileRule({ ...valid, description: "" } as never)).toThrow(
+      '"description"',
+    );
+  });
+
+  it("rejects missing regex", () => {
+    expect(() => compileRule({ ...valid, regex: "" } as never)).toThrow(
+      '"regex"',
+    );
+  });
+
+  it("rejects invalid category", () => {
+    expect(() => compileRule({ ...valid, category: "other" as never })).toThrow(
+      '"category"',
+    );
+  });
+
+  it("rejects non-integer secretGroup", () => {
+    expect(() => compileRule({ ...valid, secretGroup: 1.5 } as never)).toThrow(
+      '"secretGroup"',
+    );
+  });
+
+  it("rejects negative entropyThreshold", () => {
+    expect(() =>
+      compileRule({ ...valid, entropyThreshold: -1 } as never),
+    ).toThrow('"entropyThreshold"');
+  });
+
+  it("rejects contextWords with empty string", () => {
+    expect(() =>
+      compileRule({ ...valid, contextWords: ["ok", ""] } as never),
+    ).toThrow('"contextWords"');
+  });
+
+  it("rejects non-integer contextWindow", () => {
+    expect(() => compileRule({ ...valid, contextWindow: 0 } as never)).toThrow(
+      '"contextWindow"',
+    );
+  });
+
+  it("rejects requireContext without contextWords", () => {
+    expect(() =>
+      compileRule({ ...valid, requireContext: true } as never),
+    ).toThrow("requireContext");
+  });
+
+  it("rejects requireContext with empty contextWords array", () => {
+    expect(() =>
+      compileRule({
+        ...valid,
+        requireContext: true,
+        contextWords: [],
+      } as never),
+    ).toThrow("requireContext");
+  });
+});
+
 // ── User config (custom rules) ────────────────────────────────────────────────
 
 describe("user config — custom rules", () => {

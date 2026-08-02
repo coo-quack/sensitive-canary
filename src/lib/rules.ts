@@ -426,14 +426,98 @@ function readJsonFile(filePath: string): unknown {
   return JSON.parse(readFileSync(filePath, "utf-8"));
 }
 
+// Validate a raw JSON object against the RuleConfig schema. Throws with a
+// descriptive message when a required field is missing, a type is wrong, or a
+// cross-field constraint is violated.
+function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
+  if (typeof rc !== "object" || rc === null) {
+    throw new Error("rule must be an object");
+  }
+  const {
+    id,
+    description,
+    regex: source,
+    category,
+    flags,
+    secretGroup,
+    entropyThreshold,
+    validate: validateName,
+    contextWords,
+    requireContext,
+    contextWindow,
+  } = rc as Record<string, unknown>;
+
+  if (typeof id !== "string" || id.length === 0) {
+    throw new Error('missing or empty "id" field');
+  }
+  if (typeof description !== "string" || description.length === 0) {
+    throw new Error('missing or empty "description" field');
+  }
+  if (typeof source !== "string" || source.length === 0) {
+    throw new Error('missing or empty "regex" field');
+  }
+  if (category !== "secret" && category !== "pii") {
+    throw new Error(
+      `invalid "category" ${JSON.stringify(category)} (must be "secret" or "pii")`,
+    );
+  }
+  if (flags != null && typeof flags !== "string") {
+    throw new Error('"flags" must be a string');
+  }
+  if (
+    secretGroup != null &&
+    (typeof secretGroup !== "number" ||
+      !Number.isInteger(secretGroup) ||
+      secretGroup < 0)
+  ) {
+    throw new Error('"secretGroup" must be a non-negative integer');
+  }
+  if (
+    entropyThreshold != null &&
+    (typeof entropyThreshold !== "number" || entropyThreshold < 0)
+  ) {
+    throw new Error('"entropyThreshold" must be a non-negative number');
+  }
+  if (validateName != null && typeof validateName !== "string") {
+    throw new Error('"validate" must be a string');
+  }
+  if (contextWords != null) {
+    if (
+      !Array.isArray(contextWords) ||
+      contextWords.some((w) => typeof w !== "string" || w.length === 0)
+    ) {
+      throw new Error('"contextWords" must be an array of non-empty strings');
+    }
+  }
+  if (requireContext != null && typeof requireContext !== "boolean") {
+    throw new Error('"requireContext" must be a boolean');
+  }
+  if (
+    contextWindow != null &&
+    (typeof contextWindow !== "number" ||
+      !Number.isInteger(contextWindow) ||
+      contextWindow < 1)
+  ) {
+    throw new Error('"contextWindow" must be a positive integer');
+  }
+
+  // Cross-field: requireContext is meaningless without contextWords
+  if (
+    requireContext === true &&
+    (!Array.isArray(contextWords) || contextWords.length === 0)
+  ) {
+    throw new Error(
+      '"requireContext" is true but "contextWords" is empty — the rule would never fire',
+    );
+  }
+}
+
 // Compile a single RuleConfig (JSON) into a Rule (with compiled RegExp and
 // resolved validator function). Throws on invalid regex or missing required
 // fields so the caller (buildRules) can catch and warn per-rule.
 export function compileRule(rc: RuleConfig): Rule {
+  validateRuleConfig(rc);
   const { regex: source, flags, validate: validateName, ...rest } = rc;
-  if (typeof source !== "string" || source.length === 0) {
-    throw new Error('missing or empty "regex" field');
-  }
   // matchAll requires the global flag; ensure it is always present.
   const flagStr = flags ?? "g";
   const withG = flagStr.includes("g") ? flagStr : `${flagStr}g`;
@@ -487,8 +571,16 @@ function buildRules(): Rule[] {
 
   const userConfig = loadUserConfig();
   if (userConfig) {
-    if (userConfig.contextWindow != null) {
+    if (
+      typeof userConfig.contextWindow === "number" &&
+      Number.isInteger(userConfig.contextWindow) &&
+      userConfig.contextWindow >= 1
+    ) {
       effectiveContextWindow = userConfig.contextWindow;
+    } else if (userConfig.contextWindow != null) {
+      process.stderr.write(
+        `sensitive-canary: invalid contextWindow in user config, ignoring\n`,
+      );
     }
     if (userConfig.rules?.length) {
       const userRules: Rule[] = [];
