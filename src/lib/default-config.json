@@ -215,7 +215,7 @@
     {
       "id": "jwt",
       "description": "JSON Web Token (JWT)",
-      "regex": "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "regex": "(?<!sntrys_|pk\\.|sk\\.)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
       "category": "secret"
     },
     {
@@ -294,7 +294,7 @@
     {
       "id": "pii-nir-fr",
       "description": "French NIR / Social Security Number",
-      "regex": "\\b[12]\\d{2}(?:0[1-9]|1[0-9]|2[0-9]|[3-9]\\d)(?:\\d{5}|2[AB]\\d{3})\\d{3}\\s?\\d{2}\\b",
+      "regex": "\\b[12]\\d{2}(?:0[1-9]|1[0-2]|20)(?:\\d{5}|2[AB]\\d{3})\\d{3}\\s?\\d{2}\\b",
       "category": "pii",
       "flags": "gi",
       "validate": "nir-fr"

@@ -626,7 +626,7 @@ describe("scan — national ID numbers", () => {
   });
 
   it("detects a valid French NIR", () => {
-    const findings = scan("secu: 1234567890123 11");
+    const findings = scan("secu: 1850175056001 49");
     expect(findings.some((f) => f.ruleId === "pii-nir-fr")).toBe(true);
   });
 
@@ -653,7 +653,7 @@ describe("scan — national ID numbers", () => {
   });
 
   it("does not flag a French NIR with a bad check key", () => {
-    const findings = scan("secu: 1234567890123 99");
+    const findings = scan("secu: 1850175056001 99");
     expect(findings.some((f) => f.ruleId === "pii-nir-fr")).toBe(false);
   });
 

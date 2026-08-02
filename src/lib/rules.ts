@@ -567,7 +567,16 @@ function buildRules(): Rule[] {
   const defaultConfig = loadDefaultConfig();
   effectiveContextWindow = defaultConfig.contextWindow ?? 3;
 
-  const defaultRules = defaultConfig.rules.map(compileRule);
+  const defaultRules: Rule[] = [];
+  for (const rc of defaultConfig.rules) {
+    try {
+      defaultRules.push(compileRule(rc));
+    } catch (e) {
+      process.stderr.write(
+        `sensitive-canary: failed to compile built-in rule "${rc.id ?? "(unknown)"}": ${e instanceof Error ? e.message : String(e)}\n`,
+      );
+    }
+  }
 
   const userConfig = loadUserConfig();
   if (userConfig) {
