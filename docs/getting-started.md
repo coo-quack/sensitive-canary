@@ -38,6 +38,26 @@ When sensitive data is detected, the action is blocked and the terminal shows wh
 
 Tags apply only to the message they appear in. They do not persist across turns. For PreToolUse hooks, allow tags are single-use — they are consumed by the first tool call. If Claude needs to perform multiple tool calls for the same request, you may need to include the tag again.
 
+## Configuration
+
+Set `SENSITIVE_CANARY_CATEGORIES` in the `env` block of your Claude Code `settings.json` to limit which rule categories are active:
+
+```json
+{
+  "env": {
+    "SENSITIVE_CANARY_CATEGORIES": "secret"
+  }
+}
+```
+
+| Value | Effect |
+|-------|--------|
+| `secret` | Scan for secrets only — PII rules are disabled |
+| `pii` | Scan for PII only — secret rules and the name-based `.env`/`.env.*` block are disabled |
+| `secret,pii` / `all` | Scan everything (default) |
+
+This persistent filter is applied before allow tags. A typical use is setting `secret` when PII rules are too noisy against test fixtures.
+
 ## Next Steps
 
 - [Installation](/install) — alternative installation methods

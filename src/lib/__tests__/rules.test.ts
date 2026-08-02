@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { entropy, luhn, redact, scan } from "../rules.ts";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  enabledCategoriesFromEnv,
+  entropy,
+  luhn,
+  parseCategories,
+  redact,
+  scan,
+} from "../rules.ts";
 
 // ── luhn ──────────────────────────────────────────────────────────────────────
 
@@ -348,5 +355,94 @@ describe("scan — PII", () => {
   it("does not flag a public IPv4 address", () => {
     const findings = scan("server: 8.8.8.8");
     expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(false);
+  });
+});
+
+// ── parseCategories ───────────────────────────────────────────────────────────
+
+describe("parseCategories", () => {
+  it("defaults to all categories when unset", () => {
+    expect(parseCategories(undefined)).toEqual(new Set(["secret", "pii"]));
+  });
+
+  it("defaults to all categories when empty", () => {
+    expect(parseCategories("")).toEqual(new Set(["secret", "pii"]));
+  });
+
+  it("parses a single category", () => {
+    expect(parseCategories("secret")).toEqual(new Set(["secret"]));
+    expect(parseCategories("pii")).toEqual(new Set(["pii"]));
+  });
+
+  it("parses a comma-separated list", () => {
+    expect(parseCategories("secret,pii")).toEqual(new Set(["secret", "pii"]));
+  });
+
+  it("treats 'all' as every category", () => {
+    expect(parseCategories("all")).toEqual(new Set(["secret", "pii"]));
+    expect(parseCategories("secret,all")).toEqual(new Set(["secret", "pii"]));
+  });
+
+  it("is case-insensitive and trims whitespace", () => {
+    expect(parseCategories(" Secret , PII ")).toEqual(
+      new Set(["secret", "pii"]),
+    );
+  });
+
+  it("falls back to all when no valid token is present", () => {
+    expect(parseCategories("foo,bar")).toEqual(new Set(["secret", "pii"]));
+  });
+});
+
+// ── scan: category filter ─────────────────────────────────────────────────────
+
+describe("scan — category filter", () => {
+  const text = "key=AKIAIOSFODNN7EXAMPLE card: 4111111111111111";
+
+  it("scans all categories by default", () => {
+    const findings = scan(text);
+    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
+    expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
+  });
+
+  it("scans only secrets when limited to the secret category", () => {
+    const findings = scan(text, new Set(["secret"]));
+    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
+    expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(false);
+  });
+
+  it("scans only PII when limited to the pii category", () => {
+    const findings = scan(text, new Set(["pii"]));
+    expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(false);
+    expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
+  });
+
+  it("returns nothing when no categories are enabled", () => {
+    expect(scan(text, new Set())).toEqual([]);
+  });
+});
+
+// ── enabledCategoriesFromEnv ──────────────────────────────────────────────────
+
+describe("enabledCategoriesFromEnv", () => {
+  const ENV_KEY = "SENSITIVE_CANARY_CATEGORIES";
+  const original = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = original;
+    }
+  });
+
+  it("returns all categories when the env var is unset", () => {
+    delete process.env[ENV_KEY];
+    expect(enabledCategoriesFromEnv()).toEqual(new Set(["secret", "pii"]));
+  });
+
+  it("returns the parsed categories when the env var is set", () => {
+    process.env[ENV_KEY] = "pii";
+    expect(enabledCategoriesFromEnv()).toEqual(new Set(["pii"]));
   });
 });

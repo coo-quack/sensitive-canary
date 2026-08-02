@@ -22,7 +22,7 @@ Sensitive Canary intercepts secrets and PII before they leave your machine:
 | Secret in prompt | `UserPromptSubmit` | Blocks the prompt before the API call |
 | PII in prompt | `UserPromptSubmit` | Blocks the prompt before the API call |
 | Secret in file Claude reads | `PreToolUse` (Read) | Blocks the file read before contents are sent |
-| `.env` file exposure | `PreToolUse` (Read) | Blocks by filename, unconditionally |
+| `.env` file exposure | `PreToolUse` (Read) | Blocks by filename (secret category only) |
 | Secret in Bash command | `PreToolUse` (Bash) | Blocks the command before execution |
 | Secret in env var value | `PreToolUse` (Bash) | Expands and scans `$VAR` references |
 
