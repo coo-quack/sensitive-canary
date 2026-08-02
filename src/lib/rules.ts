@@ -233,10 +233,8 @@ export function validateKoreanRRN(input: string): boolean {
 }
 
 // Korean Business Registration Number (사업자등록번호): 10 digits. Uses the
-// standard algorithm employed by Korea's NTS (Hometax) and widely implemented:
-// weights 1,3,7,1,3,7,1,3,5 over digits 1-9, plus floor(digit9 × 5 / 10), and
-// the check digit is (10 - (sum mod 10)) mod 10. Note: the official NTS spec
-// was not directly accessible; this follows the de-facto standard algorithm.
+// NTS (Hometax) standard algorithm: weights 1,3,7,1,3,7,1,3,5 over digits 1-9,
+// plus floor(digit9 × 5 / 10), and the check digit is (10 - (sum mod 10)) mod 10.
 export function validateKoreanBRN(input: string): boolean {
   const s = input.replace(/[-\s]/g, "");
   if (!/^\d{10}$/.test(s)) return false;

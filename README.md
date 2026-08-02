@@ -318,7 +318,7 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
 
-National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, GB 11643-1999 for the Chinese Resident Identity Card, and the NTS (Hometax) standard algorithm for the Korean BRN (official spec not directly verified).
+National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, GB 11643-1999 for the Chinese Resident Identity Card, and the NTS (Hometax) standard algorithm for the Korean BRN.
 
 ### Context gating
 

@@ -116,7 +116,7 @@ National ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., E
 - **DNI/NIE**: Ministerio del Interior, Orden INT/2058/2008 (mod 23)
 - **Korean RRN**: 주민등록 사무편람, Ministry of the Interior and Safety (weighted mod 11)
 - **Chinese Resident ID**: GB 11643-1999 (ISO 7064 MOD 11-2)
-- **Korean BRN**: NTS (Hometax) standard algorithm (official spec not directly verified)
+- **Korean BRN**: NTS (Hometax) standard algorithm
 
 ### Context Gating
 
