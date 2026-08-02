@@ -10,7 +10,7 @@ import {
   parseAllowTags,
   randomBird,
 } from "./lib/inspector.ts";
-import { type Finding, scan } from "./lib/rules.ts";
+import { enabledCategoriesFromEnv, type Finding, scan } from "./lib/rules.ts";
 
 interface HookInput {
   transcript_path?: string;
@@ -29,6 +29,8 @@ interface TranscriptLine {
 
 // Maximum bytes to read from the tail of a transcript file.
 const MAX_TRANSCRIPT_TAIL_BYTES = 65_536; // 64 KB
+
+const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
 // ── Transcript ────────────────────────────────────────────────────────────────
 
@@ -150,12 +152,19 @@ function extractFilePathsFromCommand(command: string): string[] {
 
 // ── .env pattern ──────────────────────────────────────────────────────────────
 
-// .env and .env.* (e.g. .env.local, .env.production) are blocked unconditionally.
+// .env and .env.* (e.g. .env.local, .env.production) match the env filename pattern.
+// The block only applies while the "secret" category is enabled (see shouldBlockEnvFile).
 // Files that merely end in .env (e.g. production.env) are handled by content scanning.
 function isBlockedEnvFile(filePath: string): boolean {
   if (!filePath) return false;
   const base = path.basename(filePath);
   return base === ".env" || base.startsWith(".env.");
+}
+
+// The .env name-based block is a secret guard: it only applies while the
+// "secret" category is enabled.
+function shouldBlockEnvFile(filePath: string): boolean {
+  return ENABLED_CATEGORIES.has("secret") && isBlockedEnvFile(filePath);
 }
 
 // ── Output helpers ────────────────────────────────────────────────────────────
@@ -239,7 +248,7 @@ function block(
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
-  if (isBlockedEnvFile(filePath)) {
+  if (shouldBlockEnvFile(filePath)) {
     if (allowTags.size > 0) return;
     block(
       filePath,
@@ -263,7 +272,10 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     return;
   }
 
-  const findings = applyAllowTags(dedupeFindings(scan(content)), allowTags);
+  const findings = applyAllowTags(
+    dedupeFindings(scan(content, ENABLED_CATEGORIES)),
+    allowTags,
+  );
   if (findings.length === 0) return;
 
   block(
@@ -308,7 +320,10 @@ process.stdin.on("end", () => {
     for (const varName of extractEnvVarNames(command)) {
       const value = process.env[varName];
       if (!value) continue;
-      const findings = applyAllowTags(dedupeFindings(scan(value)), allowTags);
+      const findings = applyAllowTags(
+        dedupeFindings(scan(value, ENABLED_CATEGORIES)),
+        allowTags,
+      );
       if (findings.length === 0) continue;
       block(
         `bash command: ${command.slice(0, 80)}`,
@@ -322,7 +337,7 @@ process.stdin.on("end", () => {
     }
 
     const cmdFindings = applyAllowTags(
-      dedupeFindings(scan(command)),
+      dedupeFindings(scan(command, ENABLED_CATEGORIES)),
       allowTags,
     );
     if (cmdFindings.length > 0) {

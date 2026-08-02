@@ -48,7 +48,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 
 | Without Sensitive Canary | With Sensitive Canary |
 |--------------------------|----------------------|
-| `cat .env` → full contents sent to Claude ❌ | Blocked by name before Claude reads it ✅ |
+| `cat .env` → full contents sent to Claude ❌ | Blocked by name by default before Claude reads it ✅ |
 | Paste `AKIAIOSFODNN7EXAMPLE` in prompt ❌ | Blocked before the API call is made ✅ |
 | Tool result contains user@email.com ❌ | PII detected and blocked ✅ |
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |

@@ -167,7 +167,7 @@ To allow, add a tag to your prompt:
 
 Runs before Claude uses the `Read` or `Bash` tool. It blocks:
 
-- `.env` and `.env.*` files unconditionally (by filename)
+- `.env` and `.env.*` files by filename (a secret guard; only while the `secret` category is enabled)
 - Any file whose contents contain secrets or PII
 - `cat`, `head`, `tail`, and other file-reading commands targeting sensitive files
 - Bash commands containing secrets inline (e.g. `echo AKIAIOSFODNN7EXAMPLE`)

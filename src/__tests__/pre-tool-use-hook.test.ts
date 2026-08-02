@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -58,7 +58,7 @@ function writeTranscriptWithToolResults(
 function runHook(
   toolName: string,
   filePath: string,
-  opts?: { transcriptPath?: string },
+  opts?: { env?: Record<string, string>; transcriptPath?: string },
 ) {
   const input = JSON.stringify({
     transcript_path: opts?.transcriptPath,
@@ -68,6 +68,7 @@ function runHook(
   const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
     input,
     encoding: "utf8",
+    env: { ...process.env, ...opts?.env },
   });
   const { decision, reason } = parseHookOutput(result.stdout);
   return {
@@ -135,9 +136,9 @@ describe("pre-tool-use-hook — non-Read/non-Bash tools", () => {
   });
 });
 
-// ── .env / .env.* — unconditional name block ──────────────────────────────────
+// ── .env / .env.* — secret name block ─────────────────────────────────────────
 
-describe("pre-tool-use-hook — .env/.env.* unconditional block", () => {
+describe("pre-tool-use-hook — .env/.env.* name block (secret category)", () => {
   it("blocks .env regardless of content", () => {
     const p = writeFixture(".env", "DEBUG=true\nNODE_ENV=development\n");
     const { exitCode, decision } = runHook("Read", p);
@@ -704,5 +705,75 @@ describe("pre-tool-use-hook — malformed input", () => {
       encoding: "utf8",
     });
     expect(result.status).toBe(0);
+  });
+});
+
+// ── SENSITIVE_CANARY_CATEGORIES ───────────────────────────────────────────────
+
+describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
+  it("pii-only: allows reading .env files (secret guard disabled)", () => {
+    const dir = join(tmpDir, "pii-only-env");
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, ".env");
+    writeFileSync(p, "DEBUG=true\n", "utf8");
+    const { exitCode } = runHook("Read", p, {
+      env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("pii-only: allows a file containing only secrets", () => {
+    const p = writeFixture("pii-only-secret.txt", "key=AKIAIOSFODNN7EXAMPLE");
+    const { exitCode } = runHook("Read", p, {
+      env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("pii-only: still blocks a file containing PII", () => {
+    const p = writeFixture("pii-only-pii.txt", "card: 4111111111111111");
+    const { exitCode, decision } = runHook("Read", p, {
+      env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
+    });
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("secret-only: allows a file containing only PII", () => {
+    const p = writeFixture("secret-only-pii.txt", "card: 4111111111111111");
+    const { exitCode } = runHook("Read", p, {
+      env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("secret-only: still blocks a file containing secrets", () => {
+    const p = writeFixture(
+      "secret-only-secret.txt",
+      "key=AKIAIOSFODNN7EXAMPLE",
+    );
+    const { exitCode, decision } = runHook("Read", p, {
+      env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
+    });
+    expect(exitCode).toBe(2);
+    expect(decision).toBe("block");
+  });
+
+  it("secret-only: allows a bash command containing only PII", () => {
+    const { exitCode } = runBashHook("echo 4111111111111111", {
+      env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("unset: blocks both secrets and PII (default behavior)", () => {
+    const p = writeFixture(
+      "default-both.txt",
+      "key=AKIAIOSFODNN7EXAMPLE\ncard: 4111111111111111",
+    );
+    const { exitCode, reason } = runHook("Read", p);
+    expect(exitCode).toBe(2);
+    expect(reason).toContain("aws-access-key");
+    expect(reason).toContain("pii-credit-card");
   });
 });

@@ -4,10 +4,11 @@ import { describe, expect, it } from "vitest";
 const HOOK = new URL("../user-prompt-submit-hook.ts", import.meta.url).pathname;
 const NODE_FLAGS = ["--experimental-strip-types"];
 
-function runHook(prompt: string) {
+function runHook(prompt: string, opts?: { env?: Record<string, string> }) {
   const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
     input: JSON.stringify({ prompt }),
     encoding: "utf8",
+    env: { ...process.env, ...opts?.env },
   });
   return {
     exitCode: result.status ?? -1,
@@ -251,5 +252,46 @@ describe("user-prompt-submit-hook — malformed input", () => {
       encoding: "utf8",
     });
     expect(result.status).toBe(0);
+  });
+});
+
+describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
+  it("pii-only: passes a prompt containing only secrets", () => {
+    const { exitCode } = runHook("my key is AKIAIOSFODNN7EXAMPLE", {
+      env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("pii-only: still blocks a prompt containing PII", () => {
+    const { exitCode, stderr } = runHook("my card is 4111111111111111", {
+      env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
+    });
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("sensitive data detected");
+  });
+
+  it("secret-only: passes a prompt containing only PII", () => {
+    const { exitCode } = runHook("my card is 4111111111111111", {
+      env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("secret-only: still blocks a prompt containing secrets", () => {
+    const { exitCode, stderr } = runHook("my key is AKIAIOSFODNN7EXAMPLE", {
+      env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
+    });
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("sensitive data detected");
+  });
+
+  it("unset: blocks both secrets and PII (default behavior)", () => {
+    const { exitCode, stderr } = runHook(
+      "key AKIAIOSFODNN7EXAMPLE card 4111111111111111",
+    );
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("aws-access-key");
+    expect(stderr).toContain("pii-credit-card");
   });
 });

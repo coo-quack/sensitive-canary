@@ -8,11 +8,13 @@ import {
   randomBird,
   resolveTagPriority,
 } from "./lib/inspector.ts";
-import { scan } from "./lib/rules.ts";
+import { enabledCategoriesFromEnv, scan } from "./lib/rules.ts";
 
 interface HookInput {
   prompt?: string;
 }
+
+const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
 let raw = "";
 process.stdin.setEncoding("utf8");
@@ -27,7 +29,7 @@ process.stdin.on("end", () => {
 
   const prompt = data.prompt ?? "";
 
-  const allFindings = scan(prompt);
+  const allFindings = scan(prompt, ENABLED_CATEGORIES);
 
   if (allFindings.length === 0) process.exit(0);
 
