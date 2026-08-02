@@ -427,16 +427,29 @@ function readJsonFile(filePath: string): unknown {
 }
 
 // Compile a single RuleConfig (JSON) into a Rule (with compiled RegExp and
-// resolved validator function).
+// resolved validator function). Throws on invalid regex or missing required
+// fields so the caller (buildRules) can catch and warn per-rule.
 export function compileRule(rc: RuleConfig): Rule {
   const { regex: source, flags, validate: validateName, ...rest } = rc;
+  if (typeof source !== "string" || source.length === 0) {
+    throw new Error('missing or empty "regex" field');
+  }
+  // matchAll requires the global flag; ensure it is always present.
+  const flagStr = flags ?? "g";
+  const withG = flagStr.includes("g") ? flagStr : `${flagStr}g`;
   const rule: Rule = {
     ...rest,
-    regex: new RegExp(source, flags ?? "g"),
+    regex: new RegExp(source, withG),
   };
   if (validateName) {
     const fn = VALIDATORS[validateName];
-    if (fn) rule.validate = fn;
+    if (fn) {
+      rule.validate = fn;
+    } else {
+      process.stderr.write(
+        `sensitive-canary: unknown validator "${validateName}" in rule "${rc.id}" — validation disabled\n`,
+      );
+    }
   }
   return rule;
 }
@@ -446,12 +459,18 @@ function loadDefaultConfig(): CanaryConfig {
   return readJsonFile(DEFAULT_CONFIG_PATH) as CanaryConfig;
 }
 
-// Load user config if it exists. Returns null when the file is absent or
-// unreadable so that only built-in defaults are used.
+// Load user config if it exists. Returns null when the file is absent (the
+// common case). JSON parse errors and permission issues are reported on stderr
+// so that a broken config file is not silently ignored.
 function loadUserConfig(): CanaryConfig | null {
   try {
     return readJsonFile(USER_CONFIG_PATH) as CanaryConfig;
-  } catch {
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(
+        `sensitive-canary: could not read user config "${USER_CONFIG_PATH}": ${e instanceof Error ? e.message : String(e)}\n`,
+      );
+    }
     return null;
   }
 }
@@ -516,7 +535,7 @@ export function scan(
         entropy(secretValue) < rule.entropyThreshold
       )
         continue;
-      if (rule.validate != null && !rule.validate(match[0])) continue;
+      if (rule.validate != null && !rule.validate(secretValue)) continue;
 
       const matchStart = match.index ?? 0;
       const matchEnd = matchStart + match[0].length;
