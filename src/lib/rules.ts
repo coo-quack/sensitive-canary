@@ -11,7 +11,7 @@ export interface Finding {
   category: Category;
   matchRedacted: string;
   secretValue: string;
-  score: number;
+  score?: number;
 }
 
 interface Rule {
