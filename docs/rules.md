@@ -81,11 +81,37 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 |---------|-------------|-------|
 | `pii-email` | Email Address | Standard RFC 5322-like pattern |
 | `pii-credit-card` | Credit Card Number | Visa, Mastercard, Amex, Discover; validated with Luhn algorithm |
+| `pii-ipv4` | Private IPv4 Address | RFC 1918 ranges only: `10.x`, `172.16–31.x`, `192.168.x` |
 | `pii-ssn` | US Social Security Number | Excludes invalid area (000, 666, 9xx), group (00), and serial (0000) numbers |
+| `pii-mynumber-jp` | Japanese Individual Number (My Number) | 12 digits, validated with weighted checksum (mod 11) |
+| `pii-nir-fr` | French NIR / Social Security Number | 15 digits, validated with check key (mod 97); Corsica 2A/2B supported |
+| `pii-codice-fiscale-it` | Italian Codice Fiscale | 16 alphanumeric chars, validated with control character (mod 26) |
+| `pii-steuer-id-de` | German Steuer-Identifikationsnummer | 11 digits, validated with MOD 11,10 (ISO/IEC 7064) |
+| `pii-dni-nie-es` | Spanish DNI / NIE | 8 digits + letter (DNI) or X/Y/Z + 7 digits + letter (NIE); validated with mod 23 |
 | `pii-phone-us` | US Phone Number | With or without country code |
 | `pii-phone-jp` | Japanese Phone Number | Area code + subscriber number format |
+| `pii-phone-fr` | French Phone Number | Context-gated (requires nearby phone label) |
+| `pii-phone-it` | Italian Phone Number | Context-gated |
+| `pii-phone-de` | German Phone Number | Context-gated |
+| `pii-phone-es` | Spanish Phone Number | Context-gated |
 | `pii-postal-jp` | Japanese Postal Code | Requires `〒` prefix to avoid false positives |
-| `pii-ipv4` | Private IPv4 Address | RFC 1918 ranges only: `10.x`, `172.16–31.x`, `192.168.x` |
+| `pii-postal-code` | Postal Code (US ZIP / EU 5-digit) | Context-gated (requires nearby postal label) |
+
+### National ID Validation
+
+National ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE) are matched by pattern **and** validated against their official checksum algorithm. A digit sequence that looks right but fails the checksum is not flagged. The algorithms follow each issuing authority's published spec:
+
+- **My Number**: 地方公共団体情報システム機構 (JIPTEC)
+- **NIR**: INSEE / décret n°82-103 (97 − N mod 97)
+- **Codice Fiscale**: Agenzia delle Entrate, DM 12 giugno 2007 (mod 26)
+- **Steuer-IdNr.**: Bundeszentralamt für Steuern (ISO/IEC 7064 MOD 11,10)
+- **DNI/NIE**: Ministerio del Interior, Orden INT/2058/2008 (mod 23)
+
+### Context Gating
+
+Variable-length Italian and German phone numbers, and bare 5/9-digit postal codes, produce too many false positives on digit-only patterns. These rules carry a list of nearby context words (`phone`, `tel`, `ZIP`, `PLZ`, `CAP`, `code postal`, … in each relevant language) and only fire when one of those words appears within a small window of the match. If no context word is nearby, the match is dropped.
+
+National ID numbers rely on their checksums instead and do not require context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
 ### Credit Card Validation
 

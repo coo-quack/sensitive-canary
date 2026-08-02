@@ -25,9 +25,10 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **31 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **41 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE)
+- **Context gating** — postal codes and FIGS phone numbers require a nearby label, reducing false positives on bare digit sequences
 - **Entropy filtering** — reduces false positives on low-entropy values
-- **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
 ---
@@ -285,19 +286,35 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 | `env-assignment` | `.env`-style secret assignment *(entropy ≥ 3.0)* |
 | `connection-string` | Database connection string with embedded credentials |
 
-### PII (7 rules)
+### PII (17 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
 | `pii-email` | Email address | — |
 | `pii-credit-card` | Credit card number | Luhn check |
+| `pii-ipv4` | IPv4 address (RFC 1918 private ranges only) | — |
 | `pii-ssn` | US Social Security Number | Invalid prefix exclusion |
+| `pii-mynumber-jp` | Japanese Individual Number (My Number) | Checksum (weighted mod 11) |
+| `pii-nir-fr` | French NIR / Social Security Number | Check key (mod 97) |
+| `pii-codice-fiscale-it` | Italian Codice Fiscale | Control character (mod 26) |
+| `pii-steuer-id-de` | German Steuer-Identifikationsnummer | MOD 11,10 |
+| `pii-dni-nie-es` | Spanish DNI / NIE | Control letter (mod 23) |
 | `pii-phone-us` | US phone number | — |
 | `pii-phone-jp` | Japanese phone number | — |
+| `pii-phone-fr` | French phone number | Context-gated |
+| `pii-phone-it` | Italian phone number | Context-gated |
+| `pii-phone-de` | German phone number | Context-gated |
+| `pii-phone-es` | Spanish phone number | Context-gated |
 | `pii-postal-jp` | Japanese postal code (`〒` prefix required) | — |
-| `pii-ipv4` | IPv4 address (RFC 1918 private ranges only) | — |
+| `pii-postal-code` | Postal code (US ZIP / EU 5-digit) | Context-gated |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
+
+National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., and the Ministerio del Interior for DNI/NIE.
+
+### Context gating
+
+Variable-length Italian and German phone numbers, and bare 5/9-digit postal codes, produce too many false positives on digit-only patterns. These rules carry a list of context words (phone, ZIP, PLZ, CAP, etc. in the relevant languages) and only fire when one of those words appears near the match. National ID numbers rely on their checksums instead and do not need context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
 ---
 

@@ -6,6 +6,11 @@ import {
   parseCategories,
   redact,
   scan,
+  validateCodiceFiscale,
+  validateFrenchNIR,
+  validateGermanIdNr,
+  validateMyNumber,
+  validateSpanishNIF,
 } from "../rules.ts";
 
 // ── luhn ──────────────────────────────────────────────────────────────────────
@@ -444,5 +449,217 @@ describe("enabledCategoriesFromEnv", () => {
   it("returns the parsed categories when the env var is set", () => {
     process.env[ENV_KEY] = "pii";
     expect(enabledCategoriesFromEnv()).toEqual(new Set(["pii"]));
+  });
+});
+
+// ── National ID checksum validators ───────────────────────────────────────────
+
+describe("validateMyNumber", () => {
+  it("passes a valid My Number", () => {
+    expect(validateMyNumber("123456789018")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateMyNumber("123456789019")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateMyNumber("12345678901")).toBe(false);
+    expect(validateMyNumber("1234567890123")).toBe(false);
+  });
+});
+
+describe("validateFrenchNIR", () => {
+  it("passes a valid NIR", () => {
+    expect(validateFrenchNIR("123456789012311")).toBe(true);
+  });
+
+  it("fails an incorrect check key", () => {
+    expect(validateFrenchNIR("123456789012399")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateFrenchNIR("1234567890123")).toBe(false);
+  });
+});
+
+describe("validateCodiceFiscale", () => {
+  it("passes a valid Codice Fiscale", () => {
+    expect(validateCodiceFiscale("RSSMRA85M01H501Q")).toBe(true);
+  });
+
+  it("fails an incorrect control character", () => {
+    expect(validateCodiceFiscale("RSSMRA85M01H501Z")).toBe(false);
+  });
+
+  it("fails a wrong shape", () => {
+    expect(validateCodiceFiscale("RSSMRA85M01H501")).toBe(false);
+  });
+});
+
+describe("validateGermanIdNr", () => {
+  it("passes a valid Steuer-IdNr.", () => {
+    expect(validateGermanIdNr("12345678903")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateGermanIdNr("12345678900")).toBe(false);
+  });
+
+  it("fails when the first digit is 0", () => {
+    expect(validateGermanIdNr("02345678903")).toBe(false);
+  });
+});
+
+describe("validateSpanishNIF", () => {
+  it("passes a valid DNI", () => {
+    expect(validateSpanishNIF("12345678Z")).toBe(true);
+  });
+
+  it("fails an incorrect DNI control letter", () => {
+    expect(validateSpanishNIF("12345678Y")).toBe(false);
+  });
+
+  it("passes a valid NIE", () => {
+    expect(validateSpanishNIF("X1234567L")).toBe(true);
+  });
+
+  it("fails an incorrect NIE control letter", () => {
+    expect(validateSpanishNIF("X1234567M")).toBe(false);
+  });
+});
+
+// ── scan: national ID numbers ─────────────────────────────────────────────────
+
+describe("scan — national ID numbers", () => {
+  it("detects a valid My Number", () => {
+    const findings = scan("number: 123456789018");
+    expect(findings.some((f) => f.ruleId === "pii-mynumber-jp")).toBe(true);
+  });
+
+  it("does not flag a My Number with a bad check digit", () => {
+    const findings = scan("number: 123456789019");
+    expect(findings.some((f) => f.ruleId === "pii-mynumber-jp")).toBe(false);
+  });
+
+  it("detects a valid French NIR", () => {
+    const findings = scan("secu: 1234567890123 11");
+    expect(findings.some((f) => f.ruleId === "pii-nir-fr")).toBe(true);
+  });
+
+  it("detects a valid Italian Codice Fiscale", () => {
+    const findings = scan("cf: RSSMRA85M01H501Q");
+    expect(findings.some((f) => f.ruleId === "pii-codice-fiscale-it")).toBe(
+      true,
+    );
+  });
+
+  it("detects a valid German Steuer-IdNr.", () => {
+    const findings = scan("idnr: 12345678903");
+    expect(findings.some((f) => f.ruleId === "pii-steuer-id-de")).toBe(true);
+  });
+
+  it("detects a valid Spanish DNI", () => {
+    const findings = scan("dni: 12345678Z");
+    expect(findings.some((f) => f.ruleId === "pii-dni-nie-es")).toBe(true);
+  });
+
+  it("detects a valid Spanish NIE", () => {
+    const findings = scan("nie: X1234567L");
+    expect(findings.some((f) => f.ruleId === "pii-dni-nie-es")).toBe(true);
+  });
+});
+
+// ── scan: FIGS phone numbers (context-gated) ──────────────────────────────────
+
+describe("scan — FIGS phone numbers", () => {
+  it("detects a French phone number with context", () => {
+    const findings = scan("tél: 01 23 45 67 89");
+    expect(findings.some((f) => f.ruleId === "pii-phone-fr")).toBe(true);
+  });
+
+  it("does not flag a bare French number without context", () => {
+    const findings = scan("ref 01 23 45 67 89 done");
+    expect(findings.some((f) => f.ruleId === "pii-phone-fr")).toBe(false);
+  });
+
+  it("detects an Italian phone number with context", () => {
+    const findings = scan("telefono: 0212345678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-it")).toBe(true);
+  });
+
+  it("does not flag a bare Italian number without context", () => {
+    const findings = scan("id 0212345678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-it")).toBe(false);
+  });
+
+  it("detects a German phone number with context", () => {
+    const findings = scan("Telefon: 0301234567");
+    expect(findings.some((f) => f.ruleId === "pii-phone-de")).toBe(true);
+  });
+
+  it("does not flag a bare German number without context", () => {
+    const findings = scan("code 0301234567 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-de")).toBe(false);
+  });
+
+  it("detects a Spanish phone number with context", () => {
+    const findings = scan("teléfono: 612345678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-es")).toBe(true);
+  });
+
+  it("does not flag a bare Spanish number without context", () => {
+    const findings = scan("num 612345678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-es")).toBe(false);
+  });
+});
+
+// ── scan: postal code (context-gated) ─────────────────────────────────────────
+
+describe("scan — postal code", () => {
+  it("detects a US ZIP with context", () => {
+    const findings = scan("ZIP: 90210");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects a US ZIP+4 with context", () => {
+    const findings = scan("postal: 90210-1234");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects a German PLZ with context", () => {
+    const findings = scan("PLZ: 10115");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects an Italian CAP with context", () => {
+    const findings = scan("CAP: 00184");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("does not flag a bare 5-digit number", () => {
+    const findings = scan("count: 12345 items");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(false);
+  });
+
+  it("does not flag a ZIP without a context label", () => {
+    const findings = scan("order 90210 confirmed");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(false);
+  });
+});
+
+// ── scan: context scoring ─────────────────────────────────────────────────────
+
+describe("scan — context scoring", () => {
+  it("assigns score 1.0 to a context-gated match", () => {
+    const findings = scan("ZIP: 90210");
+    const postal = findings.find((f) => f.ruleId === "pii-postal-code");
+    expect(postal?.score).toBe(1.0);
+  });
+
+  it("assigns score 1.0 to rules without context requirements", () => {
+    const findings = scan("contact: user@example.com");
+    const email = findings.find((f) => f.ruleId === "pii-email");
+    expect(email?.score).toBe(1.0);
   });
 });
