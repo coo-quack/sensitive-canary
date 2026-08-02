@@ -322,19 +322,44 @@ export function isReservedIpv4(ip: string): boolean {
 // IPv6 reserved / non-public ranges. Returns true for addresses that should
 // NOT be flagged as PII (loopback, unspecified, link-local, unique-local,
 // multicast, documentation). Used by pii-ipv6.
+// IPv6 reserved / non-public ranges. Returns true for addresses that should
+// NOT be flagged as PII (loopback, unspecified, link-local, unique-local,
+// multicast, documentation). Properly handles both compressed (::) and
+// fully-expanded (0:0:0:0:0:0:0:1) forms.
 export function isReservedIpv6(ip: string): boolean {
-  const lower = ip.toLowerCase().replace(/^:+|:+$/g, "");
-  if (lower === "1" || lower === "") return true; // ::1, ::
-  if (
-    lower.startsWith("fe8") ||
-    lower.startsWith("fe9") ||
-    lower.startsWith("fea") ||
-    lower.startsWith("feb")
-  )
-    return true; // fe80::/10
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7
-  if (lower.startsWith("ff")) return true; // ff00::/8 multicast
-  if (lower.startsWith("2001:db8")) return true; // documentation
+  const lower = ip.toLowerCase();
+
+  // Split and expand :: notation into zero groups.
+  const halves = lower.split("::");
+  let groups: number[];
+  if (halves.length === 1) {
+    groups = lower.split(":").map((g) => Number.parseInt(g || "0", 16));
+  } else {
+    const left = halves[0]
+      ? halves[0].split(":").map((g) => Number.parseInt(g, 16))
+      : [];
+    const right = halves[1]
+      ? halves[1].split(":").map((g) => Number.parseInt(g, 16))
+      : [];
+    const zeros = Array(8 - left.length - right.length).fill(0);
+    groups = [...left, ...zeros, ...right];
+  }
+
+  if (groups.length !== 8) return true; // malformed — treat as reserved
+
+  // Unspecified (::)
+  if (groups.every((g) => g === 0)) return true;
+  // Loopback (::1)
+  if (groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1) return true;
+  // Link-local fe80::/10
+  if ((groups[0] ?? 0) >= 0xfe80 && (groups[0] ?? 0) <= 0xfebf) return true;
+  // Unique-local fc00::/7
+  if (((groups[0] ?? 0) & 0xfe00) === 0xfc00) return true;
+  // Multicast ff00::/8
+  if (((groups[0] ?? 0) & 0xff00) === 0xff00) return true;
+  // Documentation 2001:db8::/32
+  if ((groups[0] ?? 0) === 0x2001 && (groups[1] ?? 0) === 0x0db8) return true;
+
   return false;
 }
 

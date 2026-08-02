@@ -856,8 +856,32 @@ describe("isReservedIpv6", () => {
     expect(isReservedIpv6("::1")).toBe(true);
   });
 
+  it("returns true for fully-expanded loopback", () => {
+    expect(isReservedIpv6("0:0:0:0:0:0:0:1")).toBe(true);
+  });
+
+  it("returns true for fully-expanded unspecified", () => {
+    expect(isReservedIpv6("0:0:0:0:0:0:0:0")).toBe(true);
+  });
+
+  it("returns true for compressed unspecified", () => {
+    expect(isReservedIpv6("::")).toBe(true);
+  });
+
   it("returns true for link-local", () => {
     expect(isReservedIpv6("fe80::1")).toBe(true);
+  });
+
+  it("returns true for fully-expanded link-local", () => {
+    expect(isReservedIpv6("fe80:0:0:0:0:0:0:1")).toBe(true);
+  });
+
+  it("returns true for unique-local", () => {
+    expect(isReservedIpv6("fd00::1")).toBe(true);
+  });
+
+  it("returns true for multicast", () => {
+    expect(isReservedIpv6("ff02::1")).toBe(true);
   });
 
   it("returns true for documentation addresses", () => {
