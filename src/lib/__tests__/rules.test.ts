@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  compileRule,
   enabledCategoriesFromEnv,
   entropy,
   isReservedIpv4,
@@ -898,5 +899,189 @@ describe("scan — public IPs", () => {
   it("does not flag a link-local IPv6", () => {
     const findings = scan("ipv6: fe80::1");
     expect(findings.some((f) => f.ruleId === "pii-ipv6")).toBe(false);
+  });
+});
+
+// ── compileRule ───────────────────────────────────────────────────────────────
+
+describe("compileRule", () => {
+  it("compiles regex source with default g flag", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "\\d{4}",
+      category: "pii",
+    });
+    expect(rule.regex.flags).toBe("g");
+    expect("1234".match(rule.regex)).not.toBeNull();
+  });
+
+  it("compiles with custom flags", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "\\d{4}",
+      flags: "gi",
+      category: "pii",
+    });
+    expect(rule.regex.flags).toBe("gi");
+  });
+
+  it("resolves a validator by name", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "\\d{12}",
+      category: "pii",
+      validate: "mynumber-jp",
+    });
+    expect(rule.validate).toBeDefined();
+    expect(rule.validate?.("123456789018")).toBe(true);
+  });
+
+  it("preserves secretGroup and entropyThreshold", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "key=(\\S+)",
+      category: "secret",
+      secretGroup: 1,
+      entropyThreshold: 3.5,
+    });
+    expect(rule.secretGroup).toBe(1);
+    expect(rule.entropyThreshold).toBe(3.5);
+  });
+});
+
+// ── User config (custom rules) ────────────────────────────────────────────────
+
+describe("user config — custom rules", () => {
+  const ENV_KEY = "SENSITIVE_CANARY_CONFIG";
+  const envBackup = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (envBackup === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = envBackup;
+    }
+    vi.resetModules();
+  });
+
+  it("adds a custom rule from a user config file", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "custom-token",
+            description: "Custom Service Token",
+            regex: "MYSVC-[A-Za-z0-9]{20}",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES, scan } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "custom-token")).toBe(true);
+
+    const findings = scan("token: MYSVC-abcdefghijklmnopqrst");
+    expect(findings.some((f) => f.ruleId === "custom-token")).toBe(true);
+  });
+
+  it("overrides a built-in rule by id", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "pii-email",
+            description: "Replaced Email Rule",
+            regex: "NEVERMATCH[a-z]+",
+            category: "pii",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES, scan } = await import("../rules.ts");
+    const emailRules = RULES.filter((r) => r.id === "pii-email");
+    expect(emailRules).toHaveLength(1);
+    expect(emailRules[0]?.description).toBe("Replaced Email Rule");
+
+    const findings = scan("contact: user@example.com");
+    expect(findings.some((f) => f.ruleId === "pii-email")).toBe(false);
+  });
+
+  it("respects a custom contextWindow", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        contextWindow: 1,
+        rules: [],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { getDefaultContextWindow: getWindow } = await import("../rules.ts");
+    expect(getWindow()).toBe(1);
+  });
+
+  it("skips rules with invalid regex", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "bad-regex",
+            description: "Bad",
+            regex: "[invalid(",
+            category: "secret",
+          },
+          {
+            id: "good-regex",
+            description: "Good",
+            regex: "GOODKEY-\\d+",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "bad-regex")).toBe(false);
+    expect(RULES.some((r) => r.id === "good-regex")).toBe(true);
   });
 });

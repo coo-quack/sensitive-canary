@@ -195,3 +195,106 @@ When Claude uses the `Bash` tool, sensitive-canary checks three things:
 1. **Environment variables** — any `$VAR` or `${VAR}` references in the command are looked up in the current environment; if their values contain secrets or PII, the command is blocked.
 2. **Command string** — the raw command is scanned (catches inline secrets like `echo AKIAIOSFODNN7EXAMPLE`).
 3. **File-reading commands** — for `cat`, `head`, `tail`, `less`, `more`, `bat`, `nl`, the target files are read and scanned before the command runs. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently.
+
+## Custom Rules
+
+All built-in rules are defined in `src/lib/default-config.json` as JSON data. You can add your own rules or override built-in ones without modifying the plugin source.
+
+### Config file
+
+Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CONFIG` environment variable to a custom path (e.g. in the `env` block of your Claude Code `settings.json`).
+
+### Rule fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Unique identifier. Matching a built-in id overrides it. |
+| `description` | string | yes | Human-readable label shown in block messages. |
+| `regex` | string | yes | Regex source (not a `/literal/`). |
+| `category` | `"secret"` \| `"pii"` | yes | Which category the rule belongs to. |
+| `flags` | string | no | Regex flags. Default `"g"`. |
+| `secretGroup` | number | no | Capture group containing the secret. Default 0 (full match). |
+| `entropyThreshold` | number | no | Skip matches below this Shannon entropy (bits/char). |
+| `requireContext` | boolean | no | Only fire when a context word is nearby. |
+| `contextWords` | string[] | no | Words that satisfy `requireContext`. |
+| `contextWindow` | number | no | Per-rule override for context scan width (tokens). |
+| `validate` | string | no | Name of a built-in checksum validator. |
+
+### Available validators
+
+| Name | Algorithm |
+|------|-----------|
+| `luhn` | Luhn checksum (credit cards) |
+| `mynumber-jp` | Japanese Individual Number (My Number) |
+| `nir-fr` | French NIR / Social Security Number |
+| `codice-fiscale-it` | Italian Codice Fiscale |
+| `steuer-id-de` | German Steuer-Identifikationsnummer |
+| `dni-nie-es` | Spanish DNI / NIE |
+| `rrn-kr` | Korean Resident Registration Number |
+| `brn-kr` | Korean Business Registration Number |
+| `resident-id-cn` | Chinese Resident Identity Card |
+| `public-ipv4` | Rejects reserved IPv4 ranges |
+| `public-ipv6` | Rejects reserved IPv6 ranges |
+
+### Global context window
+
+Set `contextWindow` at the top level to override the default (3 tokens ≈ 24 characters):
+
+```json
+{
+  "contextWindow": 5,
+  "rules": []
+}
+```
+
+### Examples
+
+Add a custom secret pattern:
+
+```json
+{
+  "rules": [
+    {
+      "id": "custom-api-key",
+      "description": "My Service API Key",
+      "regex": "MYSVC-[A-Za-z0-9]{32}",
+      "category": "secret",
+      "entropyThreshold": 3.5
+    }
+  ]
+}
+```
+
+Add a context-gated PII rule:
+
+```json
+{
+  "rules": [
+    {
+      "id": "employee-id",
+      "description": "Employee ID",
+      "regex": "EMP\\d{6}",
+      "category": "pii",
+      "requireContext": true,
+      "contextWords": ["employee", "staff", "社員"]
+    }
+  ]
+}
+```
+
+Override a built-in rule (same `id` replaces the original):
+
+```json
+{
+  "rules": [
+    {
+      "id": "pii-email",
+      "description": "Internal Email Only",
+      "regex": "[A-Za-z0-9]+@internal\\.corp\\.(com|org)",
+      "category": "pii"
+    }
+  ]
+}
+```
+
+Invalid rules (bad regex, etc.) are skipped with a warning on stderr. The rest of the config loads normally.

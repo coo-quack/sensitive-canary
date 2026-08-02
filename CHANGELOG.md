@@ -8,6 +8,21 @@
   - Accepts `secret`, `pii`, `secret,pii`, or `all` (comma-separated, case-insensitive); unset/empty/invalid means all categories
   - Useful for reducing PII false positives (e.g. credit card or phone number rules firing on test fixtures) by scanning secrets only
   - The name-based `.env`/`.env.*` block is a secret guard and is disabled when the `secret` category is not enabled
+- Add multi-region PII detection rules (25 PII rules, up from 7)
+  - National IDs with checksum validation: Japanese My Number, French NIR, Italian Codice Fiscale, German Steuer-IdNr., Spanish DNI/NIE, Korean RRN and BRN, Chinese Resident Identity Card
+  - Phone numbers for JP, US, FR, IT, DE, ES, KR, CN
+  - Postal codes for JP, US/EU/KR (5/9-digit), and CN (6-digit)
+  - Public IPv4 and IPv6 addresses (reserved ranges excluded)
+- Add context gating for noisy rules
+  - Rules with `requireContext` only fire when a nearby context word (phone, ZIP, IP, etc.) is found within ~2 sentences of the match
+  - Reduces false positives on bare digit sequences without sacrificing detection when labels are present
+- Move all rule definitions to JSON (`src/lib/default-config.json`)
+  - Rules are now data, not code — the full set can be inspected and modified without editing TypeScript
+  - Checksum validators remain in code and are referenced by name from the config
+- Add user-defined custom rules via config file
+  - Create `~/.config/sensitive-canary/config.json` or set `SENSITIVE_CANARY_CONFIG` to a custom path
+  - Add new rules, override built-in rules by id, and set a custom `contextWindow`
+  - Invalid rules are skipped with a warning; the rest of the config loads normally
 
 ---
 

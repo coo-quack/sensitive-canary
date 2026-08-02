@@ -255,6 +255,89 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 
 ---
 
+## Custom Rules
+
+All detection rules are defined in `src/lib/default-config.json` as data, not code. You can add your own rules or override built-in ones by creating a config file.
+
+### Config file location
+
+Create `~/.config/sensitive-canary/config.json`, or point to a custom path with the `SENSITIVE_CANARY_CONFIG` environment variable:
+
+```json
+{
+  "env": {
+    "SENSITIVE_CANARY_CONFIG": "/path/to/my-rules.json"
+  }
+}
+```
+
+### Adding a rule
+
+Each rule is a JSON object with an `id`, `description`, `regex` (source string), and `category` (`"secret"` or `"pii"`):
+
+```json
+{
+  "rules": [
+    {
+      "id": "custom-api-key",
+      "description": "My Service API Key",
+      "regex": "MYSVC-[A-Za-z0-9]{32}",
+      "category": "secret"
+    }
+  ]
+}
+```
+
+### Overriding a built-in rule
+
+A user rule with the same `id` as a built-in rule replaces it. For example, to tighten the email regex:
+
+```json
+{
+  "rules": [
+    {
+      "id": "pii-email",
+      "description": "Internal Email",
+      "regex": "[A-Za-z0-9]+@internal\\.corp\\.(com|org)",
+      "category": "pii"
+    }
+  ]
+}
+```
+
+### Context gating and validators
+
+User rules support the same fields as built-in rules:
+
+| Field | Type | Description |
+|---|---|---|
+| `requireContext` | boolean | Only fire when a nearby context word is found |
+| `contextWords` | string[] | Words that satisfy the context requirement |
+| `contextWindow` | number | Override the global context window (default: 3 tokens) |
+| `entropyThreshold` | number | Skip matches below this Shannon entropy |
+| `secretGroup` | number | Capture group index containing the secret (default: 0 = full match) |
+| `validate` | string | Name of a built-in checksum validator (see below) |
+| `flags` | string | Regex flags (default: `"g"`) |
+
+Available validators (referenced by name in the `validate` field):
+
+`luhn`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`
+
+### Overriding the context window globally
+
+Set `contextWindow` at the top level to change how many tokens of surrounding text are scanned for context words (default: 3):
+
+```json
+{
+  "contextWindow": 5,
+  "rules": []
+}
+```
+
+Invalid rules (bad regex, missing fields) are skipped with a warning on stderr. The rest of the config still loads.
+
+---
+
 ## Detection rules
 
 ### Secrets (24 rules)

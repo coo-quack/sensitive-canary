@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 export type Category = "secret" | "pii";
 
 export interface Finding {
@@ -20,6 +25,30 @@ interface Rule {
   contextWords?: string[];
   requireContext?: boolean;
   contextWindow?: number;
+}
+
+// JSON representation of a rule, as written in config files. The `regex` is a
+// source string (not a RegExp literal), compiled at load time. `validate` is a
+// name into the VALIDATORS registry.
+export interface RuleConfig {
+  id: string;
+  description: string;
+  regex: string;
+  flags?: string;
+  secretGroup?: number;
+  entropyThreshold?: number;
+  validate?: string;
+  category: Category;
+  contextWords?: string[];
+  requireContext?: boolean;
+  contextWindow?: number;
+}
+
+// Top-level config file: a context window override plus a list of rules.
+// User config files use the same shape and can override built-in rules by id.
+export interface CanaryConfig {
+  contextWindow?: number;
+  rules: RuleConfig[];
 }
 
 const ALL_CATEGORIES: ReadonlySet<Category> = new Set(["secret", "pii"]);
@@ -325,7 +354,12 @@ export function entropy(str: string): number {
 
 // ── Context enhancement ──────────────────────────────────────────────────────
 
-const DEFAULT_CONTEXT_WINDOW = 3;
+// Set from the default config during module initialisation (see buildRules).
+let effectiveContextWindow = 3;
+
+export function getDefaultContextWindow(): number {
+  return effectiveContextWindow;
+}
 
 // Split on whitespace and Unicode punctuation. A cheap tokenizer with no NLP
 // dependency, sufficient for matching context labels (phone, ZIP, etc.) in
@@ -354,430 +388,109 @@ function hasNearbyContextWord(
   return contextWords.some((word) => nearby.has(word.toLowerCase()));
 }
 
-// Patterns sourced from gitleaks and TruffleHog detector definitions.
-// Each rule:
-//   regex        — must have /g flag
-//   secretGroup  — capture group containing the secret (default: 0 = full match)
-//   entropyThreshold — skip match if entropy(secretValue) is below threshold
+// ── Validator registry ───────────────────────────────────────────────────────
+// Validators are code (checksum algorithms), not data. They live here and are
+// referenced by name from the JSON config. User-defined rules can use any of
+// these validators or omit `validate` entirely.
 
-// ── Secrets ───────────────────────────────────────────────────────────────────
+const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
+  luhn,
+  "mynumber-jp": validateMyNumber,
+  "nir-fr": validateFrenchNIR,
+  "codice-fiscale-it": validateCodiceFiscale,
+  "steuer-id-de": validateGermanIdNr,
+  "dni-nie-es": validateSpanishNIF,
+  "rrn-kr": validateKoreanRRN,
+  "brn-kr": validateKoreanBRN,
+  "resident-id-cn": validateChineseID,
+  "public-ipv4": (ip: string) => !isReservedIpv4(ip),
+  "public-ipv6": (ip: string) => !isReservedIpv6(ip),
+};
 
-const SECRET_RULES: Rule[] = [
-  // Cloud
-  {
-    id: "aws-access-key",
-    description: "AWS Access Key ID",
-    regex:
-      /\b(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\b/g,
-    category: "secret",
-  },
-  {
-    id: "gcp-api-key",
-    description: "Google Cloud API Key",
-    regex: /AIza[0-9A-Za-z_-]{35}/g,
-    category: "secret",
-  },
-  {
-    id: "private-key",
-    description: "PEM Private Key",
-    // Covers RSA, EC, DSA, PGP, and OpenSSH private keys
-    regex: /-----BEGIN (RSA |EC |DSA |PGP |OPENSSH )?PRIVATE KEY/g,
-    category: "secret",
-  },
+export function getValidator(
+  name: string,
+): ((str: string) => boolean) | undefined {
+  return VALIDATORS[name];
+}
 
-  // Source control
-  {
-    id: "github-pat",
-    description: "GitHub Personal Access Token",
-    regex: /gh[pousr]_[A-Za-z0-9]{36,255}/g,
-    category: "secret",
-  },
-  {
-    id: "github-fine-grained",
-    description: "GitHub Fine-Grained Token",
-    regex: /github_pat_[A-Za-z0-9_]{82}/g,
-    category: "secret",
-  },
-  {
-    id: "gitlab-pat",
-    description: "GitLab Personal Access Token",
-    regex: /glpat-[A-Za-z0-9_=-]{20,22}/g,
-    category: "secret",
-  },
+// ── Config loading ───────────────────────────────────────────────────────────
 
-  // Package registries
-  {
-    id: "npm-token",
-    description: "npm Access Token",
-    regex: /npm_[A-Za-z0-9]{36}/g,
-    category: "secret",
-  },
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_CONFIG_PATH = join(MODULE_DIR, "default-config.json");
+const { SENSITIVE_CANARY_CONFIG: userConfigPath } = process.env;
+const USER_CONFIG_PATH =
+  userConfigPath ??
+  join(homedir(), ".config", "sensitive-canary", "config.json");
 
-  // Communication
-  {
-    id: "slack-token",
-    description: "Slack Token",
-    regex: /xox[baprs]-[0-9a-zA-Z-]{10,72}/g,
-    category: "secret",
-  },
-  {
-    id: "slack-webhook",
-    description: "Slack Webhook URL",
-    regex:
-      /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_]{8,10}\/B[A-Za-z0-9_]{8,12}\/[A-Za-z0-9_]{23,24}/g,
-    category: "secret",
-  },
-  {
-    id: "discord-webhook",
-    description: "Discord Webhook URL",
-    regex:
-      /https:\/\/discord(?:app)?\.com\/api\/webhooks\/[0-9]{17,20}\/[A-Za-z0-9_-]{68}/g,
-    category: "secret",
-  },
-  {
-    id: "telegram-bot-token",
-    description: "Telegram Bot Token",
-    regex: /[0-9]{8,10}:AA[0-9A-Za-z_-]{33}/g,
-    category: "secret",
-  },
-  {
-    id: "twilio-sid",
-    description: "Twilio Account SID",
-    regex: /AC[0-9a-f]{32}/g,
-    category: "secret",
-  },
+function readJsonFile(filePath: string): unknown {
+  return JSON.parse(readFileSync(filePath, "utf-8"));
+}
 
-  // Email services
-  {
-    id: "sendgrid-key",
-    description: "SendGrid API Key",
-    regex: /SG\.[A-Za-z0-9_-]{20,24}\.[A-Za-z0-9_-]{39,50}/g,
-    category: "secret",
-  },
-  {
-    id: "mailgun-key",
-    description: "Mailgun API Key",
-    regex: /key-[0-9a-zA-Z]{32}/g,
-    category: "secret",
-  },
-  {
-    id: "mailchimp-key",
-    description: "Mailchimp API Key",
-    regex: /[0-9a-f]{32}-us[0-9]{1,2}/g,
-    category: "secret",
-  },
+// Compile a single RuleConfig (JSON) into a Rule (with compiled RegExp and
+// resolved validator function).
+export function compileRule(rc: RuleConfig): Rule {
+  const { regex: source, flags, validate: validateName, ...rest } = rc;
+  const rule: Rule = {
+    ...rest,
+    regex: new RegExp(source, flags ?? "g"),
+  };
+  if (validateName) {
+    const fn = VALIDATORS[validateName];
+    if (fn) rule.validate = fn;
+  }
+  return rule;
+}
 
-  // Payment
-  {
-    id: "stripe-secret-key",
-    description: "Stripe Secret Key",
-    regex: /sk_(live|test)_[0-9a-zA-Z]{24}/g,
-    category: "secret",
-  },
-  {
-    id: "stripe-restricted-key",
-    description: "Stripe Restricted Key",
-    regex: /rk_(live|test)_[0-9a-zA-Z]{24}/g,
-    category: "secret",
-  },
+// Load and compile the built-in default rules from default-config.json.
+function loadDefaultConfig(): CanaryConfig {
+  return readJsonFile(DEFAULT_CONFIG_PATH) as CanaryConfig;
+}
 
-  // AI services
-  {
-    id: "openai-key",
-    description: "OpenAI API Key (legacy)",
-    regex: /sk-(?!proj-|ant-)[A-Za-z0-9]{48}/g,
-    category: "secret",
-  },
-  {
-    id: "openai-project-key",
-    description: "OpenAI Project API Key",
-    regex: /sk-proj-[A-Za-z0-9_-]{40,}/g,
-    entropyThreshold: 3.5,
-    category: "secret",
-  },
-  {
-    id: "anthropic-key",
-    description: "Anthropic API Key",
-    regex: /sk-ant-[A-Za-z0-9_-]{95}/g,
-    category: "secret",
-  },
+// Load user config if it exists. Returns null when the file is absent or
+// unreadable so that only built-in defaults are used.
+function loadUserConfig(): CanaryConfig | null {
+  try {
+    return readJsonFile(USER_CONFIG_PATH) as CanaryConfig;
+  } catch {
+    return null;
+  }
+}
 
-  // Auth tokens
-  {
-    id: "jwt",
-    description: "JSON Web Token (JWT)",
-    regex: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-    category: "secret",
-  },
+// Build the final rule list: default rules first, then user rules. A user rule
+// with the same id as a built-in rule replaces it; new ids are appended.
+// Invalid user rules (bad regex, etc.) are skipped with a warning so that one
+// bad entry does not break the entire hook.
+function buildRules(): Rule[] {
+  const defaultConfig = loadDefaultConfig();
+  effectiveContextWindow = defaultConfig.contextWindow ?? 3;
 
-  // Generic / env-based
-  {
-    id: "generic-secret",
-    description: "Generic API Key / Secret",
-    regex:
-      /(api[_-]?key|secret[_-]?key|access[_-]?token|api[_-]?secret)\s*[:=]\s*['"]?([A-Za-z0-9\-_.]{20,})/gi,
-    secretGroup: 2,
-    entropyThreshold: 3.5,
-    category: "secret",
-  },
-  {
-    id: "env-assignment",
-    description: ".env style secret assignment",
-    regex:
-      /\b[A-Z_]*(SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|PRIVATE_KEY)[A-Z_0-9]*\s*=\s*(\S{8,})/g,
-    secretGroup: 2,
-    entropyThreshold: 3.0,
-    category: "secret",
-  },
-  {
-    id: "connection-string",
-    description: "Database Connection String with credentials",
-    regex: /(mongodb|mysql|postgres|postgresql|redis):\/\/[^:\s]+:[^@\s]+@/g,
-    category: "secret",
-  },
-];
+  const defaultRules = defaultConfig.rules.map(compileRule);
 
-// ── PII ───────────────────────────────────────────────────────────────────────
+  const userConfig = loadUserConfig();
+  if (userConfig) {
+    if (userConfig.contextWindow != null) {
+      effectiveContextWindow = userConfig.contextWindow;
+    }
+    if (userConfig.rules?.length) {
+      const userRules: Rule[] = [];
+      for (const rc of userConfig.rules) {
+        try {
+          userRules.push(compileRule(rc));
+        } catch (e) {
+          process.stderr.write(
+            `sensitive-canary: skipping user rule "${rc.id ?? "(unknown)"}": ${e instanceof Error ? e.message : String(e)}\n`,
+          );
+        }
+      }
+      const userIds = new Set(userRules.map((r) => r.id));
+      return defaultRules.filter((r) => !userIds.has(r.id)).concat(userRules);
+    }
+  }
 
-const PII_RULES: Rule[] = [
-  {
-    id: "pii-email",
-    description: "Email Address",
-    regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
-    category: "pii",
-  },
-  {
-    id: "pii-credit-card",
-    description: "Credit Card Number",
-    // Visa (16d) | Mastercard (16d) | Amex (15d) | Discover (16d)
-    // Optional spaces or dashes between digit groups
-    regex:
-      /\b(?:4[0-9]{3}(?:[\s-]?[0-9]{4}){3}|5[1-5][0-9]{2}(?:[\s-]?[0-9]{4}){3}|3[47][0-9]{2}[\s-]?[0-9]{6}[\s-]?[0-9]{5}|6(?:011|5[0-9]{2})[0-9](?:[\s-]?[0-9]{4}){3})\b/g,
-    validate: luhn,
-    category: "pii",
-  },
-  {
-    id: "pii-ssn",
-    description: "US Social Security Number",
-    regex: /\b(?!000|666|9\d{2})\d{3}[- ](?!00)\d{2}[- ](?!0000)\d{4}\b/g,
-    category: "pii",
-  },
-  {
-    id: "pii-phone-us",
-    description: "US Phone Number",
-    regex: /\b(\+1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g,
-    category: "pii",
-  },
-  {
-    id: "pii-phone-jp",
-    description: "Japanese Phone Number",
-    regex: /\b0\d{1,4}[\s-]\d{1,4}[\s-]\d{4}\b/g,
-    category: "pii",
-  },
-  {
-    id: "pii-postal-jp",
-    description: "Japanese Postal Code",
-    // Require 〒 prefix to avoid false positives (e.g. phone number fragments)
-    regex: /〒\d{3}[\s-]\d{4}/g,
-    category: "pii",
-  },
-  {
-    id: "pii-ipv4",
-    description: "IPv4 Address (private range)",
-    // Only flag RFC-1918 private addresses to reduce noise
-    regex:
-      /\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g,
-    category: "pii",
-  },
+  return defaultRules;
+}
 
-  // ── National ID numbers (checksum-validated) ────────────────────────────────
-  {
-    id: "pii-mynumber-jp",
-    description: "Japanese Individual Number (My Number)",
-    regex: /\b\d{12}\b/g,
-    validate: validateMyNumber,
-    category: "pii",
-  },
-  {
-    id: "pii-nir-fr",
-    description: "French NIR / Social Security Number",
-    regex:
-      /\b[12]\d{2}(?:0[1-9]|1[0-9]|2[0-9]|[3-9]\d)(?:\d{5}|2[AB]\d{3})\d{3}\s?\d{2}\b/gi,
-    validate: validateFrenchNIR,
-    category: "pii",
-  },
-  {
-    id: "pii-codice-fiscale-it",
-    description: "Italian Codice Fiscale",
-    regex: /\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/g,
-    validate: validateCodiceFiscale,
-    category: "pii",
-  },
-  {
-    id: "pii-steuer-id-de",
-    description: "German Steuer-Identifikationsnummer",
-    regex: /\b[1-9]\d{10}\b/g,
-    validate: validateGermanIdNr,
-    category: "pii",
-  },
-  {
-    id: "pii-dni-nie-es",
-    description: "Spanish DNI / NIE",
-    regex: /\b(?:\d{8}[A-Z]|[XYZ]\d{7}[A-Z])\b/g,
-    validate: validateSpanishNIF,
-    category: "pii",
-  },
-
-  // ── Phone numbers (FIGS) ─────────────────────────────────────────────────────
-  // Variable-length Italian and German numbers are noisy on bare digits, so
-  // these require a nearby phone-related context word.
-  {
-    id: "pii-phone-fr",
-    description: "French Phone Number",
-    regex: /\b0[1-9](?:[\s.-]?\d{2}){4}\b/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: [
-      "tél",
-      "tel",
-      "téléphone",
-      "telephone",
-      "phone",
-      "mobile",
-      "portable",
-      "fax",
-    ],
-  },
-  {
-    id: "pii-phone-it",
-    description: "Italian Phone Number",
-    regex: /\b(?:0\d{8,9}|3\d{8,9})\b/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: ["telefono", "tel", "cellulare", "mobile", "phone", "fax"],
-  },
-  {
-    id: "pii-phone-de",
-    description: "German Phone Number",
-    regex: /\b0[1-9]\d{6,11}\b/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: ["telefon", "tel", "handy", "mobil", "phone", "fax"],
-  },
-  {
-    id: "pii-phone-es",
-    description: "Spanish Phone Number",
-    regex: /\b[67]\d{8}\b/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: [
-      "teléfono",
-      "telefono",
-      "tel",
-      "móvil",
-      "movil",
-      "phone",
-      "fax",
-    ],
-  },
-
-  // ── Postal codes (5/9-digit, context-gated) ─────────────────────────────────
-  // Bare 5/9-digit numbers are too generic to flag without a nearby label.
-  // Japanese postal codes keep their own rule (〒 prefix required).
-  {
-    id: "pii-postal-code",
-    description: "Postal Code (US ZIP / EU / KR)",
-    regex: /\b\d{5}(?:-\d{4})?\b/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: [
-      "zip",
-      "postal",
-      "postale",
-      "postcode",
-      "plz",
-      "postleitzahl",
-      "cap",
-      "우편번호",
-    ],
-  },
-
-  // ── Korean / Chinese national IDs (checksum-validated) ───────────────────────
-  {
-    id: "pii-rrn-kr",
-    description: "Korean Resident Registration Number",
-    regex: /\b\d{6}[-\s]?\d{7}\b/g,
-    validate: validateKoreanRRN,
-    category: "pii",
-  },
-  {
-    id: "pii-brn-kr",
-    description: "Korean Business Registration Number",
-    regex: /\b\d{3}[-\s]?\d{2}[-\s]?\d{5}\b/g,
-    validate: validateKoreanBRN,
-    category: "pii",
-  },
-  {
-    id: "pii-resident-id-cn",
-    description: "Chinese Resident Identity Card",
-    regex: /\b\d{17}[\dXx]\b/g,
-    validate: validateChineseID,
-    category: "pii",
-  },
-
-  // ── Korean / Chinese phone numbers (context-gated) ───────────────────────────
-  {
-    id: "pii-phone-kr",
-    description: "Korean Phone Number",
-    regex: /(?:\+82[-\s]?)?(?:01[016789]|0\d{1,2})[-\s]?\d{3,4}[-\s]?\d{4}/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: ["전화", "핸드폰", "휴대", "tel", "phone", "mobile", "fax"],
-  },
-  {
-    id: "pii-phone-cn",
-    description: "Chinese Phone Number",
-    regex: /(?:\+86[-\s]?)?(?:1[3-9]\d{9}|0\d{2,3}[-\s]?\d{7,8})/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: ["电话", "手机", "tel", "phone", "mobile", "fax"],
-  },
-
-  // ── Chinese postal code (6-digit, context-gated) ─────────────────────────────
-  {
-    id: "pii-postal-cn",
-    description: "Chinese Postal Code",
-    regex: /\b[1-9]\d{5}\b/g,
-    category: "pii",
-    requireContext: true,
-    contextWords: ["邮编", "邮政编码", "postal", "postcode", "zip"],
-  },
-
-  // ── Public IP addresses (context-gated, reserved ranges excluded) ───────────
-  // The existing pii-ipv4 rule keeps private-range detection without context.
-  // These flag public IPs only and require a nearby label, to avoid noise from
-  // example IPs (8.8.8.8) and unrelated dotted numbers.
-  {
-    id: "pii-ipv4-public",
-    description: "Public IPv4 Address",
-    regex: /\b\d{1,3}(?:\.\d{1,3}){3}\b/g,
-    validate: (ip) => !isReservedIpv4(ip),
-    category: "pii",
-    requireContext: true,
-    contextWords: ["ip", "ipv4"],
-  },
-  {
-    id: "pii-ipv6",
-    description: "IPv6 Address",
-    regex: /\b[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){2,7}\b/g,
-    validate: (ip) => !isReservedIpv6(ip),
-    category: "pii",
-    requireContext: true,
-    contextWords: ["ipv6", "ip"],
-  },
-];
-
-export const RULES: Rule[] = [...SECRET_RULES, ...PII_RULES];
+export const RULES: Rule[] = buildRules();
 
 // Show first 4 + **** + last 4 chars; fully mask strings of 8 chars or fewer
 export function redact(str: string): string {
@@ -815,7 +528,7 @@ export function scan(
               matchStart,
               matchEnd,
               rule.contextWords,
-              rule.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+              rule.contextWindow ?? effectiveContextWindow,
             );
 
       // Rules that require context (e.g. bare postal codes) are dropped when
