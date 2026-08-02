@@ -12,6 +12,7 @@ import {
   validateCodiceFiscale,
   validateFrenchNIR,
   validateGermanIdNr,
+  validateKoreanBRN,
   validateKoreanRRN,
   validateMyNumber,
   validateSpanishNIF,
@@ -687,7 +688,7 @@ describe("scan — postal code", () => {
   });
 
   it("detects a Spanish postal code with context", () => {
-    const findings = scan("código: 28013");
+    const findings = scan("postal: 28013");
     expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
   });
 });
@@ -721,6 +722,20 @@ describe("validateKoreanRRN", () => {
 
   it("fails a wrong length", () => {
     expect(validateKoreanRRN("800101100000")).toBe(false);
+  });
+});
+
+describe("validateKoreanBRN", () => {
+  it("passes a valid BRN", () => {
+    expect(validateKoreanBRN("1348672612")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateKoreanBRN("1348672610")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateKoreanBRN("134867261")).toBe(false);
   });
 });
 
@@ -801,6 +816,16 @@ describe("scan — Korean / Chinese IDs", () => {
   it("does not flag a Chinese ID with a bad check digit", () => {
     const findings = scan("id: 110102199001010010");
     expect(findings.some((f) => f.ruleId === "pii-resident-id-cn")).toBe(false);
+  });
+
+  it("detects a valid Korean BRN", () => {
+    const findings = scan("brn: 134-86-72612");
+    expect(findings.some((f) => f.ruleId === "pii-brn-kr")).toBe(true);
+  });
+
+  it("does not flag a BRN with a bad check digit", () => {
+    const findings = scan("brn: 134-86-72610");
+    expect(findings.some((f) => f.ruleId === "pii-brn-kr")).toBe(false);
   });
 });
 

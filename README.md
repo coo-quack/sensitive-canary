@@ -25,7 +25,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **48 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **49 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE)
 - **Context gating** — postal codes and FIGS phone numbers require a nearby label, reducing false positives on bare digit sequences
 - **Entropy filtering** — reduces false positives on low-entropy values
@@ -286,7 +286,7 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 | `env-assignment` | `.env`-style secret assignment *(entropy ≥ 3.0)* |
 | `connection-string` | Database connection string with embedded credentials |
 
-### PII (24 rules)
+### PII (25 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
@@ -308,6 +308,7 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 | `pii-postal-jp` | Japanese postal code (`〒` prefix required) | — |
 | `pii-postal-code` | Postal code (US ZIP / EU / KR) | Context-gated |
 | `pii-rrn-kr` | Korean Resident Registration Number | Checksum (weighted mod 11) |
+| `pii-brn-kr` | Korean Business Registration Number | Checksum (NTS standard algorithm) |
 | `pii-resident-id-cn` | Chinese Resident Identity Card | Check digit (GB 11643 MOD 11-2) |
 | `pii-phone-kr` | Korean phone number | Context-gated |
 | `pii-phone-cn` | Chinese phone number | Context-gated |
@@ -317,7 +318,7 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
 
-National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, and GB 11643-1999 for the Chinese Resident Identity Card.
+National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, GB 11643-1999 for the Chinese Resident Identity Card, and the NTS (Hometax) standard algorithm for the Korean BRN (official spec not directly verified).
 
 ### Context gating
 

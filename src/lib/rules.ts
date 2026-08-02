@@ -232,6 +232,23 @@ export function validateKoreanRRN(input: string): boolean {
   return check === parseInt(s[12] ?? "", 10);
 }
 
+// Korean Business Registration Number (사업자등록번호): 10 digits. Uses the
+// standard algorithm employed by Korea's NTS (Hometax) and widely implemented:
+// weights 1,3,7,1,3,7,1,3,5 over digits 1-9, plus floor(digit9 × 5 / 10), and
+// the check digit is (10 - (sum mod 10)) mod 10. Note: the official NTS spec
+// was not directly accessible; this follows the de-facto standard algorithm.
+export function validateKoreanBRN(input: string): boolean {
+  const s = input.replace(/[-\s]/g, "");
+  if (!/^\d{10}$/.test(s)) return false;
+  const weights = [1, 3, 7, 1, 3, 7, 1, 3, 5];
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    sum += parseInt(s[i] ?? "", 10) * (weights[i] ?? 0);
+  }
+  sum += Math.floor((parseInt(s[8] ?? "", 10) * 5) / 10);
+  return (10 - (sum % 10)) % 10 === parseInt(s[9] ?? "", 10);
+}
+
 // Chinese Resident Identity Card (居民身份证): 18 chars (17 digits + check).
 // ISO 7064 MOD 11-2 per GB 11643-1999. Weights
 // 7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2; remainder maps to "10X98765432".
@@ -630,8 +647,6 @@ const PII_RULES: Rule[] = [
       "phone",
       "mobile",
       "portable",
-      "contact",
-      "appel",
       "fax",
     ],
   },
@@ -641,16 +656,7 @@ const PII_RULES: Rule[] = [
     regex: /\b(?:0\d{8,9}|3\d{8,9})\b/g,
     category: "pii",
     requireContext: true,
-    contextWords: [
-      "telefono",
-      "tel",
-      "cellulare",
-      "mobile",
-      "phone",
-      "contatto",
-      "chiamata",
-      "fax",
-    ],
+    contextWords: ["telefono", "tel", "cellulare", "mobile", "phone", "fax"],
   },
   {
     id: "pii-phone-de",
@@ -658,16 +664,7 @@ const PII_RULES: Rule[] = [
     regex: /\b0[1-9]\d{6,11}\b/g,
     category: "pii",
     requireContext: true,
-    contextWords: [
-      "telefon",
-      "tel",
-      "handy",
-      "mobil",
-      "phone",
-      "anruf",
-      "nummer",
-      "fax",
-    ],
+    contextWords: ["telefon", "tel", "handy", "mobil", "phone", "fax"],
   },
   {
     id: "pii-phone-es",
@@ -682,8 +679,6 @@ const PII_RULES: Rule[] = [
       "móvil",
       "movil",
       "phone",
-      "contacto",
-      "llamada",
       "fax",
     ],
   },
@@ -705,8 +700,6 @@ const PII_RULES: Rule[] = [
       "plz",
       "postleitzahl",
       "cap",
-      "código",
-      "codigo",
       "우편번호",
     ],
   },
@@ -717,6 +710,13 @@ const PII_RULES: Rule[] = [
     description: "Korean Resident Registration Number",
     regex: /\b\d{6}[-\s]?\d{7}\b/g,
     validate: validateKoreanRRN,
+    category: "pii",
+  },
+  {
+    id: "pii-brn-kr",
+    description: "Korean Business Registration Number",
+    regex: /\b\d{3}[-\s]?\d{2}[-\s]?\d{5}\b/g,
+    validate: validateKoreanBRN,
     category: "pii",
   },
   {
@@ -734,17 +734,7 @@ const PII_RULES: Rule[] = [
     regex: /(?:\+82[-\s]?)?(?:01[016789]|0\d{1,2})[-\s]?\d{3,4}[-\s]?\d{4}/g,
     category: "pii",
     requireContext: true,
-    contextWords: [
-      "전화",
-      "연락처",
-      "핸드폰",
-      "휴대",
-      "tel",
-      "phone",
-      "mobile",
-      "call",
-      "fax",
-    ],
+    contextWords: ["전화", "핸드폰", "휴대", "tel", "phone", "mobile", "fax"],
   },
   {
     id: "pii-phone-cn",
@@ -752,16 +742,7 @@ const PII_RULES: Rule[] = [
     regex: /(?:\+86[-\s]?)?(?:1[3-9]\d{9}|0\d{2,3}[-\s]?\d{7,8})/g,
     category: "pii",
     requireContext: true,
-    contextWords: [
-      "电话",
-      "手机",
-      "联系方式",
-      "tel",
-      "phone",
-      "mobile",
-      "call",
-      "fax",
-    ],
+    contextWords: ["电话", "手机", "tel", "phone", "mobile", "fax"],
   },
 
   // ── Chinese postal code (6-digit, context-gated) ─────────────────────────────
@@ -785,15 +766,7 @@ const PII_RULES: Rule[] = [
     validate: (ip) => !isReservedIpv4(ip),
     category: "pii",
     requireContext: true,
-    contextWords: [
-      "ip",
-      "ipv4",
-      "address",
-      "addr",
-      "host",
-      "server",
-      "endpoint",
-    ],
+    contextWords: ["ip", "ipv4"],
   },
   {
     id: "pii-ipv6",
@@ -802,15 +775,7 @@ const PII_RULES: Rule[] = [
     validate: (ip) => !isReservedIpv6(ip),
     category: "pii",
     requireContext: true,
-    contextWords: [
-      "ipv6",
-      "ip",
-      "address",
-      "addr",
-      "host",
-      "server",
-      "endpoint",
-    ],
+    contextWords: ["ipv6", "ip"],
   },
 ];
 
