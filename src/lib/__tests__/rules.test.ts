@@ -481,6 +481,14 @@ describe("validateFrenchNIR", () => {
   it("fails a wrong length", () => {
     expect(validateFrenchNIR("1234567890123")).toBe(false);
   });
+
+  it("passes a valid NIR with Corsica 2A", () => {
+    expect(validateFrenchNIR("188022A12345632")).toBe(true);
+  });
+
+  it("passes a valid NIR with Corsica 2B", () => {
+    expect(validateFrenchNIR("188022B12345659")).toBe(true);
+  });
 });
 
 describe("validateCodiceFiscale", () => {
@@ -568,6 +576,28 @@ describe("scan — national ID numbers", () => {
     const findings = scan("nie: X1234567L");
     expect(findings.some((f) => f.ruleId === "pii-dni-nie-es")).toBe(true);
   });
+
+  it("does not flag a French NIR with a bad check key", () => {
+    const findings = scan("secu: 1234567890123 99");
+    expect(findings.some((f) => f.ruleId === "pii-nir-fr")).toBe(false);
+  });
+
+  it("does not flag a Codice Fiscale with a bad control character", () => {
+    const findings = scan("cf: RSSMRA85M01H501Z");
+    expect(findings.some((f) => f.ruleId === "pii-codice-fiscale-it")).toBe(
+      false,
+    );
+  });
+
+  it("does not flag a Steuer-IdNr. with a bad check digit", () => {
+    const findings = scan("idnr: 12345678900");
+    expect(findings.some((f) => f.ruleId === "pii-steuer-id-de")).toBe(false);
+  });
+
+  it("does not flag a DNI with a bad control letter", () => {
+    const findings = scan("dni: 12345678Y");
+    expect(findings.some((f) => f.ruleId === "pii-dni-nie-es")).toBe(false);
+  });
 });
 
 // ── scan: FIGS phone numbers (context-gated) ──────────────────────────────────
@@ -645,6 +675,16 @@ describe("scan — postal code", () => {
   it("does not flag a ZIP without a context label", () => {
     const findings = scan("order 90210 confirmed");
     expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(false);
+  });
+
+  it("detects a French postal code with context", () => {
+    const findings = scan("postal: 75001");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects a Spanish postal code with context", () => {
+    const findings = scan("código: 28013");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
   });
 });
 
