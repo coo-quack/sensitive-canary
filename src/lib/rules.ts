@@ -325,7 +325,7 @@ export function entropy(str: string): number {
 
 // ── Context enhancement ──────────────────────────────────────────────────────
 
-const DEFAULT_CONTEXT_WINDOW = 10;
+const DEFAULT_CONTEXT_WINDOW = 3;
 
 // Split on whitespace and Unicode punctuation. A cheap tokenizer with no NLP
 // dependency, sufficient for matching context labels (phone, ZIP, etc.) in
