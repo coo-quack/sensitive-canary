@@ -2,13 +2,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   enabledCategoriesFromEnv,
   entropy,
+  isReservedIpv4,
+  isReservedIpv6,
   luhn,
   parseCategories,
   redact,
   scan,
+  validateChineseID,
   validateCodiceFiscale,
   validateFrenchNIR,
   validateGermanIdNr,
+  validateKoreanRRN,
   validateMyNumber,
   validateSpanishNIF,
 } from "../rules.ts";
@@ -701,5 +705,173 @@ describe("scan — context scoring", () => {
     const findings = scan("contact: user@example.com");
     const email = findings.find((f) => f.ruleId === "pii-email");
     expect(email?.score).toBe(1.0);
+  });
+});
+
+// ── Korean / Chinese ID validators ────────────────────────────────────────────
+
+describe("validateKoreanRRN", () => {
+  it("passes a valid RRN", () => {
+    expect(validateKoreanRRN("8001011000008")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateKoreanRRN("8001011000009")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateKoreanRRN("800101100000")).toBe(false);
+  });
+});
+
+describe("validateChineseID", () => {
+  it("passes a valid Resident Identity Card", () => {
+    expect(validateChineseID("110102199001010011")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateChineseID("110102199001010010")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateChineseID("11010219900101001")).toBe(false);
+  });
+});
+
+// ── IP reserved-range checks ──────────────────────────────────────────────────
+
+describe("isReservedIpv4", () => {
+  it("returns false for a public IP", () => {
+    expect(isReservedIpv4("8.8.8.8")).toBe(false);
+  });
+
+  it("returns true for private ranges", () => {
+    expect(isReservedIpv4("192.168.1.1")).toBe(true);
+    expect(isReservedIpv4("10.0.0.1")).toBe(true);
+    expect(isReservedIpv4("172.16.0.1")).toBe(true);
+  });
+
+  it("returns true for TEST-NET addresses", () => {
+    expect(isReservedIpv4("192.0.2.1")).toBe(true);
+    expect(isReservedIpv4("203.0.113.1")).toBe(true);
+  });
+
+  it("returns true for loopback and link-local", () => {
+    expect(isReservedIpv4("127.0.0.1")).toBe(true);
+    expect(isReservedIpv4("169.254.1.1")).toBe(true);
+  });
+});
+
+describe("isReservedIpv6", () => {
+  it("returns false for a public IPv6", () => {
+    expect(isReservedIpv6("2001:4860:4860::8888")).toBe(false);
+  });
+
+  it("returns true for loopback", () => {
+    expect(isReservedIpv6("::1")).toBe(true);
+  });
+
+  it("returns true for link-local", () => {
+    expect(isReservedIpv6("fe80::1")).toBe(true);
+  });
+
+  it("returns true for documentation addresses", () => {
+    expect(isReservedIpv6("2001:db8::1")).toBe(true);
+  });
+});
+
+// ── scan: Korean / Chinese IDs ────────────────────────────────────────────────
+
+describe("scan — Korean / Chinese IDs", () => {
+  it("detects a valid Korean RRN", () => {
+    const findings = scan("rrn: 800101-1000008");
+    expect(findings.some((f) => f.ruleId === "pii-rrn-kr")).toBe(true);
+  });
+
+  it("does not flag an RRN with a bad check digit", () => {
+    const findings = scan("rrn: 800101-1000009");
+    expect(findings.some((f) => f.ruleId === "pii-rrn-kr")).toBe(false);
+  });
+
+  it("detects a valid Chinese Resident ID", () => {
+    const findings = scan("id: 110102199001010011");
+    expect(findings.some((f) => f.ruleId === "pii-resident-id-cn")).toBe(true);
+  });
+
+  it("does not flag a Chinese ID with a bad check digit", () => {
+    const findings = scan("id: 110102199001010010");
+    expect(findings.some((f) => f.ruleId === "pii-resident-id-cn")).toBe(false);
+  });
+});
+
+// ── scan: Korean / Chinese phone numbers ──────────────────────────────────────
+
+describe("scan — Korean / Chinese phones", () => {
+  it("detects a Korean phone with context", () => {
+    const findings = scan("전화: 010-1234-5678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-kr")).toBe(true);
+  });
+
+  it("does not flag a bare Korean number without context", () => {
+    const findings = scan("ref 010-1234-5678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-kr")).toBe(false);
+  });
+
+  it("detects a Chinese phone with context", () => {
+    const findings = scan("电话: 13812345678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-cn")).toBe(true);
+  });
+
+  it("does not flag a bare Chinese number without context", () => {
+    const findings = scan("id 13812345678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-cn")).toBe(false);
+  });
+});
+
+// ── scan: Chinese postal code ─────────────────────────────────────────────────
+
+describe("scan — Chinese postal code", () => {
+  it("detects a Chinese postal code with context", () => {
+    const findings = scan("邮编: 100000");
+    expect(findings.some((f) => f.ruleId === "pii-postal-cn")).toBe(true);
+  });
+
+  it("does not flag a bare 6-digit number", () => {
+    const findings = scan("count 123456 done");
+    expect(findings.some((f) => f.ruleId === "pii-postal-cn")).toBe(false);
+  });
+});
+
+// ── scan: public IP addresses ─────────────────────────────────────────────────
+
+describe("scan — public IPs", () => {
+  it("detects a public IPv4 with context", () => {
+    const findings = scan("ip: 8.8.8.8");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(true);
+  });
+
+  it("does not flag a public IPv4 without context", () => {
+    const findings = scan("ping 8.8.8.8 now");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(false);
+  });
+
+  it("does not flag a private IPv4 as public", () => {
+    const findings = scan("ip: 192.168.1.1");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(false);
+  });
+
+  it("still flags a private IPv4 via the private-range rule", () => {
+    const findings = scan("server: 192.168.1.1");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
+  });
+
+  it("detects an IPv6 with context", () => {
+    const findings = scan("ipv6: 2001:4860:4860::8888");
+    expect(findings.some((f) => f.ruleId === "pii-ipv6")).toBe(true);
+  });
+
+  it("does not flag a link-local IPv6", () => {
+    const findings = scan("ipv6: fe80::1");
+    expect(findings.some((f) => f.ruleId === "pii-ipv6")).toBe(false);
   });
 });

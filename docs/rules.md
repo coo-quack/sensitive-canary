@@ -95,7 +95,14 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 | `pii-phone-de` | German Phone Number | Context-gated |
 | `pii-phone-es` | Spanish Phone Number | Context-gated |
 | `pii-postal-jp` | Japanese Postal Code | Requires `〒` prefix to avoid false positives |
-| `pii-postal-code` | Postal Code (US ZIP / EU 5-digit) | Context-gated (requires nearby postal label) |
+| `pii-postal-code` | Postal Code (US ZIP / EU / KR) | Context-gated (requires nearby postal label) |
+| `pii-rrn-kr` | Korean Resident Registration Number | 13 digits, validated with weighted checksum (mod 11) |
+| `pii-resident-id-cn` | Chinese Resident Identity Card | 18 chars (17 digits + check), validated with GB 11643 MOD 11-2 |
+| `pii-phone-kr` | Korean Phone Number | Context-gated |
+| `pii-phone-cn` | Chinese Phone Number | Context-gated |
+| `pii-postal-cn` | Chinese Postal Code (6-digit) | Context-gated |
+| `pii-ipv4-public` | Public IPv4 Address | Context-gated; reserved/private ranges excluded |
+| `pii-ipv6` | IPv6 Address | Context-gated; loopback, link-local, ULA, multicast excluded |
 
 ### National ID Validation
 
@@ -106,12 +113,16 @@ National ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., E
 - **Codice Fiscale**: Agenzia delle Entrate, DM 12 giugno 2007 (mod 26)
 - **Steuer-IdNr.**: Bundeszentralamt für Steuern (ISO/IEC 7064 MOD 11,10)
 - **DNI/NIE**: Ministerio del Interior, Orden INT/2058/2008 (mod 23)
+- **Korean RRN**: 주민등록 사무편람, Ministry of the Interior and Safety (weighted mod 11)
+- **Chinese Resident ID**: GB 11643-1999 (ISO 7064 MOD 11-2)
 
 ### Context Gating
 
 Variable-length Italian and German phone numbers, and bare 5/9-digit postal codes, produce too many false positives on digit-only patterns. These rules carry a list of nearby context words (`phone`, `tel`, `ZIP`, `PLZ`, `CAP`, `code postal`, … in each relevant language) and only fire when one of those words appears within a small window of the match. If no context word is nearby, the match is dropped.
 
 National ID numbers rely on their checksums instead and do not require context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
+
+Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.) so that example IPs like `8.8.8.8` and tutorials do not fire unless a label such as `ip` or `address` is nearby. The existing `pii-ipv4` rule still flags RFC 1918 private ranges without context.
 
 ### Credit Card Validation
 

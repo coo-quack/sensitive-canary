@@ -214,6 +214,86 @@ export function validateSpanishNIF(input: string): boolean {
   return false;
 }
 
+// Korean Resident Registration Number (RRN, 주민등록번호): 13 digits.
+// Checksum is (11 - (weighted sum mod 11)) mod 10 with weights
+// 2,3,4,5,6,7,8,9,2,3,4,5 over the first 12 digits.
+// Note: numbers issued after Oct 2020 randomize digits 8-13, so the checksum
+// may not pass for valid recent numbers (false negatives possible).
+// Spec: 주민등록 사무편람 (Ministry of the Interior and Safety).
+export function validateKoreanRRN(input: string): boolean {
+  const s = input.replace(/[-\s]/g, "");
+  if (!/^\d{13}$/.test(s)) return false;
+  const weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    sum += parseInt(s[i] ?? "", 10) * (weights[i] ?? 0);
+  }
+  const check = (11 - (sum % 11)) % 10;
+  return check === parseInt(s[12] ?? "", 10);
+}
+
+// Chinese Resident Identity Card (居民身份证): 18 chars (17 digits + check).
+// ISO 7064 MOD 11-2 per GB 11643-1999. Weights
+// 7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2; remainder maps to "10X98765432".
+export function validateChineseID(input: string): boolean {
+  const s = input.toUpperCase().replace(/[-\s]/g, "");
+  if (!/^\d{17}[\dX]$/.test(s)) return false;
+  const weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+  const code = "10X98765432";
+  let sum = 0;
+  for (let i = 0; i < 17; i++) {
+    sum += parseInt(s[i] ?? "", 10) * (weights[i] ?? 0);
+  }
+  return code[sum % 11] === s[17];
+}
+
+// IPv4 reserved / non-public ranges. Returns true for addresses that should
+// NOT be flagged as PII (loopback, private, link-local, TEST-NET, multicast,
+// reserved, CGN, benchmarking). Used by pii-ipv4-public to keep only public IPs.
+export function isReservedIpv4(ip: string): boolean {
+  const parts = ip.split(".").map((p) => parseInt(p, 10));
+  if (
+    parts.length !== 4 ||
+    parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)
+  ) {
+    return true;
+  }
+  const a = parts[0] ?? 0;
+  const b = parts[1] ?? 0;
+  const c = parts[2] ?? 0;
+  if (a === 0 || a === 10) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGN 100.64.0.0/10
+  if (a === 127) return true; // loopback
+  if (a === 169 && b === 254) return true; // link-local
+  if (a === 172 && b >= 16 && b <= 31) return true; // private
+  if (a === 192 && b === 0 && c === 2) return true; // TEST-NET-1
+  if (a === 192 && b === 168) return true; // private
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmark
+  if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return true; // TEST-NET-3
+  if (a >= 224) return true; // multicast + reserved
+  return false;
+}
+
+// IPv6 reserved / non-public ranges. Returns true for addresses that should
+// NOT be flagged as PII (loopback, unspecified, link-local, unique-local,
+// multicast, documentation). Used by pii-ipv6.
+export function isReservedIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase().replace(/^:+|:+$/g, "");
+  if (lower === "1" || lower === "") return true; // ::1, ::
+  if (
+    lower.startsWith("fe8") ||
+    lower.startsWith("fe9") ||
+    lower.startsWith("fea") ||
+    lower.startsWith("feb")
+  )
+    return true; // fe80::/10
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7
+  if (lower.startsWith("ff")) return true; // ff00::/8 multicast
+  if (lower.startsWith("2001:db8")) return true; // documentation
+  return false;
+}
+
 // Shannon entropy (bits per character, 0–8 scale)
 export function entropy(str: string): number {
   if (str.length === 0) return 0;
@@ -613,7 +693,7 @@ const PII_RULES: Rule[] = [
   // Japanese postal codes keep their own rule (〒 prefix required).
   {
     id: "pii-postal-code",
-    description: "Postal Code (US ZIP / EU)",
+    description: "Postal Code (US ZIP / EU / KR)",
     regex: /\b\d{5}(?:-\d{4})?\b/g,
     category: "pii",
     requireContext: true,
@@ -627,6 +707,109 @@ const PII_RULES: Rule[] = [
       "cap",
       "código",
       "codigo",
+      "우편번호",
+    ],
+  },
+
+  // ── Korean / Chinese national IDs (checksum-validated) ───────────────────────
+  {
+    id: "pii-rrn-kr",
+    description: "Korean Resident Registration Number",
+    regex: /\b\d{6}[-\s]?\d{7}\b/g,
+    validate: validateKoreanRRN,
+    category: "pii",
+  },
+  {
+    id: "pii-resident-id-cn",
+    description: "Chinese Resident Identity Card",
+    regex: /\b\d{17}[\dXx]\b/g,
+    validate: validateChineseID,
+    category: "pii",
+  },
+
+  // ── Korean / Chinese phone numbers (context-gated) ───────────────────────────
+  {
+    id: "pii-phone-kr",
+    description: "Korean Phone Number",
+    regex: /(?:\+82[-\s]?)?(?:01[016789]|0\d{1,2})[-\s]?\d{3,4}[-\s]?\d{4}/g,
+    category: "pii",
+    requireContext: true,
+    contextWords: [
+      "전화",
+      "연락처",
+      "핸드폰",
+      "휴대",
+      "tel",
+      "phone",
+      "mobile",
+      "call",
+      "fax",
+    ],
+  },
+  {
+    id: "pii-phone-cn",
+    description: "Chinese Phone Number",
+    regex: /(?:\+86[-\s]?)?(?:1[3-9]\d{9}|0\d{2,3}[-\s]?\d{7,8})/g,
+    category: "pii",
+    requireContext: true,
+    contextWords: [
+      "电话",
+      "手机",
+      "联系方式",
+      "tel",
+      "phone",
+      "mobile",
+      "call",
+      "fax",
+    ],
+  },
+
+  // ── Chinese postal code (6-digit, context-gated) ─────────────────────────────
+  {
+    id: "pii-postal-cn",
+    description: "Chinese Postal Code",
+    regex: /\b[1-9]\d{5}\b/g,
+    category: "pii",
+    requireContext: true,
+    contextWords: ["邮编", "邮政编码", "postal", "postcode", "zip"],
+  },
+
+  // ── Public IP addresses (context-gated, reserved ranges excluded) ───────────
+  // The existing pii-ipv4 rule keeps private-range detection without context.
+  // These flag public IPs only and require a nearby label, to avoid noise from
+  // example IPs (8.8.8.8) and unrelated dotted numbers.
+  {
+    id: "pii-ipv4-public",
+    description: "Public IPv4 Address",
+    regex: /\b\d{1,3}(?:\.\d{1,3}){3}\b/g,
+    validate: (ip) => !isReservedIpv4(ip),
+    category: "pii",
+    requireContext: true,
+    contextWords: [
+      "ip",
+      "ipv4",
+      "address",
+      "addr",
+      "host",
+      "server",
+      "endpoint",
+    ],
+  },
+  {
+    id: "pii-ipv6",
+    description: "IPv6 Address",
+    regex: /\b[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){2,7}\b/g,
+    validate: (ip) => !isReservedIpv6(ip),
+    category: "pii",
+    requireContext: true,
+    contextWords: [
+      "ipv6",
+      "ip",
+      "address",
+      "addr",
+      "host",
+      "server",
+      "endpoint",
     ],
   },
 ];

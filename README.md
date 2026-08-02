@@ -25,7 +25,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **41 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **48 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE)
 - **Context gating** — postal codes and FIGS phone numbers require a nearby label, reducing false positives on bare digit sequences
 - **Entropy filtering** — reduces false positives on low-entropy values
@@ -286,7 +286,7 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 | `env-assignment` | `.env`-style secret assignment *(entropy ≥ 3.0)* |
 | `connection-string` | Database connection string with embedded credentials |
 
-### PII (17 rules)
+### PII (24 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
@@ -306,11 +306,18 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 | `pii-phone-de` | German phone number | Context-gated |
 | `pii-phone-es` | Spanish phone number | Context-gated |
 | `pii-postal-jp` | Japanese postal code (`〒` prefix required) | — |
-| `pii-postal-code` | Postal code (US ZIP / EU 5-digit) | Context-gated |
+| `pii-postal-code` | Postal code (US ZIP / EU / KR) | Context-gated |
+| `pii-rrn-kr` | Korean Resident Registration Number | Checksum (weighted mod 11) |
+| `pii-resident-id-cn` | Chinese Resident Identity Card | Check digit (GB 11643 MOD 11-2) |
+| `pii-phone-kr` | Korean phone number | Context-gated |
+| `pii-phone-cn` | Chinese phone number | Context-gated |
+| `pii-postal-cn` | Chinese postal code (6-digit) | Context-gated |
+| `pii-ipv4-public` | Public IPv4 address | Context-gated, reserved ranges excluded |
+| `pii-ipv6` | IPv6 address | Context-gated, reserved ranges excluded |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
 
-National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., and the Ministerio del Interior for DNI/NIE.
+National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (JIPTEC) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, and GB 11643-1999 for the Chinese Resident Identity Card.
 
 ### Context gating
 
