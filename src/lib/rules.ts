@@ -329,8 +329,11 @@ export function isReservedIpv4(ip: string): boolean {
 export function isReservedIpv6(ip: string): boolean {
   const lower = ip.toLowerCase();
 
-  // Split and expand :: notation into zero groups.
+  // Multiple :: is invalid — treat as reserved.
   const halves = lower.split("::");
+  if (halves.length > 2) return true;
+
+  // Split and expand :: notation into zero groups.
   let groups: number[];
   if (halves.length === 1) {
     groups = lower.split(":").map((g) => Number.parseInt(g || "0", 16));
@@ -341,11 +344,14 @@ export function isReservedIpv6(ip: string): boolean {
     const right = halves[1]
       ? halves[1].split(":").map((g) => Number.parseInt(g, 16))
       : [];
+    // Too many groups to fit in 128 bits — malformed.
+    if (left.length + right.length > 8) return true;
     const zeros = Array(8 - left.length - right.length).fill(0);
     groups = [...left, ...zeros, ...right];
   }
 
   if (groups.length !== 8) return true; // malformed — treat as reserved
+  if (groups.some((g) => Number.isNaN(g))) return true; // non-hex groups
 
   // Unspecified (::)
   if (groups.every((g) => g === 0)) return true;
