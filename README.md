@@ -183,7 +183,7 @@ To allow it through, add the suggested tag:
 
 ### .env file blocked
 
-`.env` / `.env.*` files are blocked unconditionally, regardless of their contents.
+`.env` / `.env.*` files are blocked by filename, regardless of their contents. This name-based block is a secret guard and only applies while the `secret` category is enabled (the default).
 
 ```
 > Read .env
@@ -225,6 +225,32 @@ To intentionally bypass a block, include the appropriate tag in your **current p
 | `[allow-all]` | Skip all sensitive-canary checks |
 
 > **Note:** Tags are read from the **current user message only**. Tags in previous messages are ignored — there is no risk of an accidental persistent bypass. Tags are case-insensitive. `[allow-secret]` does not bypass PII blocks (and vice versa). The name-based block on `.env`/`.env.*` files can be bypassed by any of the three allow tags.
+
+---
+
+## Configuration
+
+### `SENSITIVE_CANARY_CATEGORIES`
+
+Limit which rule categories are active. Set it in the `env` block of your Claude Code `settings.json`:
+
+```json
+{
+  "env": {
+    "SENSITIVE_CANARY_CATEGORIES": "secret"
+  }
+}
+```
+
+| Value | Effect |
+|---|---|
+| `secret` | Scan for secrets only — PII rules are disabled |
+| `pii` | Scan for PII only — secret rules and the name-based `.env`/`.env.*` block are disabled |
+| `secret,pii` / `all` | Scan everything (default) |
+
+Values are comma-separated and case-insensitive. Unset, empty, or containing no valid token means all categories are enabled.
+
+This is a persistent filter, unlike allow tags which apply per prompt. The category filter is applied first, then allow tags. A typical use is setting `secret` when PII rules (credit card numbers, phone numbers, …) are too noisy against test fixtures.
 
 ---
 
@@ -302,7 +328,7 @@ Claude calls Read / Bash tool
 PreToolUse hook
       ↓
       ── Read tool ─────────────────────────────────────────────────────
-      │  1. filename is .env / .env.* → blocked unconditionally
+      │  1. filename is .env / .env.* → blocked (secret category only)
       │  2. file contents contain secret / PII → blocked
       └─ Bash tool ─────────────────────────────────────────────────────
          1. env var values referenced in the command contain secret / PII → blocked
@@ -317,7 +343,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 
 ## Allow Tags (detailed)
 
-Allow tags filter the scan results — the scan itself always runs. The `.env`/`.env.*` name block is the only exception: when an allow tag is present, the file is passed through immediately without scanning.
+Allow tags filter the scan results — the scan still runs. The `.env`/`.env.*` name block is the only exception: when an allow tag is present, the file is passed through immediately without scanning.
 
 ### Mask tags
 

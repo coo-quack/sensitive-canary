@@ -23,9 +23,9 @@ If legitimate content is being blocked:
 - Allow tags apply only to the current message and do not persist
 - For PreToolUse hooks, allow tags are single-use — they are consumed by the first tool call. If Claude performs multiple tool calls, you may need to include the tag again
 
-## .env files always blocked
+## .env file blocking
 
-This is by design. `.env` and `.env.*` files are blocked unconditionally by filename, regardless of their contents. Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) will bypass this block if you need Claude to read an `.env` file intentionally.
+This is by design. `.env` and `.env.*` files are blocked by filename, regardless of their contents, but only while the `secret` category is enabled (the default). Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) will bypass this block if you need Claude to read an `.env` file intentionally.
 
 ## Plugin not found after marketplace registration
 

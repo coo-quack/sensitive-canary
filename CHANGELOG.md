@@ -1,26 +1,40 @@
-## v0.5.2 (2026-03-31)
-
-### Security
-
-- Add `minimumReleaseAge` to renovate.json to prevent supply chain attacks
-  - Waits 7 days before auto-merging dependency updates
-  - Reduces risk of package takeover attacks
-  - Blocks immediate auto-merge of newly published packages
-
----
-
-## v0.5.2 (2026-03-31)
-
-### Security
-
-- Add `minimumReleaseAge` to renovate.json to prevent supply chain attacks
-  - Waits 7 days before auto-merging dependency updates
-  - Reduces risk of package takeover attacks
-  - Blocks immediate auto-merge of newly published packages
-
----
-
 # Changelog
+
+## v0.6.0 (2026-08-02)
+
+### Features
+
+- Add `SENSITIVE_CANARY_CATEGORIES` environment variable to limit which rule categories are active
+  - Accepts `secret`, `pii`, `secret,pii`, or `all` (comma-separated, case-insensitive); unset/empty/invalid means all categories
+  - Useful for reducing PII false positives (e.g. credit card or phone number rules firing on test fixtures) by scanning secrets only
+  - The name-based `.env`/`.env.*` block is a secret guard and is disabled when the `secret` category is not enabled
+
+---
+
+## v0.5.3 (2026-06-27)
+
+### CI
+
+- Rework the main→develop sync to open a PR with auto-merge, using a minted GitHub App token so the created PR triggers CI
+- Disable persist-credentials in the sync workflow so the App token push works
+
+### Dependencies
+
+- Pin pnpm via the `packageManager` field and update pnpm to v11 (security)
+- Update node to v24, vite to v8, typescript to v6, and other dev dependencies and GitHub Actions
+
+---
+
+## v0.5.2 (2026-03-31)
+
+### Security
+
+- Add `minimumReleaseAge` to renovate.json to prevent supply chain attacks
+  - Waits 7 days before auto-merging dependency updates
+  - Reduces risk of package takeover attacks
+  - Blocks immediate auto-merge of newly published packages
+
+---
 
 ## v0.5.1 (2026-03-15)
 

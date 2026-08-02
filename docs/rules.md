@@ -129,9 +129,21 @@ When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag t
 
 `[allow-all]` and `[mask-all]` resolve both dimensions at once.
 
+## Category Filtering
+
+Set the `SENSITIVE_CANARY_CATEGORIES` environment variable (e.g. in the `env` block of Claude Code `settings.json`) to limit which rule categories are active:
+
+| Value | Effect |
+|-------|--------|
+| `secret` | Scan for secrets only — PII rules are disabled |
+| `pii` | Scan for PII only — secret rules and the name-based `.env`/`.env.*` block are disabled |
+| `secret,pii` / `all` | Scan everything (default) |
+
+Values are comma-separated and case-insensitive. Unset, empty, or containing no valid token means all categories are enabled. This persistent filter is applied before allow tags.
+
 ## .env File Blocking
 
-`.env` and `.env.*` files (e.g. `.env.local`, `.env.production`) are blocked **unconditionally by filename** when Claude attempts to read them, regardless of content.
+`.env` and `.env.*` files (e.g. `.env.local`, `.env.production`) are blocked **by filename** when Claude attempts to read them, regardless of content. This name-based block is a secret guard: it only applies while the `secret` category is enabled via `SENSITIVE_CANARY_CATEGORIES`.
 
 Files that end in `.env` but don't start with a dot (e.g. `production.env`) are handled by content scanning rather than name-based blocking.
 

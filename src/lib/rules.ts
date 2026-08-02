@@ -1,7 +1,9 @@
+export type Category = "secret" | "pii";
+
 export interface Finding {
   ruleId: string;
   description: string;
-  category: "secret" | "pii";
+  category: Category;
   matchRedacted: string;
   secretValue: string;
 }
@@ -13,7 +15,30 @@ interface Rule {
   secretGroup?: number;
   entropyThreshold?: number;
   validate?: (str: string) => boolean;
-  category: "secret" | "pii";
+  category: Category;
+}
+
+const ALL_CATEGORIES: ReadonlySet<Category> = new Set(["secret", "pii"]);
+
+// Parse the SENSITIVE_CANARY_CATEGORIES env var: a comma-separated list of
+// "secret", "pii", or "all" (e.g. "secret" or "secret,pii"). Unset, empty, or
+// containing no valid token means all categories are enabled.
+export function parseCategories(value: string | undefined): Set<Category> {
+  const categories = new Set<Category>();
+  for (const token of (value ?? "").split(",")) {
+    const normalized = token.trim().toLowerCase();
+    if (normalized === "all") return new Set(ALL_CATEGORIES);
+    if (normalized === "secret" || normalized === "pii")
+      categories.add(normalized);
+  }
+  return categories.size > 0 ? categories : new Set(ALL_CATEGORIES);
+}
+
+// Rule categories enabled for this process, from SENSITIVE_CANARY_CATEGORIES
+// ("secret", "pii", "secret,pii", or "all"; default: all).
+export function enabledCategoriesFromEnv(): Set<Category> {
+  const { SENSITIVE_CANARY_CATEGORIES } = process.env;
+  return parseCategories(SENSITIVE_CANARY_CATEGORIES);
 }
 
 // Luhn algorithm checksum validation. Returns true if the number (digits only) passes.
@@ -292,10 +317,14 @@ export function redact(str: string): string {
   return `${str.slice(0, 4)}****${str.slice(-4)}`;
 }
 
-export function scan(text: string): Finding[] {
+export function scan(
+  text: string,
+  categories: ReadonlySet<Category> = ALL_CATEGORIES,
+): Finding[] {
   const findings: Finding[] = [];
 
   for (const rule of RULES) {
+    if (!categories.has(rule.category)) continue;
     for (const match of text.matchAll(rule.regex)) {
       const secretValue =
         rule.secretGroup != null ? match[rule.secretGroup] : match[0];
