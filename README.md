@@ -334,7 +334,7 @@ Set `contextWindow` at the top level to change how many tokens of surrounding te
 }
 ```
 
-Invalid rules (bad regex, missing fields) are skipped with a warning on stderr. The rest of the config still loads.
+Invalid rules (bad regex, wrong types, missing required fields) are skipped with a warning on stderr. The rest of the config still loads. Each rule is validated against a strict schema before compilation — `requireContext: true` without `contextWords` is also rejected, since such a rule would never fire.
 
 ---
 

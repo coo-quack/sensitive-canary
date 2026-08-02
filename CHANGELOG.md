@@ -34,6 +34,7 @@
 - Fix My Number checksum: when the weighted-sum remainder is 0 or 1, the check digit is 0 (not invalid). Valid My Numbers ending in 0 were previously rejected.
 - Correct spec source abbreviation: JIPTEC → J-LIS (地方公共団体情報システム機構)
 - Harden `compileRule`: force `g` flag on regex, validate `regex` field, warn on unknown validator name
+- Add strict schema validation for user-defined rules (required fields, optional field types, cross-field constraints)
 - Pass `secretValue` (not full match) to validator so `secretGroup` + `validate` works in user rules
 
 ---

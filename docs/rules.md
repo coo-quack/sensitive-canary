@@ -322,4 +322,8 @@ Override a built-in rule (same `id` replaces the original):
 }
 ```
 
-Invalid rules (bad regex, etc.) are skipped with a warning on stderr. The rest of the config loads normally.
+Invalid rules (bad regex, wrong types, missing required fields) are skipped with a warning on stderr. The rest of the config loads normally. Each rule is validated against a strict schema before compilation:
+
+- **Required**: `id`, `description`, `regex` (non-empty strings), `category` (`"secret"` or `"pii"`)
+- **Type-checked**: `flags` (string), `secretGroup` (non-negative integer), `entropyThreshold` (non-negative number), `validate` (string), `contextWords` (array of non-empty strings), `requireContext` (boolean), `contextWindow` (positive integer)
+- **Cross-field**: `requireContext: true` without `contextWords` is rejected (the rule would never fire)
