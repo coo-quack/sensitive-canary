@@ -64,7 +64,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 
 | Category | Examples |
 |----------|---------|
-| **Cloud credentials** | AWS Access Key, GCP service account key |
+| **Cloud credentials** | AWS Access Key, GCP API key |
 | **Source control** | GitHub PAT, GitHub fine-grained token, GitLab PAT |
 | **AI services** | Anthropic API key, OpenAI API key / project key, Replicate, Hugging Face, Groq, OpenRouter, xAI, Perplexity |
 | **Communication** | Slack token, Slack webhook, Discord webhook, Telegram bot token |

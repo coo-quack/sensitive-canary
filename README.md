@@ -26,8 +26,8 @@ Claude Code is a powerful development tool, but file reads and command execution
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
 - **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
-- **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE)
-- **Context gating** — postal codes and FIGS phone numbers require a nearby label, reducing false positives on bare digit sequences
+- **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
+- **Context gating** — phone numbers, postal codes, and public IP addresses require a nearby label, reducing false positives on bare digit sequences
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
@@ -426,7 +426,7 @@ National ID checksum algorithms follow the official specs from each issuing auth
 
 ### Context gating
 
-Variable-length Italian and German phone numbers, and bare 5/9-digit postal codes, produce too many false positives on digit-only patterns. These rules carry a list of context words (phone, ZIP, PLZ, CAP, etc. in the relevant languages) and only fire when one of those words appears near the match. National ID numbers rely on their checksums instead and do not need context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
+Phone numbers (IT, DE, FR, ES, KR, CN), bare 5/9-digit and Chinese 6-digit postal codes, and public IP addresses produce too many false positives on digit-only patterns. These rules carry a list of context words (phone, ZIP, PLZ, CAP, IP, etc. in the relevant languages) and only fire when one of those words appears near the match. National ID numbers rely on their checksums instead and do not need context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
 ---
 

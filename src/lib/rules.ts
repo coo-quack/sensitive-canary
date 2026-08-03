@@ -77,6 +77,7 @@ export function enabledCategoriesFromEnv(): Set<Category> {
 // Luhn algorithm checksum validation. Returns true if the number (digits only) passes.
 export function luhn(str: string): boolean {
   const digits = str.replace(/\D/g, "");
+  if (digits.length === 0) return false;
   let sum = 0;
   let double = false;
   for (let i = digits.length - 1; i >= 0; i--) {
@@ -295,11 +296,14 @@ export function validateChineseID(input: string): boolean {
 // NOT be flagged as PII (loopback, private, link-local, TEST-NET, multicast,
 // reserved, CGN, benchmarking). Used by pii-ipv4-public to keep only public IPs.
 export function isReservedIpv4(ip: string): boolean {
-  const parts = ip.split(".").map((p) => parseInt(p, 10));
-  if (
-    parts.length !== 4 ||
-    parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)
-  ) {
+  const octets = ip.split(".");
+  // Require exactly 4 octets of 1–3 digits each, so partial parses
+  // (e.g. "1a" → 1 via parseInt) are treated as malformed, not public.
+  if (octets.length !== 4 || octets.some((o) => !/^\d{1,3}$/.test(o))) {
+    return true;
+  }
+  const parts = octets.map((o) => parseInt(o, 10));
+  if (parts.some((p) => p > 255)) {
     return true;
   }
   const a = parts[0] ?? 0;
@@ -310,7 +314,9 @@ export function isReservedIpv4(ip: string): boolean {
   if (a === 127) return true; // loopback
   if (a === 169 && b === 254) return true; // link-local
   if (a === 172 && b >= 16 && b <= 31) return true; // private
+  if (a === 192 && b === 0 && c === 0) return true; // IETF protocol assignments
   if (a === 192 && b === 0 && c === 2) return true; // TEST-NET-1
+  if (a === 192 && b === 88 && c === 99) return true; // 6to4 relay anycast (deprecated)
   if (a === 192 && b === 168) return true; // private
   if (a === 198 && (b === 18 || b === 19)) return true; // benchmark
   if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2
@@ -321,11 +327,10 @@ export function isReservedIpv4(ip: string): boolean {
 
 // IPv6 reserved / non-public ranges. Returns true for addresses that should
 // NOT be flagged as PII (loopback, unspecified, link-local, unique-local,
-// multicast, documentation). Used by pii-ipv6.
-// IPv6 reserved / non-public ranges. Returns true for addresses that should
-// NOT be flagged as PII (loopback, unspecified, link-local, unique-local,
 // multicast, documentation). Properly handles both compressed (::) and
-// fully-expanded (0:0:0:0:0:0:0:1) forms.
+// fully-expanded (0:0:0:0:0:0:0:1) forms. Used by pii-ipv6.
+// Each group must be 1–4 hex digits; anything else is malformed.
+const isHexGroup = (g: string): boolean => /^[0-9a-f]{1,4}$/.test(g);
 export function isReservedIpv6(ip: string): boolean {
   const lower = ip.toLowerCase();
 
@@ -336,22 +341,28 @@ export function isReservedIpv6(ip: string): boolean {
   // Split and expand :: notation into zero groups.
   let groups: number[];
   if (halves.length === 1) {
-    groups = lower.split(":").map((g) => Number.parseInt(g || "0", 16));
+    const raw = lower.split(":");
+    if (raw.some((g) => !isHexGroup(g))) return true;
+    groups = raw.map((g) => Number.parseInt(g, 16));
   } else {
-    const left = halves[0]
-      ? halves[0].split(":").map((g) => Number.parseInt(g, 16))
-      : [];
-    const right = halves[1]
-      ? halves[1].split(":").map((g) => Number.parseInt(g, 16))
-      : [];
-    // Too many groups to fit in 128 bits — malformed.
-    if (left.length + right.length > 8) return true;
+    const leftRaw = halves[0] ? halves[0].split(":") : [];
+    const rightRaw = halves[1] ? halves[1].split(":") : [];
+    if (
+      leftRaw.some((g) => !isHexGroup(g)) ||
+      rightRaw.some((g) => !isHexGroup(g))
+    ) {
+      return true;
+    }
+    // Too many groups to fit in 128 bits — malformed. A "::" that compresses
+    // zero groups (left + right === 8) is also invalid per RFC 4291 §2.2.
+    if (leftRaw.length + rightRaw.length >= 8) return true;
+    const left = leftRaw.map((g) => Number.parseInt(g, 16));
+    const right = rightRaw.map((g) => Number.parseInt(g, 16));
     const zeros = Array(8 - left.length - right.length).fill(0);
     groups = [...left, ...zeros, ...right];
   }
 
   if (groups.length !== 8) return true; // malformed — treat as reserved
-  if (groups.some((g) => Number.isNaN(g))) return true; // non-hex groups
 
   // Unspecified (::)
   if (groups.every((g) => g === 0)) return true;
@@ -369,7 +380,7 @@ export function isReservedIpv6(ip: string): boolean {
   return false;
 }
 
-// Shannon entropy (bits per character, 0–8 scale)
+// Shannon entropy (bits per character; ≈0–8 for byte-sized alphabets)
 export function entropy(str: string): number {
   if (str.length === 0) return 0;
   const freq: Record<string, number> = {};
@@ -604,7 +615,7 @@ function buildRules(): Rule[] {
       defaultRules.push(compileRule(rc));
     } catch (e) {
       process.stderr.write(
-        `sensitive-canary: failed to compile built-in rule "${rc.id ?? "(unknown)"}": ${e instanceof Error ? e.message : String(e)}\n`,
+        `sensitive-canary: failed to compile built-in rule "${(rc as { id?: unknown })?.id ?? "(unknown)"}": ${e instanceof Error ? e.message : String(e)}\n`,
       );
     }
   }
@@ -622,6 +633,11 @@ function buildRules(): Rule[] {
         `sensitive-canary: invalid contextWindow in user config, ignoring\n`,
       );
     }
+    if (userConfig.rules != null && !Array.isArray(userConfig.rules)) {
+      process.stderr.write(
+        `sensitive-canary: "rules" in user config must be an array, ignoring\n`,
+      );
+    }
     if (Array.isArray(userConfig.rules) && userConfig.rules.length) {
       const userRules: Rule[] = [];
       for (const rc of userConfig.rules) {
@@ -629,7 +645,7 @@ function buildRules(): Rule[] {
           userRules.push(compileRule(rc));
         } catch (e) {
           process.stderr.write(
-            `sensitive-canary: skipping user rule "${rc.id ?? "(unknown)"}": ${e instanceof Error ? e.message : String(e)}\n`,
+            `sensitive-canary: skipping user rule "${(rc as { id?: unknown })?.id ?? "(unknown)"}": ${e instanceof Error ? e.message : String(e)}\n`,
           );
         }
       }

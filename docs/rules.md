@@ -145,7 +145,7 @@ National ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., E
 
 ### Context Gating
 
-Variable-length Italian and German phone numbers, and bare 5/9-digit postal codes, produce too many false positives on digit-only patterns. These rules carry a list of nearby context words (`phone`, `tel`, `ZIP`, `PLZ`, `CAP`, `postal`, … in each relevant language) and only fire when one of those words appears within a small window of the match. Only words that **directly indicate the PII type** are included; generic words such as `contact`, `host`, `server`, or `code` are excluded because they cause false positives. If no decisive context word is nearby, the match is dropped.
+Phone numbers (IT, DE, FR, ES, KR, CN) and bare postal codes (5/9-digit and Chinese 6-digit) produce too many false positives on digit-only patterns. These rules carry a list of nearby context words (`phone`, `tel`, `ZIP`, `PLZ`, `CAP`, `postal`, … in each relevant language) and only fire when one of those words appears within a small window of the match. Only words that **directly indicate the PII type** are included; generic words such as `contact`, `host`, `server`, or `code` are excluded because they cause false positives. If no decisive context word is nearby, the match is dropped.
 
 National ID numbers rely on their checksums instead and do not require context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 

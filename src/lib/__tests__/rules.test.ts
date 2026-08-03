@@ -38,6 +38,11 @@ describe("luhn", () => {
     expect(luhn("4111 1111 1111 1111")).toBe(true);
     expect(luhn("4111-1111-1111-1111")).toBe(true);
   });
+
+  it("fails empty or digit-less input", () => {
+    expect(luhn("")).toBe(false);
+    expect(luhn("no-digits-here")).toBe(false);
+  });
 });
 
 // ── entropy ───────────────────────────────────────────────────────────────────
@@ -845,6 +850,17 @@ describe("isReservedIpv4", () => {
     expect(isReservedIpv4("127.0.0.1")).toBe(true);
     expect(isReservedIpv4("169.254.1.1")).toBe(true);
   });
+
+  it("returns true for partially-numeric octets", () => {
+    expect(isReservedIpv4("1a.2.3.4")).toBe(true);
+    expect(isReservedIpv4("8.8.8.8x")).toBe(true);
+    expect(isReservedIpv4("1.2.3.4 ")).toBe(true);
+  });
+
+  it("returns true for other RFC 6890 special-purpose ranges", () => {
+    expect(isReservedIpv4("192.0.0.1")).toBe(true); // IETF protocol assignments
+    expect(isReservedIpv4("192.88.99.1")).toBe(true); // 6to4 relay anycast
+  });
 });
 
 describe("isReservedIpv6", () => {
@@ -886,6 +902,20 @@ describe("isReservedIpv6", () => {
 
   it("returns true for documentation addresses", () => {
     expect(isReservedIpv6("2001:db8::1")).toBe(true);
+  });
+
+  it("returns true for groups with non-hex trailing characters", () => {
+    expect(isReservedIpv6("abcdZ::1")).toBe(true);
+    expect(isReservedIpv6("2001:4860:4860::8888g")).toBe(true);
+  });
+
+  it("returns true for groups longer than 4 hex digits", () => {
+    expect(isReservedIpv6("12345::1")).toBe(true);
+  });
+
+  it("returns true when :: compresses zero groups", () => {
+    // RFC 4291 §2.2: "::" must compress at least one 16-bit group.
+    expect(isReservedIpv6("1:2:3:4:5:6:7::8")).toBe(true);
   });
 });
 
@@ -1289,5 +1319,52 @@ describe("user config — custom rules", () => {
     const { RULES } = await import("../rules.ts");
     expect(RULES.some((r) => r.id === "bad-regex")).toBe(false);
     expect(RULES.some((r) => r.id === "good-regex")).toBe(true);
+  });
+
+  it("skips null or non-object rule entries without crashing", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          null,
+          {
+            id: "good-rule",
+            description: "Good",
+            regex: "GOODKEY-\\d+",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "good-rule")).toBe(true);
+  });
+
+  it("ignores a non-array rules field without crashing", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ rules: { id: "not-an-array" } }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    // Built-in defaults still load (spot-check a well-known rule).
+    const { RULES } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "pii-email")).toBe(true);
   });
 });
