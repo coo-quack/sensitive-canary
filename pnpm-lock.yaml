@@ -21,8 +21,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vitepress:
-        specifier: 2.0.0-alpha.18
-        version: 2.0.0-alpha.18(@types/node@25.9.5)(postcss@8.5.25)(typescript@7.0.2)
+        specifier: 2.0.0-alpha.19
+        version: 2.0.0-alpha.19(@types/node@25.9.5)(postcss@8.5.25)(typescript@7.0.2)
       vitest:
         specifier: 4.1.10
         version: 4.1.10(@types/node@25.9.5)(vite@8.2.0(@types/node@25.9.5))
@@ -916,8 +916,8 @@ packages:
       yaml:
         optional: true
 
-  vitepress@2.0.0-alpha.18:
-    resolution: {integrity: sha512-Lk1G2/QqSf+MwNLICl9fmzWOtoCEwjZoWgaQy41QvWTfcGpLE9XwJDbcCyES/9rj6R2g1zFqFvLVkYKLLDALFw==}
+  vitepress@2.0.0-alpha.19:
+    resolution: {integrity: sha512-WnBsb0Bwr43kXKyiis+lld/7ri3hnMbthS8N3hpFtjjwsdLO4IRmiAE08D7aud4q6oMDf9uwRowxzNqRFe/amw==}
     hasBin: true
     peerDependencies:
       markdown-it-mathjax3: ^4
@@ -1737,7 +1737,7 @@ snapshots:
       '@types/node': 25.9.5
       fsevents: 2.3.3
 
-  vitepress@2.0.0-alpha.18(@types/node@25.9.5)(postcss@8.5.25)(typescript@7.0.2):
+  vitepress@2.0.0-alpha.19(@types/node@25.9.5)(postcss@8.5.25)(typescript@7.0.2):
     dependencies:
       '@docsearch/css': 4.7.0
       '@docsearch/js': 4.7.0
