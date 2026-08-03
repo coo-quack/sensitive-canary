@@ -326,4 +326,4 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 
 - **Required**: `id`, `description`, `regex` (non-empty strings), `category` (`"secret"` or `"pii"`)
 - **Type-checked**: `flags` (string), `secretGroup` (non-negative integer), `entropyThreshold` (non-negative number), `validate` (string), `contextWords` (array of non-empty strings), `requireContext` (boolean), `contextWindow` (positive integer)
-- **Cross-field**: `requireContext: true` without `contextWords` is rejected (the rule would never fire)
+- **Cross-field**: `requireContext: true` without `contextWords` is rejected (empty `contextWords` would disable context gating, making the rule fire on every match)

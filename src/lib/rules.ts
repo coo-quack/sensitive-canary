@@ -538,7 +538,7 @@ function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
     (!Array.isArray(contextWords) || contextWords.length === 0)
   ) {
     throw new Error(
-      '"requireContext" is true but "contextWords" is empty — the rule would never fire',
+      '"requireContext" is true but "contextWords" is empty — context gating would be disabled and the rule would always fire',
     );
   }
 }

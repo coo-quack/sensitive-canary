@@ -261,7 +261,7 @@ All detection rules are defined in `src/lib/default-config.json` as data, not co
 
 ### Config file location
 
-Create `~/.config/sensitive-canary/config.json`, or point to a custom path with the `SENSITIVE_CANARY_CONFIG` environment variable:
+Create `~/.config/sensitive-canary/config.json`, or point to a custom path with the `SENSITIVE_CANARY_CONFIG` environment variable. Set it in the `env` block of your Claude Code `settings.json`:
 
 ```json
 {
@@ -269,6 +269,12 @@ Create `~/.config/sensitive-canary/config.json`, or point to a custom path with 
     "SENSITIVE_CANARY_CONFIG": "/path/to/my-rules.json"
   }
 }
+```
+
+or export it in your shell:
+
+```sh
+export SENSITIVE_CANARY_CONFIG=/path/to/my-rules.json
 ```
 
 ### Adding a rule
@@ -334,7 +340,7 @@ Set `contextWindow` at the top level to change how many tokens of surrounding te
 }
 ```
 
-Invalid rules (bad regex, wrong types, missing required fields) are skipped with a warning on stderr. The rest of the config still loads. Each rule is validated against a strict schema before compilation — `requireContext: true` without `contextWords` is also rejected, since such a rule would never fire.
+Invalid rules (bad regex, wrong types, missing required fields) are skipped with a warning on stderr. The rest of the config still loads. Each rule is validated against a strict schema before compilation — `requireContext: true` without `contextWords` is also rejected, since empty `contextWords` would silently disable context gating and make the rule fire on every match.
 
 ---
 
