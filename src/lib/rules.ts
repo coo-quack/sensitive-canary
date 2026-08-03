@@ -633,8 +633,20 @@ function buildRules(): Rule[] {
           );
         }
       }
-      const userIds = new Set(userRules.map((r) => r.id));
-      return defaultRules.filter((r) => !userIds.has(r.id)).concat(userRules);
+      // De-duplicate by id (last definition wins) so duplicate ids in the
+      // user config don't produce duplicate rules and duplicate findings.
+      const byId = new Map<string, Rule>();
+      for (const rule of userRules) {
+        if (byId.has(rule.id)) {
+          process.stderr.write(
+            `sensitive-canary: duplicate user rule id "${rule.id}" — using the last definition\n`,
+          );
+        }
+        byId.set(rule.id, rule);
+      }
+      return defaultRules
+        .filter((r) => !byId.has(r.id))
+        .concat(...byId.values());
     }
   }
 

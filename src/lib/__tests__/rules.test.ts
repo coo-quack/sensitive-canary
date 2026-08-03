@@ -1196,6 +1196,46 @@ describe("user config — custom rules", () => {
     expect(findings.some((f) => f.ruleId === "pii-email")).toBe(false);
   });
 
+  it("de-duplicates duplicate user rule ids (last definition wins)", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "custom-token",
+            description: "First Definition",
+            regex: "MYSVC-[A-Za-z0-9]{20}",
+            category: "secret",
+          },
+          {
+            id: "custom-token",
+            description: "Last Definition",
+            regex: "MYSVC2-[A-Za-z0-9]{20}",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES, scan } = await import("../rules.ts");
+    const dupes = RULES.filter((r) => r.id === "custom-token");
+    expect(dupes).toHaveLength(1);
+    expect(dupes[0]?.description).toBe("Last Definition");
+
+    // Only the last regex is active, and a match produces a single finding.
+    expect(scan("token: MYSVC-abcdefghijklmnopqrst")).toHaveLength(0);
+    const findings = scan("token: MYSVC2-abcdefghijklmnopqrst");
+    expect(findings.filter((f) => f.ruleId === "custom-token")).toHaveLength(1);
+  });
+
   it("respects a custom contextWindow", async () => {
     const { mkdtempSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
