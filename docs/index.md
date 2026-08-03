@@ -22,10 +22,10 @@ hero:
 features:
   - icon: 🔑
     title: Secret Detection
-    details: Catches AWS keys, GitHub PATs, Stripe keys, JWTs, Anthropic/OpenAI API keys, database connection strings, and 15+ more credential types.
+    details: Catches AWS keys, GitHub PATs, Stripe keys, JWTs, Anthropic/OpenAI API keys, database connection strings, Replicate/Hugging Face/Groq/xAI tokens, DigitalOcean/Square/Sentry/Linear tokens, and 20+ more credential types.
   - icon: 🕵️
     title: PII Detection
-    details: Detects email addresses, credit card numbers, US SSNs, phone numbers, Japanese postal codes, and private IPv4 addresses.
+    details: Detects email addresses, credit card numbers (Luhn-validated), US SSNs, phone numbers (JP/US/FR/IT/DE/ES/KR/CN), national IDs with checksum validation (My Number, NIR, Codice Fiscale, Steuer-IdNr., DNI/NIE, RRN, BRN, Chinese Resident ID), postal codes, and public/private IP addresses.
   - icon: 🛡️
     title: Pre-Tool-Use Hook
     details: Scans files before Claude reads them. Blocks .env files by name and any file whose contents contain secrets or PII.
@@ -37,7 +37,7 @@ features:
     details: Need to share a key intentionally? Add [allow-secret], [allow-pii], or [allow-all] to your prompt to bypass specific checks.
   - icon: 🐦
     title: Zero Config
-    details: Install once as a Claude Code plugin. No API keys, no servers, no configuration files needed.
+    details: Install once as a Claude Code plugin. No API keys, no servers. Optionally add custom rules via a JSON config file.
 ---
 
 ## Why Sensitive Canary?
@@ -54,7 +54,8 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **31 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **Context gating** — noisy PII rules (phone, postal, IP) only fire when a relevant label is nearby
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
@@ -63,13 +64,15 @@ Claude Code is a powerful development tool, but file reads and command execution
 
 | Category | Examples |
 |----------|---------|
-| **Cloud credentials** | AWS Access Key, GCP service account key |
+| **Cloud credentials** | AWS Access Key, GCP API key |
 | **Source control** | GitHub PAT, GitHub fine-grained token, GitLab PAT |
-| **AI services** | Anthropic API key, OpenAI API key / project key |
+| **AI services** | Anthropic API key, OpenAI API key / project key, Replicate, Hugging Face, Groq, OpenRouter, xAI, Perplexity |
 | **Communication** | Slack token, Slack webhook, Discord webhook, Telegram bot token |
-| **Payment** | Stripe secret/restricted key, credit card numbers (Luhn-validated) |
+| **Payment** | Stripe secret/restricted key, Square access token, credit card numbers (Luhn-validated) |
 | **Email services** | SendGrid API key, Mailgun key, Mailchimp key |
+| **Cloud / IaaS** | DigitalOcean PAT, Supabase PAT |
+| **SaaS / Dev tools** | Mapbox, Sentry, Atlassian, Linear, Postman |
 | **Auth tokens** | JWT, database connection strings |
-| **PII** | Email address, US SSN, US/JP phone, Japanese postal code, private IPv4 |
+| **PII** | Email, US SSN, phone (8 countries), national IDs (7 countries), postal codes, IP addresses |
 
 [View all detection rules →](/rules)

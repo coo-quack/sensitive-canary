@@ -1,11 +1,22 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  compileRule,
   enabledCategoriesFromEnv,
   entropy,
+  isReservedIpv4,
+  isReservedIpv6,
   luhn,
   parseCategories,
   redact,
   scan,
+  validateChineseID,
+  validateCodiceFiscale,
+  validateFrenchNIR,
+  validateGermanIdNr,
+  validateKoreanBRN,
+  validateKoreanRRN,
+  validateMyNumber,
+  validateSpanishNIF,
 } from "../rules.ts";
 
 // ── luhn ──────────────────────────────────────────────────────────────────────
@@ -26,6 +37,11 @@ describe("luhn", () => {
   it("ignores spaces and dashes", () => {
     expect(luhn("4111 1111 1111 1111")).toBe(true);
     expect(luhn("4111-1111-1111-1111")).toBe(true);
+  });
+
+  it("fails empty or digit-less input", () => {
+    expect(luhn("")).toBe(false);
+    expect(luhn("no-digits-here")).toBe(false);
   });
 });
 
@@ -238,6 +254,75 @@ describe("scan — secrets", () => {
   });
 });
 
+// ── scan: expanded secrets ───────────────────────────────────────────────────
+
+describe("scan — expanded secrets (AI, cloud, SaaS)", () => {
+  it("detects a Replicate token", () => {
+    const findings = scan(`r8_${"A".repeat(37)}`);
+    expect(findings.some((f) => f.ruleId === "replicate-token")).toBe(true);
+  });
+
+  it("detects a Hugging Face token", () => {
+    const findings = scan(`hf_${"a".repeat(34)}`);
+    expect(findings.some((f) => f.ruleId === "huggingface-token")).toBe(true);
+  });
+
+  it("detects a Groq API key", () => {
+    const findings = scan(`gsk_${"A".repeat(52)}`);
+    expect(findings.some((f) => f.ruleId === "groq-key")).toBe(true);
+  });
+
+  it("detects an OpenRouter API key", () => {
+    const findings = scan(`sk-or-v1-${"a".repeat(64)}`);
+    expect(findings.some((f) => f.ruleId === "openrouter-key")).toBe(true);
+  });
+
+  it("detects an xAI (Grok) API key", () => {
+    const findings = scan(`xai-${"A".repeat(80)}`);
+    expect(findings.some((f) => f.ruleId === "xai-key")).toBe(true);
+  });
+
+  it("detects a Perplexity API key", () => {
+    const findings = scan(`pplx-${"a".repeat(48)}`);
+    expect(findings.some((f) => f.ruleId === "perplexity-key")).toBe(true);
+  });
+
+  it("detects a DigitalOcean PAT", () => {
+    const findings = scan(`dop_v1_${"a".repeat(64)}`);
+    expect(findings.some((f) => f.ruleId === "digitalocean-pat")).toBe(true);
+  });
+
+  it("detects a Square access token", () => {
+    const findings = scan(`EAAA${"A".repeat(60)}`);
+    expect(findings.some((f) => f.ruleId === "square-access-token")).toBe(true);
+  });
+
+  it("detects a Sentry user auth token", () => {
+    const findings = scan(`sntryu_${"a".repeat(64)}`);
+    expect(findings.some((f) => f.ruleId === "sentry-user-token")).toBe(true);
+  });
+
+  it("detects an Atlassian API token", () => {
+    const findings = scan(`ATATT3${"A".repeat(180)}`);
+    expect(findings.some((f) => f.ruleId === "atlassian-token")).toBe(true);
+  });
+
+  it("detects a Linear API key", () => {
+    const findings = scan(`lin_api_${"a".repeat(40)}`);
+    expect(findings.some((f) => f.ruleId === "linear-key")).toBe(true);
+  });
+
+  it("detects a Postman API key", () => {
+    const findings = scan(`PMAK-${"a".repeat(24)}-${"b".repeat(34)}`);
+    expect(findings.some((f) => f.ruleId === "postman-key")).toBe(true);
+  });
+
+  it("detects a Supabase PAT", () => {
+    const findings = scan(`sbp_${"a".repeat(40)}`);
+    expect(findings.some((f) => f.ruleId === "supabase-key")).toBe(true);
+  });
+});
+
 // ── scan: PII ─────────────────────────────────────────────────────────────────
 
 describe("scan — PII", () => {
@@ -444,5 +529,842 @@ describe("enabledCategoriesFromEnv", () => {
   it("returns the parsed categories when the env var is set", () => {
     process.env[ENV_KEY] = "pii";
     expect(enabledCategoriesFromEnv()).toEqual(new Set(["pii"]));
+  });
+});
+
+// ── National ID checksum validators ───────────────────────────────────────────
+
+describe("validateMyNumber", () => {
+  it("passes a valid My Number", () => {
+    expect(validateMyNumber("123456789018")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateMyNumber("123456789019")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateMyNumber("12345678901")).toBe(false);
+    expect(validateMyNumber("1234567890123")).toBe(false);
+  });
+});
+
+describe("validateFrenchNIR", () => {
+  it("passes a valid NIR", () => {
+    expect(validateFrenchNIR("123456789012311")).toBe(true);
+  });
+
+  it("fails an incorrect check key", () => {
+    expect(validateFrenchNIR("123456789012399")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateFrenchNIR("1234567890123")).toBe(false);
+  });
+
+  it("passes a valid NIR with Corsica 2A", () => {
+    expect(validateFrenchNIR("188022A12345632")).toBe(true);
+  });
+
+  it("passes a valid NIR with Corsica 2B", () => {
+    expect(validateFrenchNIR("188022B12345659")).toBe(true);
+  });
+});
+
+describe("validateCodiceFiscale", () => {
+  it("passes a valid Codice Fiscale", () => {
+    expect(validateCodiceFiscale("RSSMRA85M01H501Q")).toBe(true);
+  });
+
+  it("fails an incorrect control character", () => {
+    expect(validateCodiceFiscale("RSSMRA85M01H501Z")).toBe(false);
+  });
+
+  it("fails a wrong shape", () => {
+    expect(validateCodiceFiscale("RSSMRA85M01H501")).toBe(false);
+  });
+});
+
+describe("validateGermanIdNr", () => {
+  it("passes a valid Steuer-IdNr.", () => {
+    expect(validateGermanIdNr("12345678903")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateGermanIdNr("12345678900")).toBe(false);
+  });
+
+  it("fails when the first digit is 0", () => {
+    expect(validateGermanIdNr("02345678903")).toBe(false);
+  });
+});
+
+describe("validateSpanishNIF", () => {
+  it("passes a valid DNI", () => {
+    expect(validateSpanishNIF("12345678Z")).toBe(true);
+  });
+
+  it("fails an incorrect DNI control letter", () => {
+    expect(validateSpanishNIF("12345678Y")).toBe(false);
+  });
+
+  it("passes a valid NIE", () => {
+    expect(validateSpanishNIF("X1234567L")).toBe(true);
+  });
+
+  it("fails an incorrect NIE control letter", () => {
+    expect(validateSpanishNIF("X1234567M")).toBe(false);
+  });
+});
+
+// ── scan: national ID numbers ─────────────────────────────────────────────────
+
+describe("scan — national ID numbers", () => {
+  it("detects a valid My Number", () => {
+    const findings = scan("number: 123456789018");
+    expect(findings.some((f) => f.ruleId === "pii-mynumber-jp")).toBe(true);
+  });
+
+  it("does not flag a My Number with a bad check digit", () => {
+    const findings = scan("number: 123456789019");
+    expect(findings.some((f) => f.ruleId === "pii-mynumber-jp")).toBe(false);
+  });
+
+  it("detects a valid French NIR", () => {
+    const findings = scan("secu: 1850175056001 49");
+    expect(findings.some((f) => f.ruleId === "pii-nir-fr")).toBe(true);
+  });
+
+  it("detects a valid Italian Codice Fiscale", () => {
+    const findings = scan("cf: RSSMRA85M01H501Q");
+    expect(findings.some((f) => f.ruleId === "pii-codice-fiscale-it")).toBe(
+      true,
+    );
+  });
+
+  it("detects a valid German Steuer-IdNr.", () => {
+    const findings = scan("idnr: 12345678903");
+    expect(findings.some((f) => f.ruleId === "pii-steuer-id-de")).toBe(true);
+  });
+
+  it("detects a valid Spanish DNI", () => {
+    const findings = scan("dni: 12345678Z");
+    expect(findings.some((f) => f.ruleId === "pii-dni-nie-es")).toBe(true);
+  });
+
+  it("detects a valid Spanish NIE", () => {
+    const findings = scan("nie: X1234567L");
+    expect(findings.some((f) => f.ruleId === "pii-dni-nie-es")).toBe(true);
+  });
+
+  it("does not flag a French NIR with a bad check key", () => {
+    const findings = scan("secu: 1850175056001 99");
+    expect(findings.some((f) => f.ruleId === "pii-nir-fr")).toBe(false);
+  });
+
+  it("does not flag a Codice Fiscale with a bad control character", () => {
+    const findings = scan("cf: RSSMRA85M01H501Z");
+    expect(findings.some((f) => f.ruleId === "pii-codice-fiscale-it")).toBe(
+      false,
+    );
+  });
+
+  it("does not flag a Steuer-IdNr. with a bad check digit", () => {
+    const findings = scan("idnr: 12345678900");
+    expect(findings.some((f) => f.ruleId === "pii-steuer-id-de")).toBe(false);
+  });
+
+  it("does not flag a DNI with a bad control letter", () => {
+    const findings = scan("dni: 12345678Y");
+    expect(findings.some((f) => f.ruleId === "pii-dni-nie-es")).toBe(false);
+  });
+});
+
+// ── scan: FIGS phone numbers (context-gated) ──────────────────────────────────
+
+describe("scan — FIGS phone numbers", () => {
+  it("detects a French phone number with context", () => {
+    const findings = scan("tél: 01 23 45 67 89");
+    expect(findings.some((f) => f.ruleId === "pii-phone-fr")).toBe(true);
+  });
+
+  it("does not flag a bare French number without context", () => {
+    const findings = scan("ref 01 23 45 67 89 done");
+    expect(findings.some((f) => f.ruleId === "pii-phone-fr")).toBe(false);
+  });
+
+  it("detects an Italian phone number with context", () => {
+    const findings = scan("telefono: 0212345678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-it")).toBe(true);
+  });
+
+  it("does not flag a bare Italian number without context", () => {
+    const findings = scan("id 0212345678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-it")).toBe(false);
+  });
+
+  it("detects a German phone number with context", () => {
+    const findings = scan("Telefon: 0301234567");
+    expect(findings.some((f) => f.ruleId === "pii-phone-de")).toBe(true);
+  });
+
+  it("does not flag a bare German number without context", () => {
+    const findings = scan("code 0301234567 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-de")).toBe(false);
+  });
+
+  it("detects a Spanish phone number with context", () => {
+    const findings = scan("teléfono: 612345678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-es")).toBe(true);
+  });
+
+  it("does not flag a bare Spanish number without context", () => {
+    const findings = scan("num 612345678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-es")).toBe(false);
+  });
+});
+
+// ── scan: postal code (context-gated) ─────────────────────────────────────────
+
+describe("scan — postal code", () => {
+  it("detects a US ZIP with context", () => {
+    const findings = scan("ZIP: 90210");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects a US ZIP+4 with context", () => {
+    const findings = scan("postal: 90210-1234");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects a German PLZ with context", () => {
+    const findings = scan("PLZ: 10115");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects an Italian CAP with context", () => {
+    const findings = scan("CAP: 00184");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("does not flag a bare 5-digit number", () => {
+    const findings = scan("count: 12345 items");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(false);
+  });
+
+  it("does not flag a ZIP without a context label", () => {
+    const findings = scan("order 90210 confirmed");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(false);
+  });
+
+  it("detects a French postal code with context", () => {
+    const findings = scan("postal: 75001");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+
+  it("detects a Spanish postal code with context", () => {
+    const findings = scan("postal: 28013");
+    expect(findings.some((f) => f.ruleId === "pii-postal-code")).toBe(true);
+  });
+});
+
+// ── scan: context scoring ─────────────────────────────────────────────────────
+
+describe("scan — context scoring", () => {
+  it("assigns score 1.0 to a context-gated match", () => {
+    const findings = scan("ZIP: 90210");
+    const postal = findings.find((f) => f.ruleId === "pii-postal-code");
+    expect(postal?.score).toBe(1.0);
+  });
+
+  it("assigns score 1.0 to rules without context requirements", () => {
+    const findings = scan("contact: user@example.com");
+    const email = findings.find((f) => f.ruleId === "pii-email");
+    expect(email?.score).toBe(1.0);
+  });
+});
+
+// ── Korean / Chinese ID validators ────────────────────────────────────────────
+
+describe("validateKoreanRRN", () => {
+  it("passes a valid RRN", () => {
+    expect(validateKoreanRRN("8001011000008")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateKoreanRRN("8001011000009")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateKoreanRRN("800101100000")).toBe(false);
+  });
+});
+
+describe("validateKoreanBRN", () => {
+  it("passes a valid BRN", () => {
+    expect(validateKoreanBRN("1348672612")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateKoreanBRN("1348672610")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateKoreanBRN("134867261")).toBe(false);
+  });
+});
+
+describe("validateChineseID", () => {
+  it("passes a valid Resident Identity Card", () => {
+    expect(validateChineseID("110102199001010011")).toBe(true);
+  });
+
+  it("fails an incorrect check digit", () => {
+    expect(validateChineseID("110102199001010010")).toBe(false);
+  });
+
+  it("fails a wrong length", () => {
+    expect(validateChineseID("11010219900101001")).toBe(false);
+  });
+});
+
+// ── IP reserved-range checks ──────────────────────────────────────────────────
+
+describe("isReservedIpv4", () => {
+  it("returns false for a public IP", () => {
+    expect(isReservedIpv4("8.8.8.8")).toBe(false);
+  });
+
+  it("returns true for private ranges", () => {
+    expect(isReservedIpv4("192.168.1.1")).toBe(true);
+    expect(isReservedIpv4("10.0.0.1")).toBe(true);
+    expect(isReservedIpv4("172.16.0.1")).toBe(true);
+  });
+
+  it("returns true for TEST-NET addresses", () => {
+    expect(isReservedIpv4("192.0.2.1")).toBe(true);
+    expect(isReservedIpv4("203.0.113.1")).toBe(true);
+  });
+
+  it("returns true for loopback and link-local", () => {
+    expect(isReservedIpv4("127.0.0.1")).toBe(true);
+    expect(isReservedIpv4("169.254.1.1")).toBe(true);
+  });
+
+  it("returns true for partially-numeric octets", () => {
+    expect(isReservedIpv4("1a.2.3.4")).toBe(true);
+    expect(isReservedIpv4("8.8.8.8x")).toBe(true);
+    expect(isReservedIpv4("1.2.3.4 ")).toBe(true);
+  });
+
+  it("returns true for other RFC 6890 special-purpose ranges", () => {
+    expect(isReservedIpv4("192.0.0.1")).toBe(true); // IETF protocol assignments
+    expect(isReservedIpv4("192.88.99.1")).toBe(true); // 6to4 relay anycast
+  });
+});
+
+describe("isReservedIpv6", () => {
+  it("returns false for a public IPv6", () => {
+    expect(isReservedIpv6("2001:4860:4860::8888")).toBe(false);
+  });
+
+  it("returns true for loopback", () => {
+    expect(isReservedIpv6("::1")).toBe(true);
+  });
+
+  it("returns true for fully-expanded loopback", () => {
+    expect(isReservedIpv6("0:0:0:0:0:0:0:1")).toBe(true);
+  });
+
+  it("returns true for fully-expanded unspecified", () => {
+    expect(isReservedIpv6("0:0:0:0:0:0:0:0")).toBe(true);
+  });
+
+  it("returns true for compressed unspecified", () => {
+    expect(isReservedIpv6("::")).toBe(true);
+  });
+
+  it("returns true for link-local", () => {
+    expect(isReservedIpv6("fe80::1")).toBe(true);
+  });
+
+  it("returns true for fully-expanded link-local", () => {
+    expect(isReservedIpv6("fe80:0:0:0:0:0:0:1")).toBe(true);
+  });
+
+  it("returns true for unique-local", () => {
+    expect(isReservedIpv6("fd00::1")).toBe(true);
+  });
+
+  it("returns true for multicast", () => {
+    expect(isReservedIpv6("ff02::1")).toBe(true);
+  });
+
+  it("returns true for documentation addresses", () => {
+    expect(isReservedIpv6("2001:db8::1")).toBe(true);
+  });
+
+  it("returns true for groups with non-hex trailing characters", () => {
+    expect(isReservedIpv6("abcdZ::1")).toBe(true);
+    expect(isReservedIpv6("2001:4860:4860::8888g")).toBe(true);
+  });
+
+  it("returns true for groups longer than 4 hex digits", () => {
+    expect(isReservedIpv6("12345::1")).toBe(true);
+  });
+
+  it("returns true when :: compresses zero groups", () => {
+    // RFC 4291 §2.2: "::" must compress at least one 16-bit group.
+    expect(isReservedIpv6("1:2:3:4:5:6:7::8")).toBe(true);
+  });
+});
+
+// ── scan: Korean / Chinese IDs ────────────────────────────────────────────────
+
+describe("scan — Korean / Chinese IDs", () => {
+  it("detects a valid Korean RRN", () => {
+    const findings = scan("rrn: 800101-1000008");
+    expect(findings.some((f) => f.ruleId === "pii-rrn-kr")).toBe(true);
+  });
+
+  it("does not flag an RRN with a bad check digit", () => {
+    const findings = scan("rrn: 800101-1000009");
+    expect(findings.some((f) => f.ruleId === "pii-rrn-kr")).toBe(false);
+  });
+
+  it("detects a valid Chinese Resident ID", () => {
+    const findings = scan("id: 110102199001010011");
+    expect(findings.some((f) => f.ruleId === "pii-resident-id-cn")).toBe(true);
+  });
+
+  it("does not flag a Chinese ID with a bad check digit", () => {
+    const findings = scan("id: 110102199001010010");
+    expect(findings.some((f) => f.ruleId === "pii-resident-id-cn")).toBe(false);
+  });
+
+  it("detects a valid Korean BRN", () => {
+    const findings = scan("brn: 134-86-72612");
+    expect(findings.some((f) => f.ruleId === "pii-brn-kr")).toBe(true);
+  });
+
+  it("does not flag a BRN with a bad check digit", () => {
+    const findings = scan("brn: 134-86-72610");
+    expect(findings.some((f) => f.ruleId === "pii-brn-kr")).toBe(false);
+  });
+});
+
+// ── scan: Korean / Chinese phone numbers ──────────────────────────────────────
+
+describe("scan — Korean / Chinese phones", () => {
+  it("detects a Korean phone with context", () => {
+    const findings = scan("전화: 010-1234-5678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-kr")).toBe(true);
+  });
+
+  it("does not flag a bare Korean number without context", () => {
+    const findings = scan("ref 010-1234-5678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-kr")).toBe(false);
+  });
+
+  it("detects a Chinese phone with context", () => {
+    const findings = scan("电话: 13812345678");
+    expect(findings.some((f) => f.ruleId === "pii-phone-cn")).toBe(true);
+  });
+
+  it("does not flag a bare Chinese number without context", () => {
+    const findings = scan("id 13812345678 end");
+    expect(findings.some((f) => f.ruleId === "pii-phone-cn")).toBe(false);
+  });
+});
+
+// ── scan: Chinese postal code ─────────────────────────────────────────────────
+
+describe("scan — Chinese postal code", () => {
+  it("detects a Chinese postal code with context", () => {
+    const findings = scan("邮编: 100000");
+    expect(findings.some((f) => f.ruleId === "pii-postal-cn")).toBe(true);
+  });
+
+  it("does not flag a bare 6-digit number", () => {
+    const findings = scan("count 123456 done");
+    expect(findings.some((f) => f.ruleId === "pii-postal-cn")).toBe(false);
+  });
+});
+
+// ── scan: public IP addresses ─────────────────────────────────────────────────
+
+describe("scan — public IPs", () => {
+  it("detects a public IPv4 with context", () => {
+    const findings = scan("ip: 8.8.8.8");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(true);
+  });
+
+  it("does not flag a public IPv4 without context", () => {
+    const findings = scan("ping 8.8.8.8 now");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(false);
+  });
+
+  it("does not flag a private IPv4 as public", () => {
+    const findings = scan("ip: 192.168.1.1");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(false);
+  });
+
+  it("still flags a private IPv4 via the private-range rule", () => {
+    const findings = scan("server: 192.168.1.1");
+    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
+  });
+
+  it("detects an IPv6 with context", () => {
+    const findings = scan("ipv6: 2001:4860:4860::8888");
+    expect(findings.some((f) => f.ruleId === "pii-ipv6")).toBe(true);
+  });
+
+  it("does not flag a link-local IPv6", () => {
+    const findings = scan("ipv6: fe80::1");
+    expect(findings.some((f) => f.ruleId === "pii-ipv6")).toBe(false);
+  });
+});
+
+// ── compileRule ───────────────────────────────────────────────────────────────
+
+describe("compileRule", () => {
+  it("compiles regex source with default g flag", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "\\d{4}",
+      category: "pii",
+    });
+    expect(rule.regex.flags).toBe("g");
+    expect("1234".match(rule.regex)).not.toBeNull();
+  });
+
+  it("compiles with custom flags", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "\\d{4}",
+      flags: "gi",
+      category: "pii",
+    });
+    expect(rule.regex.flags).toBe("gi");
+  });
+
+  it("resolves a validator by name", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "\\d{12}",
+      category: "pii",
+      validate: "mynumber-jp",
+    });
+    expect(rule.validate).toBeDefined();
+    expect(rule.validate?.("123456789018")).toBe(true);
+  });
+
+  it("preserves secretGroup and entropyThreshold", () => {
+    const rule = compileRule({
+      id: "test",
+      description: "Test",
+      regex: "key=(\\S+)",
+      category: "secret",
+      secretGroup: 1,
+      entropyThreshold: 3.5,
+    });
+    expect(rule.secretGroup).toBe(1);
+    expect(rule.entropyThreshold).toBe(3.5);
+  });
+});
+
+// ── compileRule: schema validation ───────────────────────────────────────────
+
+describe("compileRule — schema validation", () => {
+  const valid = {
+    id: "test",
+    description: "Test",
+    regex: "\\d+",
+    category: "pii" as const,
+  };
+
+  it("rejects missing id", () => {
+    expect(() => compileRule({ ...valid, id: "" } as never)).toThrow('"id"');
+  });
+
+  it("rejects missing description", () => {
+    expect(() => compileRule({ ...valid, description: "" } as never)).toThrow(
+      '"description"',
+    );
+  });
+
+  it("rejects missing regex", () => {
+    expect(() => compileRule({ ...valid, regex: "" } as never)).toThrow(
+      '"regex"',
+    );
+  });
+
+  it("rejects invalid category", () => {
+    expect(() => compileRule({ ...valid, category: "other" as never })).toThrow(
+      '"category"',
+    );
+  });
+
+  it("rejects non-integer secretGroup", () => {
+    expect(() => compileRule({ ...valid, secretGroup: 1.5 } as never)).toThrow(
+      '"secretGroup"',
+    );
+  });
+
+  it("rejects negative entropyThreshold", () => {
+    expect(() =>
+      compileRule({ ...valid, entropyThreshold: -1 } as never),
+    ).toThrow('"entropyThreshold"');
+  });
+
+  it("rejects contextWords with empty string", () => {
+    expect(() =>
+      compileRule({ ...valid, contextWords: ["ok", ""] } as never),
+    ).toThrow('"contextWords"');
+  });
+
+  it("rejects non-integer contextWindow", () => {
+    expect(() => compileRule({ ...valid, contextWindow: 0 } as never)).toThrow(
+      '"contextWindow"',
+    );
+  });
+
+  it("rejects requireContext without contextWords", () => {
+    expect(() =>
+      compileRule({ ...valid, requireContext: true } as never),
+    ).toThrow("requireContext");
+  });
+
+  it("rejects requireContext with empty contextWords array", () => {
+    expect(() =>
+      compileRule({
+        ...valid,
+        requireContext: true,
+        contextWords: [],
+      } as never),
+    ).toThrow("requireContext");
+  });
+});
+
+// ── User config (custom rules) ────────────────────────────────────────────────
+
+describe("user config — custom rules", () => {
+  const ENV_KEY = "SENSITIVE_CANARY_CONFIG";
+  const envBackup = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (envBackup === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = envBackup;
+    }
+    vi.resetModules();
+  });
+
+  it("adds a custom rule from a user config file", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "custom-token",
+            description: "Custom Service Token",
+            regex: "MYSVC-[A-Za-z0-9]{20}",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES, scan } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "custom-token")).toBe(true);
+
+    const findings = scan("token: MYSVC-abcdefghijklmnopqrst");
+    expect(findings.some((f) => f.ruleId === "custom-token")).toBe(true);
+  });
+
+  it("overrides a built-in rule by id", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "pii-email",
+            description: "Replaced Email Rule",
+            regex: "NEVERMATCH[a-z]+",
+            category: "pii",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES, scan } = await import("../rules.ts");
+    const emailRules = RULES.filter((r) => r.id === "pii-email");
+    expect(emailRules).toHaveLength(1);
+    expect(emailRules[0]?.description).toBe("Replaced Email Rule");
+
+    const findings = scan("contact: user@example.com");
+    expect(findings.some((f) => f.ruleId === "pii-email")).toBe(false);
+  });
+
+  it("de-duplicates duplicate user rule ids (last definition wins)", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "custom-token",
+            description: "First Definition",
+            regex: "MYSVC-[A-Za-z0-9]{20}",
+            category: "secret",
+          },
+          {
+            id: "custom-token",
+            description: "Last Definition",
+            regex: "MYSVC2-[A-Za-z0-9]{20}",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES, scan } = await import("../rules.ts");
+    const dupes = RULES.filter((r) => r.id === "custom-token");
+    expect(dupes).toHaveLength(1);
+    expect(dupes[0]?.description).toBe("Last Definition");
+
+    // Only the last regex is active, and a match produces a single finding.
+    expect(scan("token: MYSVC-abcdefghijklmnopqrst")).toHaveLength(0);
+    const findings = scan("token: MYSVC2-abcdefghijklmnopqrst");
+    expect(findings.filter((f) => f.ruleId === "custom-token")).toHaveLength(1);
+  });
+
+  it("respects a custom contextWindow", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        contextWindow: 1,
+        rules: [],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { getDefaultContextWindow: getWindow } = await import("../rules.ts");
+    expect(getWindow()).toBe(1);
+  });
+
+  it("skips rules with invalid regex", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          {
+            id: "bad-regex",
+            description: "Bad",
+            regex: "[invalid(",
+            category: "secret",
+          },
+          {
+            id: "good-regex",
+            description: "Good",
+            regex: "GOODKEY-\\d+",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "bad-regex")).toBe(false);
+    expect(RULES.some((r) => r.id === "good-regex")).toBe(true);
+  });
+
+  it("skips null or non-object rule entries without crashing", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        rules: [
+          null,
+          {
+            id: "good-rule",
+            description: "Good",
+            regex: "GOODKEY-\\d+",
+            category: "secret",
+          },
+        ],
+      }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    const { RULES } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "good-rule")).toBe(true);
+  });
+
+  it("ignores a non-array rules field without crashing", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ rules: { id: "not-an-array" } }),
+    );
+
+    process.env[ENV_KEY] = join(dir, "config.json");
+    vi.resetModules();
+
+    // Built-in defaults still load (spot-check a well-known rule).
+    const { RULES } = await import("../rules.ts");
+    expect(RULES.some((r) => r.id === "pii-email")).toBe(true);
   });
 });

@@ -25,9 +25,10 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **31 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
+- **Context gating** — phone numbers, postal codes, and public IP addresses require a nearby label, reducing false positives on bare digit sequences
 - **Entropy filtering** — reduces false positives on low-entropy values
-- **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
 ---
@@ -254,9 +255,98 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 
 ---
 
+## Custom Rules
+
+All detection rules are defined in `src/lib/default-config.json` as data, not code. You can add your own rules or override built-in ones by creating a config file.
+
+### Config file location
+
+Create `~/.config/sensitive-canary/config.json`, or point to a custom path with the `SENSITIVE_CANARY_CONFIG` environment variable. Set it in the `env` block of your Claude Code `settings.json`:
+
+```json
+{
+  "env": {
+    "SENSITIVE_CANARY_CONFIG": "/path/to/my-rules.json"
+  }
+}
+```
+
+or export it in your shell:
+
+```sh
+export SENSITIVE_CANARY_CONFIG=/path/to/my-rules.json
+```
+
+### Adding a rule
+
+Each rule is a JSON object with an `id`, `description`, `regex` (source string), and `category` (`"secret"` or `"pii"`):
+
+```json
+{
+  "rules": [
+    {
+      "id": "custom-api-key",
+      "description": "My Service API Key",
+      "regex": "MYSVC-[A-Za-z0-9]{32}",
+      "category": "secret"
+    }
+  ]
+}
+```
+
+### Overriding a built-in rule
+
+A user rule with the same `id` as a built-in rule replaces it. For example, to tighten the email regex:
+
+```json
+{
+  "rules": [
+    {
+      "id": "pii-email",
+      "description": "Internal Email",
+      "regex": "[A-Za-z0-9]+@internal\\.corp\\.(com|org)",
+      "category": "pii"
+    }
+  ]
+}
+```
+
+### Context gating and validators
+
+User rules support the same fields as built-in rules:
+
+| Field | Type | Description |
+|---|---|---|
+| `requireContext` | boolean | Only fire when a nearby context word is found |
+| `contextWords` | string[] | Words that satisfy the context requirement |
+| `contextWindow` | number | Override the global context window (default: 3 tokens) |
+| `entropyThreshold` | number | Skip matches below this Shannon entropy |
+| `secretGroup` | number | Capture group index containing the secret (default: 0 = full match) |
+| `validate` | string | Name of a built-in checksum validator (see below) |
+| `flags` | string | Regex flags (default: `"g"`) |
+
+Available validators (referenced by name in the `validate` field):
+
+`luhn`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`
+
+### Overriding the context window globally
+
+Set `contextWindow` at the top level to change how many tokens of surrounding text are scanned for context words (default: 3):
+
+```json
+{
+  "contextWindow": 5,
+  "rules": []
+}
+```
+
+Invalid rules (bad regex, wrong types, missing required fields) are skipped with a warning on stderr. The rest of the config still loads. Each rule is validated against a strict schema before compilation — `requireContext: true` without `contextWords` is also rejected, since empty `contextWords` would silently disable context gating and make the rule fire on every match.
+
+---
+
 ## Detection rules
 
-### Secrets (24 rules)
+### Secrets (39 rules)
 
 | Rule ID | Description |
 |---|---|
@@ -280,24 +370,63 @@ This is a persistent filter, unlike allow tags which apply per prompt. The categ
 | `openai-key` | OpenAI API Key (legacy format) |
 | `openai-project-key` | OpenAI Project API Key (`sk-proj-` prefix) *(entropy ≥ 3.5)* |
 | `anthropic-key` | Anthropic API Key |
+| `replicate-token` | Replicate API Token |
+| `huggingface-token` | Hugging Face Access Token |
+| `groq-key` | Groq API Key |
+| `openrouter-key` | OpenRouter API Key |
+| `xai-key` | xAI (Grok) API Key |
+| `perplexity-key` | Perplexity API Key |
+| `digitalocean-pat` | DigitalOcean Personal Access Token |
+| `square-access-token` | Square Access Token |
+| `mapbox-token` | Mapbox Token |
+| `sentry-user-token` | Sentry User Auth Token |
+| `sentry-org-token` | Sentry Organization Auth Token |
+| `atlassian-token` | Atlassian API Token |
+| `linear-key` | Linear API Key |
+| `postman-key` | Postman API Key |
+| `supabase-key` | Supabase Personal Access Token |
 | `jwt` | JSON Web Token (JWT) |
 | `generic-secret` | Generic API key / secret assignment *(entropy ≥ 3.5)* |
 | `env-assignment` | `.env`-style secret assignment *(entropy ≥ 3.0)* |
 | `connection-string` | Database connection string with embedded credentials |
 
-### PII (7 rules)
+### PII (25 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
 | `pii-email` | Email address | — |
 | `pii-credit-card` | Credit card number | Luhn check |
+| `pii-ipv4` | IPv4 address (RFC 1918 private ranges only) | — |
 | `pii-ssn` | US Social Security Number | Invalid prefix exclusion |
+| `pii-mynumber-jp` | Japanese Individual Number (My Number) | Checksum (weighted mod 11) |
+| `pii-nir-fr` | French NIR / Social Security Number | Check key (mod 97) |
+| `pii-codice-fiscale-it` | Italian Codice Fiscale | Control character (mod 26) |
+| `pii-steuer-id-de` | German Steuer-Identifikationsnummer | MOD 11,10 |
+| `pii-dni-nie-es` | Spanish DNI / NIE | Control letter (mod 23) |
 | `pii-phone-us` | US phone number | — |
 | `pii-phone-jp` | Japanese phone number | — |
+| `pii-phone-fr` | French phone number | Context-gated |
+| `pii-phone-it` | Italian phone number | Context-gated |
+| `pii-phone-de` | German phone number | Context-gated |
+| `pii-phone-es` | Spanish phone number | Context-gated |
 | `pii-postal-jp` | Japanese postal code (`〒` prefix required) | — |
-| `pii-ipv4` | IPv4 address (RFC 1918 private ranges only) | — |
+| `pii-postal-code` | Postal code (US ZIP / EU / KR) | Context-gated |
+| `pii-rrn-kr` | Korean Resident Registration Number | Checksum (weighted mod 11) |
+| `pii-brn-kr` | Korean Business Registration Number | Checksum (NTS standard algorithm) |
+| `pii-resident-id-cn` | Chinese Resident Identity Card | Check digit (GB 11643 MOD 11-2) |
+| `pii-phone-kr` | Korean phone number | Context-gated |
+| `pii-phone-cn` | Chinese phone number | Context-gated |
+| `pii-postal-cn` | Chinese postal code (6-digit) | Context-gated |
+| `pii-ipv4-public` | Public IPv4 address | Context-gated, reserved ranges excluded |
+| `pii-ipv6` | IPv6 address | Context-gated, reserved ranges excluded |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
+
+National ID checksum algorithms follow the official specs from each issuing authority: 地方公共団体情報システム機構 (J-LIS) for My Number, INSEE for NIR, Agenzia delle Entrate for Codice Fiscale, Bundeszentralamt für Steuern for Steuer-IdNr., the Ministerio del Interior for DNI/NIE, the Ministry of the Interior and Safety for the Korean RRN, GB 11643-1999 for the Chinese Resident Identity Card, and the NTS (Hometax) standard algorithm for the Korean BRN.
+
+### Context gating
+
+Phone numbers (IT, DE, FR, ES, KR, CN), bare 5/9-digit and Chinese 6-digit postal codes, and public IP addresses produce too many false positives on digit-only patterns. These rules carry a list of context words (phone, ZIP, PLZ, CAP, IP, etc. in the relevant languages) and only fire when one of those words appears near the match. National ID numbers rely on their checksums instead and do not need context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
 ---
 
