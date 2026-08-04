@@ -40,6 +40,8 @@ Tags apply only to the message they appear in. They do not persist across turns.
 
 ## Configuration
 
+### Category filtering
+
 Set `SENSITIVE_CANARY_CATEGORIES` in the `env` block of your Claude Code `settings.json` to limit which rule categories are active:
 
 ```json
@@ -58,7 +60,32 @@ Set `SENSITIVE_CANARY_CATEGORIES` in the `env` block of your Claude Code `settin
 
 This persistent filter is applied before allow tags. A typical use is setting `secret` when PII rules are too noisy against test fixtures.
 
+### Custom rules
+
+All 64 detection rules are defined in JSON. You can add your own or override built-in ones by creating a config file:
+
+```bash
+mkdir -p ~/.config/sensitive-canary
+```
+
+Then create `~/.config/sensitive-canary/config.json`:
+
+```json
+{
+  "rules": [
+    {
+      "id": "custom-api-key",
+      "description": "My Service API Key",
+      "regex": "MYSVC-[A-Za-z0-9]{32}",
+      "category": "secret"
+    }
+  ]
+}
+```
+
+The plugin reads this file at startup. Rules with the same `id` as a built-in rule replace it; new ids are appended. See [Detection Rules → Custom Rules](/rules#custom-rules) for the full field reference and examples.
+
 ## Next Steps
 
 - [Installation](/install) — alternative installation methods
-- [Detection Rules](/rules) — all 31 detection rules explained
+- [Detection Rules](/rules) — all 64 detection rules explained
