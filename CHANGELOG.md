@@ -1,13 +1,9 @@
 # Changelog
 
-## v0.6.0 (2026-08-02)
+## v0.7.0 (2026-08-04)
 
 ### Features
 
-- Add `SENSITIVE_CANARY_CATEGORIES` environment variable to limit which rule categories are active
-  - Accepts `secret`, `pii`, `secret,pii`, or `all` (comma-separated, case-insensitive); unset/empty/invalid means all categories
-  - Useful for reducing PII false positives (e.g. credit card or phone number rules firing on test fixtures) by scanning secrets only
-  - The name-based `.env`/`.env.*` block is a secret guard and is disabled when the `secret` category is not enabled
 - Add multi-region PII detection rules (25 PII rules, up from 7)
   - National IDs with checksum validation: Japanese My Number, French NIR, Italian Codice Fiscale, German Steuer-IdNr., Spanish DNI/NIE, Korean RRN and BRN, Chinese Resident Identity Card
   - Phone numbers for JP, US, FR, IT, DE, ES, KR, CN
@@ -36,6 +32,21 @@
 - Harden `compileRule`: force `g` flag on regex, validate `regex` field, warn on unknown validator name
 - Add strict schema validation for user-defined rules (required fields, optional field types, cross-field constraints)
 - Pass `secretValue` (not full match) to validator so `secretGroup` + `validate` works in user rules
+
+### Dependencies
+
+- Update pnpm to v11.19.0 and refresh the lockfile
+
+---
+
+## v0.6.0 (2026-08-02)
+
+### Features
+
+- Add `SENSITIVE_CANARY_CATEGORIES` environment variable to limit which rule categories are active
+  - Accepts `secret`, `pii`, `secret,pii`, or `all` (comma-separated, case-insensitive); unset/empty/invalid means all categories
+  - Useful for reducing PII false positives (e.g. credit card or phone number rules firing on test fixtures) by scanning secrets only
+  - The name-based `.env`/`.env.*` block is a secret guard and is disabled when the `secret` category is not enabled
 
 ---
 
