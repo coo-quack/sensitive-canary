@@ -92,7 +92,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -141,7 +141,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -449,24 +449,47 @@ When blocked, the terminal shows what was detected and how to bypass it.
 
 ### ② PreToolUse hook
 
-Runs just before Claude calls the `Read` or `Bash` tool.
+Runs just before Claude calls the `Read`, `Bash`, `Grep`, or MCP tools.
 
 ```
-Claude calls Read / Bash tool
+Claude calls Read / Bash / Grep / MCP tool
       ↓
 PreToolUse hook
       ↓
       ── Read tool ─────────────────────────────────────────────────────
       │  1. filename is .env / .env.* → blocked (secret category only)
       │  2. file contents contain secret / PII → blocked
-      └─ Bash tool ─────────────────────────────────────────────────────
-         1. env var values referenced in the command contain secret / PII → blocked
-         2. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
-         3. cat / head / tail / etc. targeting a file → file contents scanned
+      │
+      ├─ Bash tool ──────────────────────────────────────────────────────
+      │  1. env var values referenced in the command contain secret / PII → blocked
+      │  2. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
+      │  3. wrapper commands (sudo, env, timeout, nice) are unwrapped
+      │  4. inline scripts (-c, -e, -pe) are parsed and scanned
+      │  5. file paths from input redirections, command substitutions, and chained
+      │     commands are extracted and scanned
+      │  6. read commands (cat, head, tail, sed, awk, grep, rg, cut, sort, base64,
+      │     xxd, strings, diff, comm, dd, and git subcommands) targeting a file
+      │     → file contents scanned
+      │
+      ├─ Grep tool ──────────────────────────────────────────────────────
+      │  1. target file path contains secret / PII → blocked
+      │
+      └─ MCP tools (mcp__*) ───────────────────────────────────────────
+         1. common input fields (path, file_path, and nested arguments) are
+            scanned for secret / PII → blocked
 ```
 
 When blocked, Claude receives a JSON response explaining the reason and is prompted to tell the user.
 The terminal also receives a direct message (via `/dev/tty`).
+
+### Known Limitations
+
+- **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
+- **Grep on directories** — when the Grep tool's `path` input is a directory, the inspection is skipped (to avoid scanning all files within).
+- **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
+- **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.
+- **Programs that read files themselves** — `python script.py` is not scanned, because running a script does not print its source; whatever the script opens at run time is beyond the hook's reach.
+- **Best effort only** — detection is not exhaustive. Arbitrary shell metacharacters, eval chains, and complex expansions may not be fully tracked.
 
 ---
 

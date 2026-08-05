@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Expand Bash command detection to additional read commands
+  - Add content-printing commands: `tac`, `rev`, `strings`, `xxd`, `od`, `hexdump`,
+    `base64`, `cut`, `sort`, `uniq`, `shuf`, `column`, `paste`, `fold`, `fmt`, `pr`,
+    `expand`, `unexpand`, `iconv`, `zcat`, `gzcat`, `bzcat`, `xzcat`, `zstdcat`,
+    `diff`, `comm`, `join`, `look`
+  - Add pattern-first commands whose later arguments are files: `sed`, `awk`, `gawk`,
+    `grep`, `egrep`, `fgrep`, `rg`, `ag`, `jq`, `yq`, `perl`, `ruby`, `python`,
+    `python3`, `node`, `deno`, `bun` (`sed -i` is exempt: it writes no stdout)
+  - Unwrap wrapper commands (`sudo`, `env`, `timeout`, `nice`) to scan underlying commands
+  - Parse and scan inline scripts (`-c`, `-e`, `-pe` flags) and their shell code
+  - Extract file paths from input redirections (`<file`), command substitutions (`$(...)`, `` `...` ``, `<(...)`), and chained commands (newlines, `&&`, `;`)
+  - Add git subcommands (`git diff`, `git show`, `git blame`) to read-command list
+  - Add `dd if=<file>` to read-command patterns
+- Add Grep tool detection
+  - Pre-tool-use hook now scans Grep tool input for secret file paths
+  - Known limitation: directory paths are not scanned
+- Add MCP tool detection
+  - Pre-tool-use hook now scans common MCP tool inputs (`path`, `file_path`, nested in `arguments`) for secrets
+- Exclude `wc` from read-command list
+  - `wc` outputs only line/word/byte counts, not file content, so it is not a read-level threat
+
+---
+
 ## v0.7.0 (2026-08-04)
 
 ### Features
