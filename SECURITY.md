@@ -25,6 +25,10 @@ Sensitive Canary intercepts secrets and PII before they leave your machine:
 | `.env` file exposure | `PreToolUse` (Read) | Blocks by filename (secret category only) |
 | Secret in Bash command | `PreToolUse` (Bash) | Blocks the command before execution |
 | Secret in env var value | `PreToolUse` (Bash) | Expands and scans `$VAR` references |
+| Secret in a file a Bash command would print | `PreToolUse` (Bash) | Resolves the file arguments of printing commands, including behind wrappers, inline scripts, redirections and substitutions |
+| Whole environment printed | `PreToolUse` (Bash) | Scans every variable when a bare `env` or `printenv` would print it |
+| Secret in a file Claude greps | `PreToolUse` (Grep) | Blocks when the target is a single file |
+| Secret in a file an MCP tool would return | `PreToolUse` (MCP) | Scans input fields that name an existing file |
 
 ---
 
@@ -38,7 +42,10 @@ sensitive-canary is a best-effort guard, not a guaranteed security boundary:
 - **Hook execution** — If the Node.js process fails to start (e.g., wrong Node version), the hook exits 0 (pass) to avoid blocking Claude entirely.
 - **Parse errors** — If the hook input cannot be parsed (malformed JSON from Claude Code), the hook exits 0 (pass) as a fail-open fallback.
 - **Binary files** — Binary files are detected by the presence of a NUL byte. Only the text portion before the first NUL is scanned; content after the NUL is not checked.
-- **Scope** — Only `Read` and `Bash` tool calls are intercepted. Other tool types are not scanned.
+- **Scope** — `Read`, `Bash`, `Grep` and MCP tool calls are intercepted. Tools whose name says they write are skipped, as are tools not matched by the configured `matcher`.
+- **Run-time paths** — a file is only found when its path appears literally in the command. A path held in a shell variable (`f=.env; cat "$f"`), arriving over a pipe (`find … | xargs cat`), or opened by a program the command merely starts (`python script.py`) is resolved after the hook has already decided.
+- **Command classification** — the set of commands known to print file contents is a list, not an analysis. An unlisted command that prints a file is not caught, and `grep -r` over a directory is not scanned because no single file is named.
+- **git history** — `git show HEAD:.env` names an object in history rather than a file on disk, so it is not scanned.
 
 ---
 

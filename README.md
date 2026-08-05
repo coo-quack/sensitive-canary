@@ -462,22 +462,27 @@ PreToolUse hook
       │
       ├─ Bash tool ──────────────────────────────────────────────────────
       │  1. env var values referenced in the command contain secret / PII → blocked
-      │  2. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
-      │  3. wrapper commands (sudo, env, timeout, nice) are unwrapped
-      │  4. inline scripts (-c, -e, -pe) are parsed and scanned
-      │  5. file paths from input redirections, command substitutions, and chained
+      │  2. a bare env / printenv would print the whole environment → every
+      │     variable is scanned
+      │  3. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
+      │  4. the command is located past any wrapper (sudo, env VAR=1, timeout,
+      │     nice, xargs) and any leading VAR=value assignment
+      │  5. inline scripts (-c, -e, -pe) are parsed and scanned
+      │  6. file paths from input redirections, command substitutions, and chained
       │     commands are extracted and scanned
-      │  6. read commands (cat, head, tail, sed, awk, grep, rg, cut, sort, base64,
-      │     xxd, strings, diff, comm, dd, and git subcommands) targeting a file
-      │     → file contents scanned
+      │  7. printing commands (cat, head, tail, sed, awk, grep, rg, cut, sort,
+      │     base64, xxd, strings, diff, comm, dd, and git subcommands) targeting
+      │     a named file → file contents scanned
       │
       ├─ Grep tool ──────────────────────────────────────────────────────
       │  1. target file path contains secret / PII → blocked
       │
       └─ MCP tools (mcp__*) ───────────────────────────────────────────
-         1. common input fields (path, file_path, and nested arguments) are
-            scanned for secret / PII → blocked
+         1. input fields naming an existing file (path, file_path, and nested
+            arguments) are scanned for secret / PII → blocked
 ```
+
+Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Tools whose name says they write, both the built-in `Write` and `Edit` and MCP tools such as `mcp__fs__write_file`, are skipped for the same reason.
 
 When blocked, Claude receives a JSON response explaining the reason and is prompted to tell the user.
 The terminal also receives a direct message (via `/dev/tty`).
@@ -485,7 +490,9 @@ The terminal also receives a direct message (via `/dev/tty`).
 ### Known Limitations
 
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
-- **Grep on directories** — when the Grep tool's `path` input is a directory, the inspection is skipped (to avoid scanning all files within).
+- **Directory targets** — nothing that names a directory rather than a file is scanned. That covers the Grep tool's `path` and a recursive search such as `grep -r pattern src/`, both of which would otherwise mean reading every file underneath.
+- **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
+- **`.env.*` is blocked by name** — the filename guard covers every `.env.*`, so a template like `.env.example` is blocked as well, now through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` for those.
 - **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
 - **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.
 - **Programs that read files themselves** — `python script.py` is not scanned, because running a script does not print its source; whatever the script opens at run time is beyond the hook's reach.

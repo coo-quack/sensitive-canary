@@ -1,61 +1,12 @@
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-const HOOK = new URL("../pre-tool-use-hook.ts", import.meta.url).pathname;
-const NODE_FLAGS = ["--experimental-strip-types"];
-
-function parseHookOutput(stdout: string) {
-  try {
-    const parsed = JSON.parse(stdout);
-    return { decision: parsed.decision, reason: parsed.reason };
-  } catch {
-    return { decision: undefined, reason: undefined };
-  }
-}
-
-function runBashHook(
-  command: string,
-  opts?: { env?: Record<string, string>; replaceEnv?: boolean },
-) {
-  const input = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
-  const envToUse = opts?.replaceEnv
-    ? (opts.env ?? {})
-    : { ...process.env, ...opts?.env };
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: envToUse,
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    decision,
-    reason,
-  };
-}
-
-function runGrepHook(path: string) {
-  const input = JSON.stringify({
-    tool_name: "Grep",
-    tool_input: { pattern: "foo", path },
-  });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env },
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return { exitCode: result.status ?? -1, decision, reason };
-}
+import { runBashHook, runGrepHook, runToolHook } from "./hook-harness.ts";
 
 let tmpDir: string;
 beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "sensitive-canary-cov-"));
+  tmpDir = mkdtempSync(join(tmpdir(), "sensitive-canary-forms-"));
 });
 afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
@@ -67,25 +18,13 @@ function writeFixture(name: string, content: string) {
   return p;
 }
 
-function runToolHook(toolName: string, toolInput: Record<string, unknown>) {
-  const input = JSON.stringify({ tool_name: toolName, tool_input: toolInput });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env },
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return { exitCode: result.status ?? -1, decision, reason };
-}
-
 // Assemble secrets without showing full strings in file source
 const AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
-const _EMAIL = ["taro.yamada", "example.com"].join("@");
 const TOKEN_VALUE = ["ghp_", "1234567890abcdefghij", "klmnopqrstuvwxyz"].join(
   "",
 );
 
-describe("pre-tool-use-hook-coverage", () => {
+describe("pre-tool-use-hook — Bash forms and other tools", () => {
   describe("expanded read commands", () => {
     it("sed with pattern should block on file with secret", () => {
       const file = writeFixture("s.txt", `key=${AWS_KEY}`);
@@ -157,11 +96,16 @@ describe("pre-tool-use-hook-coverage", () => {
   });
 
   describe("input redirection", () => {
-    it("wc with < redirection should block on file with secret", () => {
+    it("wc with < redirection should allow: it reports counts, not content", () => {
       const file = writeFixture("wc.txt", `key=${AWS_KEY}`);
       const result = runBashHook(`wc -l < ${file}`);
-      expect(result.exitCode).toBe(2);
-      expect(result.decision).toBe("block");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("sha256sum with < redirection should allow", () => {
+      const file = writeFixture("sha.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`sha256sum < ${file}`);
+      expect(result.exitCode).toBe(0);
     });
 
     it("grep with < redirection should block on file with secret", () => {
@@ -570,6 +514,129 @@ describe("pre-tool-use-hook-coverage", () => {
     it("comm <secretFile> /dev/null should block", () => {
       const file = writeFixture("comm_file.txt", `token=${AWS_KEY}`);
       const result = runBashHook(`comm ${file} /dev/null`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+  });
+
+  // Peeling a wrapper by counting its flags mistook a flag's value for the
+  // command: `sudo -u root cat f` resolved to `root`, and the file went unread.
+  describe("wrappers whose flags take a value", () => {
+    const blocked = (command: string) => {
+      const result = runBashHook(command);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    };
+
+    it("sudo -u root cat should block", () => {
+      const file = writeFixture("w_sudo_u.txt", `key=${AWS_KEY}`);
+      blocked(`sudo -u root cat ${file}`);
+    });
+
+    it("nice -n 10 cat should block", () => {
+      const file = writeFixture("w_nice_n.txt", `key=${AWS_KEY}`);
+      blocked(`nice -n 10 cat ${file}`);
+    });
+
+    it("ionice -c 3 cat should block", () => {
+      const file = writeFixture("w_ionice.txt", `key=${TOKEN_VALUE}`);
+      blocked(`ionice -c 3 cat ${file}`);
+    });
+
+    it("env -u FOO cat should block", () => {
+      const file = writeFixture("w_env_u.txt", `key=${AWS_KEY}`);
+      blocked(`env -u FOO cat ${file}`);
+    });
+
+    it("timeout -s KILL 5 cat should block", () => {
+      const file = writeFixture("w_timeout.txt", `key=${TOKEN_VALUE}`);
+      blocked(`timeout -s KILL 5 cat ${file}`);
+    });
+
+    it("xargs -n 1 cat should block", () => {
+      const file = writeFixture("w_xargs.txt", `key=${AWS_KEY}`);
+      blocked(`xargs -n 1 cat ${file}`);
+    });
+
+    it("flock /tmp/lockfile cat should block", () => {
+      const file = writeFixture("w_flock.txt", `key=${AWS_KEY}`);
+      blocked(`flock /tmp/canary.lock cat ${file}`);
+    });
+
+    it("nested wrappers should block", () => {
+      const file = writeFixture("w_nested.txt", `key=${TOKEN_VALUE}`);
+      blocked(`sudo -u root timeout -s KILL 5 cat ${file}`);
+    });
+  });
+
+  // A `VAR=value` prefix is not a command, and skipping assignments only after a
+  // wrapper name let `LANG=C cat f` through.
+  describe("leading variable assignments", () => {
+    it("LANG=C cat should block", () => {
+      const file = writeFixture("a_lang.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`LANG=C cat ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("NODE_ENV=test grep should block", () => {
+      const file = writeFixture("a_node_env.txt", `key=${TOKEN_VALUE}`);
+      const result = runBashHook(`NODE_ENV=test grep key ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("assignment before a wrapper should block", () => {
+      const file = writeFixture("a_both.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`LANG=C sudo -u root cat ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("an assignment on its own should allow", () => {
+      const result = runBashHook("LANG=C");
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("environment dumps behind a wrapper", () => {
+    it("sudo printenv should block when the environment holds a secret", () => {
+      const result = runBashHook("sudo printenv", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("env running a command is not a dump", () => {
+      const result = runBashHook("env FOO=1 ls", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("write-shaped MCP tools are exempt", () => {
+    it("mcp__fs__write_file should allow", () => {
+      const file = writeFixture("mcp_write.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__fs__write_file", {
+        path: file,
+        contents: "x",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("mcp__fs__move_file should allow", () => {
+      const file = writeFixture("mcp_move.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__fs__move_file", { path: file });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("mcp__fs__read_file should still block", () => {
+      const file = writeFixture("mcp_read.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__fs__read_file", { path: file });
       expect(result.exitCode).toBe(2);
       expect(result.decision).toBe("block");
     });

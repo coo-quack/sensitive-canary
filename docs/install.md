@@ -54,7 +54,7 @@ Add the following to `~/.claude/settings.json`:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -111,7 +111,7 @@ Add the following to `~/.claude/settings.json`:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -165,13 +165,17 @@ To allow, add a tag to your prompt:
 
 ### PreToolUse hook
 
-Runs before Claude uses the `Read` or `Bash` tool. It blocks:
+Runs before Claude uses the `Read`, `Bash` or `Grep` tool, or any MCP tool. It blocks:
 
 - `.env` and `.env.*` files by filename (a secret guard; only while the `secret` category is enabled)
 - Any file whose contents contain secrets or PII
-- `cat`, `head`, `tail`, and other file-reading commands targeting sensitive files
+- Commands that print a file: `cat`, `head`, `tail`, `sed`, `awk`, `grep`, `rg`, `cut`, `base64`, `strings`, `diff` and others, including behind a wrapper (`sudo`, `env VAR=1`, `timeout`, `xargs`), inside `sh -c` or `python3 -c`, after a `<` redirection, inside `$(…)`, and on later lines of a multi-line command
+- File arguments of git subcommands that print contents (`git show`, `git diff`, `git blame`)
 - Bash commands containing secrets inline (e.g. `echo AKIAIOSFODNN7EXAMPLE`)
-- Environment variables referenced in Bash commands whose values contain secrets
+- Environment variables referenced in Bash commands whose values contain secrets, and a bare `env` or `printenv` that would print the whole environment
+- The `Grep` tool's target file, and MCP tool inputs that name an existing file
+
+Commands that only measure a file (`wc`, `sha256sum`) and tools whose name says they write (`Write`, `Edit`, `mcp__*__write_file`) are left alone: naming a file they do not print is not a leak.
 
 ## Allow Tags
 

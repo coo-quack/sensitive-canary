@@ -1,22 +1,10 @@
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-const HOOK = new URL("../pre-tool-use-hook.ts", import.meta.url).pathname;
-const NODE_FLAGS = ["--experimental-strip-types"];
+import { runBashHook, runHook, runHookWithRawInput } from "./hook-harness.ts";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-function parseHookOutput(stdout: string) {
-  try {
-    const parsed = JSON.parse(stdout) as { decision?: string; reason?: string };
-    return { decision: parsed.decision ?? null, reason: parsed.reason ?? null };
-  } catch {
-    return { decision: null, reason: null };
-  }
-}
 
 let transcriptSeq = 0;
 
@@ -53,55 +41,6 @@ function writeTranscriptWithToolResults(
   const p = join(tmpDir, `transcript-${++transcriptSeq}.jsonl`);
   writeFileSync(p, lines.join("\n"), "utf8");
   return p;
-}
-
-function runHook(
-  toolName: string,
-  filePath: string,
-  opts?: { env?: Record<string, string>; transcriptPath?: string },
-) {
-  const input = JSON.stringify({
-    transcript_path: opts?.transcriptPath,
-    tool_name: toolName,
-    tool_input: { file_path: filePath },
-  });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...opts?.env },
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    decision,
-    reason,
-  };
-}
-
-function runBashHook(
-  command: string,
-  opts?: { env?: Record<string, string>; transcriptPath?: string },
-) {
-  const input = JSON.stringify({
-    transcript_path: opts?.transcriptPath,
-    tool_name: "Bash",
-    tool_input: { command },
-  });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...opts?.env },
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    decision,
-    reason,
-  };
 }
 
 // ── temp directory for fixture files ─────────────────────────────────────────
@@ -700,11 +639,8 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
 
 describe("pre-tool-use-hook — malformed input", () => {
   it("exits 0 on invalid JSON", () => {
-    const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-      input: "not json",
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
+    const result = runHookWithRawInput("not json");
+    expect(result.exitCode).toBe(0);
   });
 });
 

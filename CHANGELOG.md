@@ -22,8 +22,12 @@
   - Known limitation: directory paths are not scanned
 - Add MCP tool detection
   - Pre-tool-use hook now scans common MCP tool inputs (`path`, `file_path`, nested in `arguments`) for secrets
-- Exclude `wc` from read-command list
-  - `wc` outputs only line/word/byte counts, not file content, so it is not a read-level threat
+- Scan every environment variable when a bare `env` or `printenv` would print the
+  whole environment, including behind a wrapper (`sudo printenv`)
+- Treat commands that only measure a file (`wc`, `cksum`, `md5sum`, `sha1sum`,
+  `sha256sum`) as non-reads, whether the file is named or fed in over `<`
+- Skip tools whose name says they write, so an MCP `write_file` given a path is
+  treated like the built-in `Write` rather than as a read
 
 ---
 

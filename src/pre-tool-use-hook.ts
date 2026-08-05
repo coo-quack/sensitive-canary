@@ -140,9 +140,19 @@ const FILE_READ_COMMANDS = new Set([
   "look",
 ]);
 
-// Commands whose first non-flag argument is a pattern, expression or script,
+// Commands that read a file but report only measurements of it. Their stdin is
+// not echoed either, so a redirection into one of them is not a read.
+const COUNT_ONLY_COMMANDS = new Set([
+  "wc",
+  "cksum",
+  "md5sum",
+  "sha1sum",
+  "sha256sum",
+]);
+
+// Commands whose first non-flag argument is a pattern, expression or script name,
 // and whose remaining non-flag arguments are files written to stdout.
-const PATTERN_FIRST_READ_COMMANDS = new Set([
+const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
   "sed",
   "awk",
   "gawk",
@@ -220,6 +230,15 @@ const GIT_READ_SUBCOMMANDS = new Set([
 
 // Recursion limit for command substitutions and inline scripts.
 const MAX_NESTING_DEPTH = 4;
+
+// Passes made while peeling nested command substitutions.
+const MAX_SUBSTITUTION_PASSES = 8;
+
+// Longest quoted literal inside inline code still treated as a path candidate.
+const MAX_QUOTED_LITERAL_LENGTH = 4096;
+
+// Depth to which a tool's input object is searched for path-bearing fields.
+const MAX_PATH_FIELD_DEPTH = 2;
 
 // References a single Bash command makes to data the hook can inspect.
 interface CommandRefs {
@@ -335,7 +354,7 @@ function extractSubstitutions(command: string): string[] {
   const found: string[] = [];
   let remaining = command;
 
-  for (let pass = 0; pass < 8; pass++) {
+  for (let pass = 0; pass < MAX_SUBSTITUTION_PASSES; pass++) {
     const before = remaining;
     remaining = remaining
       .replace(/\$\(([^()]*)\)/g, (_, inner: string) => {
@@ -356,38 +375,80 @@ function extractSubstitutions(command: string): string[] {
   return found;
 }
 
-// Index of the token naming the command actually being run, after stripping
-// wrappers such as `sudo`, `env VAR=1`, `timeout 5` and `xargs -0`.
-function resolveCommandStart(tokens: string[]): number {
-  let i = 0;
+// True for a token that cannot name a command: a flag, a redirection operator,
+// or a `VAR=value` assignment placed before one.
+function isNonCommandToken(token: string): boolean {
+  if (token.startsWith("-") || token.startsWith("<") || token.startsWith(">")) {
+    return true;
+  }
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
+}
 
-  while (i < tokens.length) {
-    const name = path.basename(tokens[i] as string);
+// Commands whose operands this hook knows how to interpret. `env` and `printenv`
+// are absent on purpose: they are wrappers as often as they are commands, and
+// inspectEnvironmentCommand handles the cases where they print the environment.
+function isClassifiableCommand(name: string): boolean {
+  return (
+    FILE_READ_COMMANDS.has(name) ||
+    COUNT_ONLY_COMMANDS.has(name) ||
+    PATTERN_OR_SCRIPT_FIRST_COMMANDS.has(name) ||
+    INLINE_CODE_COMMANDS.has(name) ||
+    name === "git" ||
+    name === "dd"
+  );
+}
 
-    if (WRAPPER_COMMANDS_WITH_OPERAND.has(name)) {
-      i++;
-      while (i < tokens.length && (tokens[i] as string).startsWith("-")) i++;
-      i++; // the wrapper's own operand (duration, lock file)
-      continue;
-    }
+// Index of the token naming the command whose operands matter.
+//
+// Wrappers are not peeled by counting their flags: `sudo -u root cat f` would
+// then mistake `root` for the command, and `timeout -s KILL 5 cat f` would
+// mistake `5`. The whole segment is searched for the first token this hook can
+// classify instead, which also carries `LANG=C cat f` and `xargs -n 1 cat f`.
+// Falling back to index 0 leaves an unknown command classified as itself.
+function findCommandIndex(tokens: string[]): number {
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i] ?? "";
+    if (isNonCommandToken(tok)) continue;
+    if (isClassifiableCommand(path.basename(tok))) return i;
+  }
+  return 0;
+}
 
-    if (WRAPPER_COMMANDS.has(name)) {
-      i++;
-      while (i < tokens.length) {
-        const next = tokens[i] as string;
-        if (next.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(next)) {
-          i++;
-          continue;
-        }
-        break;
+// `env` and `printenv` print the environment unless they are being used to run
+// another command. `sudo printenv` counts; `env FOO=1 cat f` does not.
+function inspectEnvironmentCommand(tokens: string[]): {
+  dumps: boolean;
+  named: string[];
+} {
+  const nothing = { dumps: false, named: [] };
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i] ?? "";
+    if (isNonCommandToken(tok)) continue;
+
+    const name = path.basename(tok);
+    if (name !== "env" && name !== "printenv") {
+      // Wrappers may still precede it; any other command rules both out.
+      if (
+        WRAPPER_COMMANDS.has(name) ||
+        WRAPPER_COMMANDS_WITH_OPERAND.has(name)
+      ) {
+        continue;
       }
-      continue;
+      return nothing;
     }
 
-    return i;
+    const operands = tokens.slice(i + 1).filter((t) => !isNonCommandToken(t));
+    if (name === "printenv") {
+      return operands.length === 0
+        ? { dumps: true, named: [] }
+        : { dumps: false, named: operands };
+    }
+    // `env` with an operand is running a command, not printing anything.
+    return { dumps: operands.length === 0, named: [] };
   }
 
-  return tokens.length;
+  return nothing;
 }
 
 // True when `token` introduces inline program text for `cmd`. POSIX shells only
@@ -407,7 +468,11 @@ function extractQuotedLiterals(code: string): string[] {
   const literals: string[] = [];
   for (const match of code.matchAll(/'([^']*)'|"([^"]*)"/g)) {
     const value = match[1] ?? match[2];
-    if (value && value.length <= 4096 && !/\s/.test(value)) {
+    if (
+      value &&
+      value.length <= MAX_QUOTED_LITERAL_LENGTH &&
+      !/\s/.test(value)
+    ) {
       literals.push(value);
     }
   }
@@ -435,118 +500,11 @@ function extractCommandRefs(command: string, depth = 0): CommandRefs {
   }
 
   for (const tokens of tokenizeCommand(command)) {
-    // `env` and `printenv` with no command to run print the environment itself.
-    const leadName = path.basename(tokens[0] as string);
-    if (leadName === "env" || leadName === "printenv") {
-      const named = tokens
-        .slice(1)
-        .filter(
-          (t) => !t.startsWith("-") && !t.startsWith("<") && !t.startsWith(">"),
-        );
-      const assignments = named.filter((t) =>
-        /^[A-Za-z_][A-Za-z0-9_]*=/.test(t),
-      );
-      const rest = named.filter((t) => !assignments.includes(t));
-      if (
-        rest.length === 0 &&
-        (leadName === "printenv" || !assignments.length)
-      ) {
-        dumpsEnvironment = true;
-      } else if (leadName === "printenv") {
-        envVars.push(...rest);
-      }
-    }
+    const environment = inspectEnvironmentCommand(tokens);
+    if (environment.dumps) dumpsEnvironment = true;
+    envVars.push(...environment.named);
 
-    const start = resolveCommandStart(tokens);
-    const cmdToken = tokens[start];
-    if (cmdToken === undefined) continue;
-
-    const cmd = path.basename(cmdToken);
-    const operands = tokens.slice(start + 1);
-
-    // `sed -i` edits in place and writes nothing to stdout.
-    if (
-      cmd === "sed" &&
-      operands.some((t) => /^-i/.test(t) || t === "--in-place")
-    ) {
-      continue;
-    }
-
-    const isFileReadCmd = FILE_READ_COMMANDS.has(cmd);
-    const isPatternFirst = PATTERN_FIRST_READ_COMMANDS.has(cmd);
-    const isInlineCodeCmd = INLINE_CODE_COMMANDS.has(cmd);
-    const isGit = cmd === "git";
-
-    let skipNext = false;
-    let collectNext = false;
-    let codeNext = false;
-    let patternSkipped = false;
-    let gitSubcommandSeen = false;
-    let gitReadsFiles = false;
-
-    for (const tok of operands) {
-      if (skipNext) {
-        skipNext = false;
-        continue;
-      }
-      if (collectNext) {
-        collectNext = false;
-        paths.push(tok);
-        continue;
-      }
-      if (codeNext) {
-        codeNext = false;
-        // The expression came from -e/-c, so a later operand is a file, not the
-        // script `perl file` would have run.
-        patternSkipped = true;
-        merge(extractCommandRefs(tok, depth + 1));
-        paths.push(...extractQuotedLiterals(tok));
-        continue;
-      }
-
-      if (tok === "<") {
-        collectNext = true; // stdin is fed from the next token
-        continue;
-      }
-      if (tok.startsWith("<")) {
-        skipNext = true; // heredoc / herestring delimiter, not a path
-        continue;
-      }
-      if (tok.startsWith(">")) {
-        skipNext = true; // output target, never read
-        continue;
-      }
-
-      if (isInlineCodeCmd && isInlineCodeFlag(cmd, tok)) {
-        codeNext = true;
-        continue;
-      }
-
-      if (tok.startsWith("-")) continue;
-
-      if (isGit) {
-        if (!gitSubcommandSeen) {
-          gitSubcommandSeen = true;
-          gitReadsFiles = GIT_READ_SUBCOMMANDS.has(tok);
-          continue;
-        }
-        if (gitReadsFiles) paths.push(tok);
-        continue;
-      }
-
-      const ddInput = /^if=(.+)$/.exec(tok);
-      if (ddInput?.[1]) {
-        paths.push(ddInput[1]);
-        continue;
-      }
-
-      if (isPatternFirst && !patternSkipped) {
-        patternSkipped = true; // the pattern, expression or script name
-        continue;
-      }
-
-      if (isFileReadCmd || isPatternFirst) paths.push(tok);
-    }
+    merge(collectSegmentRefs(tokens, depth));
   }
 
   return {
@@ -554,6 +512,136 @@ function extractCommandRefs(command: string, depth = 0): CommandRefs {
     envVars: [...new Set(envVars)],
     dumpsEnvironment,
   };
+}
+
+// What this hook knows about how a command treats its operands.
+interface CommandBehaviour {
+  // Every non-flag operand is a file written to stdout.
+  printsOperands: boolean;
+  // The first non-flag operand is a pattern or script name, the rest are files.
+  firstOperandIsPatternOrScript: boolean;
+  // -c / -e introduce inline program text.
+  takesInlineCode: boolean;
+  // Reads a file but prints only a measurement of it, and does not echo stdin.
+  printsNothing: boolean;
+  // `git <subcommand> [paths]`.
+  isGit: boolean;
+}
+
+// Single place where a command name becomes a behaviour, so a name added to one
+// list cannot silently disagree with another.
+function classifyCommand(cmd: string): CommandBehaviour {
+  return {
+    printsOperands: FILE_READ_COMMANDS.has(cmd),
+    firstOperandIsPatternOrScript: PATTERN_OR_SCRIPT_FIRST_COMMANDS.has(cmd),
+    takesInlineCode: INLINE_CODE_COMMANDS.has(cmd),
+    printsNothing: COUNT_ONLY_COMMANDS.has(cmd),
+    isGit: cmd === "git",
+  };
+}
+
+// File paths one segment of a command line may print, plus anything found inside
+// inline program text it carries.
+function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
+  const paths: string[] = [];
+  const envVars: string[] = [];
+  let dumpsEnvironment = false;
+
+  const start = findCommandIndex(tokens);
+  const cmdToken = tokens[start];
+  if (cmdToken === undefined) return { paths, envVars, dumpsEnvironment };
+
+  const cmd = path.basename(cmdToken);
+  const operands = tokens.slice(start + 1);
+
+  // `sed -i` edits in place and writes nothing to stdout.
+  if (
+    cmd === "sed" &&
+    operands.some((t) => /^-i/.test(t) || t === "--in-place")
+  ) {
+    return { paths, envVars, dumpsEnvironment };
+  }
+
+  const behaviour = classifyCommand(cmd);
+
+  let skipNext = false;
+  let collectNext = false;
+  let codeNext = false;
+  let patternSkipped = false;
+  let gitSubcommandSeen = false;
+  let gitReadsFiles = false;
+
+  for (const tok of operands) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (collectNext) {
+      collectNext = false;
+      paths.push(tok);
+      continue;
+    }
+    if (codeNext) {
+      codeNext = false;
+      // The expression came from -e/-c, so a later operand is a file, not the
+      // script `perl file` would have run.
+      patternSkipped = true;
+      const inner = extractCommandRefs(tok, depth + 1);
+      paths.push(...inner.paths, ...extractQuotedLiterals(tok));
+      envVars.push(...inner.envVars);
+      dumpsEnvironment = dumpsEnvironment || inner.dumpsEnvironment;
+      continue;
+    }
+
+    if (tok === "<") {
+      // stdin is fed from the next token, unless nothing of it is printed
+      collectNext = !behaviour.printsNothing;
+      skipNext = behaviour.printsNothing;
+      continue;
+    }
+    if (tok.startsWith("<")) {
+      skipNext = true; // heredoc / herestring delimiter, not a path
+      continue;
+    }
+    if (tok.startsWith(">")) {
+      skipNext = true; // output target, never read
+      continue;
+    }
+
+    if (behaviour.takesInlineCode && isInlineCodeFlag(cmd, tok)) {
+      codeNext = true;
+      continue;
+    }
+
+    if (tok.startsWith("-")) continue;
+
+    if (behaviour.isGit) {
+      if (!gitSubcommandSeen) {
+        gitSubcommandSeen = true;
+        gitReadsFiles = GIT_READ_SUBCOMMANDS.has(tok);
+        continue;
+      }
+      if (gitReadsFiles) paths.push(tok);
+      continue;
+    }
+
+    const ddInput = /^if=(.+)$/.exec(tok);
+    if (ddInput?.[1]) {
+      paths.push(ddInput[1]);
+      continue;
+    }
+
+    if (behaviour.firstOperandIsPatternOrScript && !patternSkipped) {
+      patternSkipped = true; // the pattern, expression or script name
+      continue;
+    }
+
+    if (behaviour.printsOperands || behaviour.firstOperandIsPatternOrScript) {
+      paths.push(tok);
+    }
+  }
+
+  return { paths, envVars, dumpsEnvironment };
 }
 
 // ── .env pattern ──────────────────────────────────────────────────────────────
@@ -668,27 +756,28 @@ const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
   "AskUserQuestion",
 ]);
 
+// A tool whose name says it writes is treated like the built-in Write and Edit:
+// naming a file it does not read is not a leak. Matched on the tool name because
+// an MCP tool's semantics are not otherwise knowable from its input.
+const WRITING_TOOL_NAME =
+  /(write|create|edit|update|append|delete|remove|move|rename|mkdir|copy)/i;
+
 // Input field names that commonly carry a filesystem path.
 const PATH_FIELD_NAMES = new Set([
   "file_path",
   "filePath",
   "path",
+  "paths",
   "file",
-  "filename",
-  "fileName",
   "absolute_path",
   "notebook_path",
-  "source",
-  "src",
-  "paths",
-  "files",
 ]);
 
 function collectPathFields(
   input: Record<string, unknown>,
   depth = 0,
 ): string[] {
-  if (depth > 2) return [];
+  if (depth > MAX_PATH_FIELD_DEPTH) return [];
   const found: string[] = [];
 
   for (const [key, value] of Object.entries(input)) {
@@ -850,7 +939,7 @@ process.stdin.on("end", () => {
 
   // Any other tool, MCP tools included: those can return file contents the same
   // way Read does, so a field naming an existing file is scanned before the call.
-  if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool)) {
+  if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool) && !WRITING_TOOL_NAME.test(tool)) {
     for (const candidate of collectPathFields(input)) {
       scanIfRegularFile(candidate, allowTags);
     }
