@@ -299,14 +299,33 @@ function tokenizeCommand(command: string): string[][] {
       continue;
     }
 
-    if (ch === "'" || ch === '"') {
-      i++;
+    if (
+      ch === "'" ||
+      ch === '"' ||
+      (ch === "$" && (command[i + 1] === "'" || command[i + 1] === '"'))
+    ) {
+      // $'...' (ANSI-C) and $"..." (locale) are quoting syntax: the `$` is not
+      // part of the token. Inside $'...', backslash escapes are decoded.
+      let quote = ch;
+      let ansiC = false;
+      if (ch === "$") {
+        quote = command[i + 1] as string;
+        ansiC = quote === "'";
+        i += 2;
+      } else {
+        i++;
+      }
       hasCurrent = true;
-      while (i < command.length && command[i] !== ch) {
-        if (ch === '"' && command[i] === "\\" && command[i + 1] !== undefined) {
-          current += command[i + 1];
-          i += 2;
-          continue;
+      while (i < command.length && command[i] !== quote) {
+        if (command[i] === "\\" && command[i + 1] !== undefined) {
+          if (quote === '"' || ansiC) {
+            current += ansiC
+              ? decodeAnsiCEscape(command, i)
+              : (command[i + 1] as string);
+            i += ansiC ? ansiCEscapeLength(command, i) : 2;
+            continue;
+          }
+          // plain single quotes keep backslashes literal
         }
         current += command[i];
         i++;
@@ -348,6 +367,125 @@ function tokenizeCommand(command: string): string[][] {
   return segments;
 }
 
+// Length of the ANSI-C escape starting at `command[i]` (a backslash), so the
+// tokenizer can skip the whole sequence: \xHH is 4 chars, anything else is 2.
+function ansiCEscapeLength(command: string, i: number): number {
+  return command[i + 1] === "x" &&
+    /^[0-9A-Fa-f]{2}$/.test(command.slice(i + 2, i + 4))
+    ? 4
+    : 2;
+}
+
+// Decode the ANSI-C escape starting at `command[i]` (a backslash). Covers the
+// escapes that appear in paths: \\, \', \", \xHH and the common letter escapes.
+function decodeAnsiCEscape(command: string, i: number): string {
+  const esc = command[i + 1] as string;
+  if (esc === "x" && /^[0-9A-Fa-f]{2}$/.test(command.slice(i + 2, i + 4))) {
+    return String.fromCharCode(
+      Number.parseInt(command.slice(i + 2, i + 4), 16),
+    );
+  }
+  const simple: Record<string, string> = {
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    n: "\n",
+    t: "\t",
+    r: "\r",
+    "0": "\0",
+  };
+  return simple[esc] ?? esc;
+}
+
+// Heredoc delimiters introduced by one command line, in order. `<<-` allows a
+// tab-indented closing delimiter; `<<<` is a herestring and is not a heredoc.
+// Matches outside quotes only, so `echo "a <<EOF b"` is not a heredoc start.
+function findHeredocDelimiters(
+  line: string,
+): { delim: string; allowTabs: boolean }[] {
+  const found: { delim: string; allowTabs: boolean }[] = [];
+  let quote: string | null = null;
+  let i = 0;
+
+  while (i < line.length) {
+    const ch = line[i] as string;
+    if (quote !== null) {
+      if (quote === '"' && ch === "\\") i++;
+      else if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      i++;
+      continue;
+    }
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (ch === "<" && line[i + 1] === "<") {
+      let j = i + 2;
+      let allowTabs = false;
+      if (line[j] === "-") {
+        allowTabs = true;
+        j++;
+      }
+      if (line[j] === "<") {
+        i = j; // herestring
+        continue;
+      }
+      while (line[j] === " " || line[j] === "\t") j++;
+      let delim = "";
+      const q = line[j];
+      if (q === "'" || q === '"') {
+        j++;
+        while (j < line.length && line[j] !== q) {
+          delim += line[j];
+          j++;
+        }
+        j++; // closing quote, or end of line for an unbalanced one
+      } else {
+        while (j < line.length && /[A-Za-z0-9_.]/.test(line[j] as string)) {
+          delim += line[j];
+          j++;
+        }
+      }
+      if (delim) found.push({ delim, allowTabs });
+      i = j;
+      continue;
+    }
+    i++;
+  }
+
+  return found;
+}
+
+// Remove heredoc bodies from a command line. A body is text, not commands —
+// `cat > deploy.sh <<EOF` followed by a script that mentions `.env` reads
+// nothing, and scanning the body as shell blocked exactly that everyday case.
+// The trade-off: a heredoc that *feeds* commands to a remote shell
+// (`ssh host <<EOF\ncat /secret\nEOF`) is no longer caught. Documented as a
+// known limitation in the README.
+function stripHeredocBodies(command: string): string {
+  const lines = command.split("\n");
+  const kept: string[] = [];
+  const pending: { delim: string; allowTabs: boolean }[] = [];
+
+  for (const line of lines) {
+    if (pending.length > 0) {
+      const first = pending[0] as { delim: string; allowTabs: boolean };
+      const cmp = first.allowTabs ? line.replace(/^\t+/, "") : line;
+      if (cmp === first.delim) pending.shift();
+      continue;
+    }
+    pending.push(...findHeredocDelimiters(line));
+    kept.push(line);
+  }
+
+  return kept.join("\n");
+}
+
 // Inner text of every command substitution, process substitution and backtick
 // expression, innermost first. Each is a command line in its own right.
 function extractSubstitutions(command: string): string[] {
@@ -362,6 +500,10 @@ function extractSubstitutions(command: string): string[] {
         return " ";
       })
       .replace(/<\(([^()]*)\)/g, (_, inner: string) => {
+        found.push(inner);
+        return " ";
+      })
+      .replace(/>\(([^()]*)\)/g, (_, inner: string) => {
         found.push(inner);
         return " ";
       })
@@ -400,18 +542,39 @@ function isClassifiableCommand(name: string): boolean {
 
 // Index of the token naming the command whose operands matter.
 //
-// Wrappers are not peeled by counting their flags: `sudo -u root cat f` would
-// then mistake `root` for the command, and `timeout -s KILL 5 cat f` would
-// mistake `5`. The whole segment is searched for the first token this hook can
-// classify instead, which also carries `LANG=C cat f` and `xargs -n 1 cat f`.
-// Falling back to index 0 leaves an unknown command classified as itself.
+// The lead command is the first token that is not a flag, redirection or
+// `VAR=value` assignment. Only a known wrapper (`sudo`, `env`, `timeout`, …)
+// is peeled, by searching the rest of the segment for the first token this
+// hook can classify; anything else is treated as the command itself. Searching
+// unconditionally mistook operands for commands: `echo cat secrets` resolved
+// to `cat`, and a file that was never read was scanned and blocked. Wrappers
+// are still not peeled by counting their flags: `sudo -u root cat f` would
+// mistake `root` for the command, and `timeout -s KILL 5 cat f` would
+// mistake `5`. Falling back to the lead leaves an unknown command classified
+// as itself.
 function findCommandIndex(tokens: string[]): number {
+  let lead = -1;
   for (let i = 0; i < tokens.length; i++) {
+    if (isNonCommandToken(tokens[i] ?? "")) continue;
+    lead = i;
+    break;
+  }
+  if (lead === -1) return 0;
+
+  const leadName = path.basename(tokens[lead] ?? "");
+  if (
+    !WRAPPER_COMMANDS.has(leadName) &&
+    !WRAPPER_COMMANDS_WITH_OPERAND.has(leadName)
+  ) {
+    return lead;
+  }
+
+  for (let i = lead + 1; i < tokens.length; i++) {
     const tok = tokens[i] ?? "";
     if (isNonCommandToken(tok)) continue;
     if (isClassifiableCommand(path.basename(tok))) return i;
   }
-  return 0;
+  return lead;
 }
 
 // `env` and `printenv` print the environment unless they are being used to run
@@ -444,8 +607,43 @@ function inspectEnvironmentCommand(tokens: string[]): {
         ? { dumps: true, named: [] }
         : { dumps: false, named: operands };
     }
-    // `env` with an operand is running a command, not printing anything.
-    return { dumps: operands.length === 0, named: [] };
+    // `env` prints the environment unless a subcommand follows its own
+    // arguments: assignments (`FOO=1`), flags, and the values of flags that
+    // take one (`-u FOO`, `-C dir`, `-S str`) are all env's own. With no
+    // subcommand the whole environment is printed — `env FOO=1` and
+    // `env -u FOO` included. Exception: `-i` starts from an empty environment,
+    // so only the given assignments (already scanned as command text) print.
+    if (name === "env") {
+      const rest = tokens.slice(i + 1);
+      let ignoreEnvironment = false;
+      let hasCommand = false;
+      for (let j = 0; j < rest.length; j++) {
+        const t = rest[j] ?? "";
+        if (t === "-i" || t === "--ignore-environment") {
+          ignoreEnvironment = true;
+          continue;
+        }
+        if (t === "<" || t === ">" || t === "<<" || t === ">>") {
+          j++; // redirection operator: its target is env's own argument here
+          continue;
+        }
+        if (
+          t === "-u" ||
+          t === "--unset" ||
+          t === "-C" ||
+          t === "--chdir" ||
+          t === "-S" ||
+          t === "--split-string"
+        ) {
+          j++; // flag value
+          continue;
+        }
+        if (isNonCommandToken(t)) continue; // flags and FOO=1 assignments
+        hasCommand = true;
+        break;
+      }
+      return { dumps: !hasCommand && !ignoreEnvironment, named: [] };
+    }
   }
 
   return nothing;
@@ -494,12 +692,15 @@ function extractCommandRefs(command: string, depth = 0): CommandRefs {
     dumpsEnvironment = dumpsEnvironment || refs.dumpsEnvironment;
   };
 
+  // Heredoc bodies are text, not commands; strip them before any other pass.
+  const text = stripHeredocBodies(command);
+
   // `echo $(cat secrets)` reads secrets just as `cat secrets` does.
-  for (const inner of extractSubstitutions(command)) {
+  for (const inner of extractSubstitutions(text)) {
     merge(extractCommandRefs(inner, depth + 1));
   }
 
-  for (const tokens of tokenizeCommand(command)) {
+  for (const tokens of tokenizeCommand(text)) {
     const environment = inspectEnvironmentCommand(tokens);
     if (environment.dumps) dumpsEnvironment = true;
     envVars.push(...environment.named);
@@ -758,9 +959,18 @@ const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
 
 // A tool whose name says it writes is treated like the built-in Write and Edit:
 // naming a file it does not read is not a leak. Matched on the tool name because
-// an MCP tool's semantics are not otherwise knowable from its input.
+// an MCP tool's semantics are not otherwise knowable from its input. For MCP
+// tools (`mcp__<server>__<tool>`) only the tool component is matched — a server
+// named "editor" or "readwrite" must not exempt every read tool it offers.
 const WRITING_TOOL_NAME =
   /(write|create|edit|update|append|delete|remove|move|rename|mkdir|copy)/i;
+
+function isWritingTool(tool: string): boolean {
+  const name = tool.startsWith("mcp__")
+    ? (tool.split("__").pop() ?? tool)
+    : tool;
+  return WRITING_TOOL_NAME.test(name);
+}
 
 // Input field names that commonly carry a filesystem path.
 const PATH_FIELD_NAMES = new Set([
@@ -939,7 +1149,7 @@ process.stdin.on("end", () => {
 
   // Any other tool, MCP tools included: those can return file contents the same
   // way Read does, so a field naming an existing file is scanned before the call.
-  if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool) && !WRITING_TOOL_NAME.test(tool)) {
+  if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool) && !isWritingTool(tool)) {
     for (const candidate of collectPathFields(input)) {
       scanIfRegularFile(candidate, allowTags);
     }

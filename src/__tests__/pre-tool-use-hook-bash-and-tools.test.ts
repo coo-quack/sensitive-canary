@@ -616,6 +616,50 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       });
       expect(result.exitCode).toBe(0);
     });
+
+    it("env with only assignments is still a dump", () => {
+      const result = runBashHook("env FOO=1 BAR=2", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("env -u FOO unsets one variable and dumps the rest", () => {
+      const result = runBashHook("env -u FOO", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("env --unset FOO should also block", () => {
+      const result = runBashHook("env --unset FOO", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("env -i starts from an empty environment: not a dump", () => {
+      const result = runBashHook("env -i FOO=1", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("env with output redirected is still a dump", () => {
+      const result = runBashHook("env > out.txt", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
   });
 
   describe("write-shaped MCP tools are exempt", () => {
@@ -637,6 +681,112 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
     it("mcp__fs__read_file should still block", () => {
       const file = writeFixture("mcp_read.txt", `key=${AWS_KEY}`);
       const result = runToolHook("mcp__fs__read_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    // The write-name heuristic matches the tool component only: a server named
+    // "editor" or "readwrite" must not exempt the read tools it offers.
+    it("mcp__editor__read_file should block (server name is not the tool name)", () => {
+      const file = writeFixture("mcp_editor.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__editor__read_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("mcp__readwrite__read_file should block (server name is not the tool name)", () => {
+      const file = writeFixture("mcp_readwrite.txt", `key=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__readwrite__read_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+  });
+
+  describe("output process substitution", () => {
+    it(">(...) should block on file with secret", () => {
+      const file = writeFixture("psub_out.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`echo hi >(cat ${file})`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+  });
+
+  // Only a known wrapper is peeled: the first real token of any other command
+  // is the command, even when a later operand happens to name a read command.
+  describe("operands that look like commands", () => {
+    it("echo cat <secretFile> should allow (echo prints the words, not the file)", () => {
+      const file = writeFixture("echo_cat.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`echo cat ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("printf cat <secretFile> should allow", () => {
+      const file = writeFixture("printf_cat.txt", `key=${TOKEN_VALUE}`);
+      const result = runBashHook(`printf cat ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("heredoc bodies", () => {
+    it("heredoc writing a script that mentions .env should allow", () => {
+      const result = runBashHook("cat > deploy.sh <<'EOF'\ncat .env\nEOF");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("heredoc body naming a sensitive file should allow (body is text)", () => {
+      const file = writeFixture("heredoc_body.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat > s.sh <<EOF\ncat ${file}\nEOF`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("<<- heredoc with tab-indented delimiter should allow", () => {
+      const result = runBashHook("cat > s.sh <<-EOF\n\tcat .env\n\tEOF");
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Known limitation: the body is skipped entirely, so a heredoc that feeds
+    // commands to a remote shell is no longer caught.
+    it("ssh heredoc running cat on a sensitive file is not caught (documented limitation)", () => {
+      const file = writeFixture("ssh_heredoc.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`ssh host <<EOF\ncat ${file}\nEOF`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("command after the heredoc still scans", () => {
+      const file = writeFixture("after_heredoc.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat <<EOF\nhi\nEOF\ncat ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+  });
+
+  describe("ANSI-C and locale quoting", () => {
+    it("cat $'<path>' should block on file with secret", () => {
+      const file = writeFixture("ansi_c.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat $'${file}'`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it('cat $"<path>" should block on file with secret', () => {
+      const file = writeFixture("locale_q.txt", `key=${TOKEN_VALUE}`);
+      const result = runBashHook(`cat $"${file}"`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("cat $'<path with space>' should block", () => {
+      const file = writeFixture("ansi space.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat $'${file}'`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("$'...' hex escapes should decode", () => {
+      const file = writeFixture("hexesc.txt", `key=${AWS_KEY}`);
+      // "hexesc" as h e x e \x73 c
+      const escaped = file.replace("hexesc", "hexe\\x73c");
+      const result = runBashHook(`cat $'${escaped}'`);
       expect(result.exitCode).toBe(2);
       expect(result.decision).toBe("block");
     });

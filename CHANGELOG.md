@@ -29,6 +29,25 @@
 - Skip tools whose name says they write, so an MCP `write_file` given a path is
   treated like the built-in `Write` rather than as a read
 
+### Fixed
+
+- `env FOO=1` (assignments but no subcommand), `env -u FOO` and a redirected
+  `env > out` now count as whole-environment dumps; `env -i` no longer does,
+  since it prints only the assignments given
+- `>(...)` process substitution is recursed into, like `<(...)`
+- Only known wrappers are peeled when locating the command: an operand that
+  happens to name a read command (`echo cat secrets`) no longer triggers a
+  scan of a file nothing reads
+- Heredoc bodies are no longer scanned as shell commands: writing a script
+  that mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known
+  limitation: a heredoc that feeds commands to a remote shell
+  (`ssh host <<EOF`) is no longer caught
+- The write-name exemption for MCP tools now matches only the tool component
+  of `mcp__<server>__<tool>`: a server named "editor" or "readwrite" no longer
+  exempts the read tools it offers
+- `$'...'` (ANSI-C) and `$"..."` quoting no longer hide a path from the
+  tokenizer
+
 ---
 
 ## v0.7.0 (2026-08-04)

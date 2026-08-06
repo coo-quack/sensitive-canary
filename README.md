@@ -496,6 +496,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
 - **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.
 - **Programs that read files themselves** — `python script.py` is not scanned, because running a script does not print its source; whatever the script opens at run time is beyond the hook's reach.
+- **Heredoc bodies are not scanned** — a heredoc is treated as text, so a heredoc that feeds commands to a remote shell (`ssh host <<EOF` followed by `cat /secret`) is not caught.
 - **Best effort only** — detection is not exhaustive. Arbitrary shell metacharacters, eval chains, and complex expansions may not be fully tracked.
 
 ---
