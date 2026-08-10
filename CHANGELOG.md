@@ -10,8 +10,8 @@
     `expand`, `unexpand`, `iconv`, `zcat`, `gzcat`, `bzcat`, `xzcat`, `zstdcat`,
     `diff`, `comm`, `join`, `look`
   - Add pattern-first commands whose later arguments are files: `sed`, `awk`, `gawk`,
-    `grep`, `egrep`, `fgrep`, `rg`, `ag`, `jq`, `yq`, `perl`, `ruby`, `python`,
-    `python3`, `node`, `deno`, `bun` (`sed -i` is exempt: it writes no stdout)
+    `grep`, `egrep`, `fgrep`, `rg`, `ag`, `jq`, `yq`, `perl`, `ruby`
+    (`sed -i` is exempt: it writes no stdout)
   - Unwrap wrapper commands (`sudo`, `env`, `timeout`, `nice`) to scan underlying commands
   - Parse and scan inline scripts (`-c`, `-e`, `-pe` flags) and their shell code
   - Extract file paths from input redirections (`<file`), command substitutions (`$(...)`, `` `...` ``, `<(...)`), and chained commands (newlines, `&&`, `;`)
@@ -38,6 +38,11 @@
 - Only known wrappers are peeled when locating the command: an operand that
   happens to name a read command (`echo cat secrets`) no longer triggers a
   scan of a file nothing reads
+- `if=<file>` is treated as an input file only for `dd`; another command given
+  an `if=` argument (`echo if=secrets`) no longer triggers a scan
+- `python`, `python3`, `node`, `deno` and `bun` no longer have their arguments
+  scanned as printed files: running a script does not print the paths named
+  after it. Their inline code (`-c`, `-e`) is still scanned
 - Heredoc bodies are no longer scanned as shell commands: writing a script
   that mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known
   limitation: a heredoc that feeds commands to a remote shell

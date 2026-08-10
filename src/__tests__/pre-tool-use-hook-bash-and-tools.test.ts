@@ -349,6 +349,12 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    it("python3 script.py <secretFile> (script argv is not output) should allow", () => {
+      const file = writeFixture("python_argv.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`python3 script.py ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
     it("sh -c 'echo hello world' should allow", () => {
       const result = runBashHook(`sh -c "echo hello world"`);
       expect(result.exitCode).toBe(0);
@@ -435,6 +441,12 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       const result = runBashHook(`dd if=${file}`);
       expect(result.exitCode).toBe(2);
       expect(result.decision).toBe("block");
+    });
+
+    it("if=<secretFile> without dd (echo) should allow", () => {
+      const file = writeFixture("not_dd.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`echo if=${file}`);
+      expect(result.exitCode).toBe(0);
     });
 
     it("wc -l <secretFile> (wc outputs only count) should allow", () => {

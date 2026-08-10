@@ -150,8 +150,12 @@ const COUNT_ONLY_COMMANDS = new Set([
   "sha256sum",
 ]);
 
-// Commands whose first non-flag argument is a pattern, expression or script name,
+// Commands whose first non-flag argument is a pattern, expression or script,
 // and whose remaining non-flag arguments are files written to stdout.
+// General-purpose runtimes (`python`, `node`, `deno`, `bun`) are absent: they
+// execute their first argument rather than print it, and the files named after
+// it are argv, not output. Their inline code (`-c`, `-e`) is still scanned via
+// INLINE_CODE_COMMANDS.
 const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
   "sed",
   "awk",
@@ -165,11 +169,6 @@ const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
   "yq",
   "perl",
   "ruby",
-  "python",
-  "python3",
-  "node",
-  "deno",
-  "bun",
 ]);
 
 // Commands that run another command. They are stripped so the wrapped command
@@ -826,10 +825,14 @@ function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
       continue;
     }
 
-    const ddInput = /^if=(.+)$/.exec(tok);
-    if (ddInput?.[1]) {
-      paths.push(ddInput[1]);
-      continue;
+    // `if=<file>` names an input only for `dd`; other commands taking an
+    // `if=` argument are not reading the file it names.
+    if (cmd === "dd") {
+      const ddInput = /^if=(.+)$/.exec(tok);
+      if (ddInput?.[1]) {
+        paths.push(ddInput[1]);
+        continue;
+      }
     }
 
     if (behaviour.firstOperandIsPatternOrScript && !patternSkipped) {
