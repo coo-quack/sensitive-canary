@@ -1001,6 +1001,15 @@ function collectPathFields(
       if (PATH_FIELD_NAMES.has(key)) {
         found.push(...value.filter((v): v is string => typeof v === "string"));
       }
+      // Paths also arrive as objects inside an array, e.g.
+      // `{ paths: [{ path: "…" }] }` — recurse into those elements too.
+      for (const item of value) {
+        if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+          found.push(
+            ...collectPathFields(item as Record<string, unknown>, depth + 1),
+          );
+        }
+      }
     } else if (value !== null && typeof value === "object") {
       found.push(
         ...collectPathFields(value as Record<string, unknown>, depth + 1),

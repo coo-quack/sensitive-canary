@@ -46,6 +46,9 @@
 - Quoted literals with spaces inside inline code are no longer skipped:
   `python3 -c "open('my secret.txt').read()"` is found now. Only literals with
   line breaks or tabs are still treated as messages rather than paths
+- Path fields nested as objects inside an array (`{ paths: [{ path: "…" }] }`)
+  are now found in Grep/MCP tool inputs; only plain string elements were
+  collected before
 - Heredoc bodies are no longer scanned as shell commands: writing a script
   that mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known
   limitation: a heredoc that feeds commands to a remote shell

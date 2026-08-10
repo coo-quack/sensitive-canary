@@ -482,6 +482,15 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.decision).toBe("block");
     });
 
+    it("mcp tool with path objects inside an array should block", () => {
+      const file = writeFixture("mcp_array.txt", `secret=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__example__tool", {
+        paths: [{ path: file }],
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
     it("mcp tool with nonexistent path should allow", () => {
       const result = runToolHook("mcp__example__tool", {
         path: "/api/v1/users",
