@@ -323,6 +323,13 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.decision).toBe("block");
     });
 
+    it("python3 -c reading a path with spaces should block", () => {
+      const file = writeFixture("python spaced.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`python3 -c "print(open('${file}').read())"`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
     it("sh -c 'cat <secretFile>' should block", () => {
       const file = writeFixture("sh_c.txt", `secret=${TOKEN_VALUE}`);
       const result = runBashHook(`sh -c "cat ${file}"`);

@@ -659,8 +659,9 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
 }
 
 // Quoted literals inside inline program text — the ".env" in
-// `python3 -c "print(open('.env').read())"`. Literals containing whitespace are
-// skipped: those are messages and patterns, not paths.
+// `python3 -c "print(open('.env').read())"`. Literals containing line breaks or
+// tabs are skipped: those are messages and patterns, not paths. Spaces are
+// kept, so a path like `open('my secret.txt')` is still found.
 function extractQuotedLiterals(code: string): string[] {
   const literals: string[] = [];
   for (const match of code.matchAll(/'([^']*)'|"([^"]*)"/g)) {
@@ -668,7 +669,7 @@ function extractQuotedLiterals(code: string): string[] {
     if (
       value &&
       value.length <= MAX_QUOTED_LITERAL_LENGTH &&
-      !/\s/.test(value)
+      !/[\t\r\n]/.test(value)
     ) {
       literals.push(value);
     }
