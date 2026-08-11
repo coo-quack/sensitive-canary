@@ -1,8 +1,10 @@
 name: CI
 
+# No `branches` filter: it matches the *base* branch, so a stacked PR whose base
+# is another feature branch got no CI at all — exactly the changes that most want
+# checking, since nobody has seen them yet.
 on:
   pull_request:
-    branches: [main, develop]
 
 permissions: {}
 
