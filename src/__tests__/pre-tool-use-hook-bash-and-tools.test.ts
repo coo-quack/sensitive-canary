@@ -844,6 +844,27 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.exitCode).toBe(2);
       expect(result.decision).toBe("block");
     });
+
+    // A delimiter cut short never matches its closing line, and every following
+    // line is then swallowed as body — hiding the read that comes after it.
+    it("command after a hyphenated heredoc delimiter still scans", () => {
+      const file = writeFixture("hyphen_delim.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat > s.sh <<EOF-1\nhi\nEOF-1\ncat ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("command after a partly quoted heredoc delimiter still scans", () => {
+      const file = writeFixture("mixed_delim.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`cat > s.sh <<E"O"F\nhi\nEOF\ncat ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("hyphenated delimiter still hides its own body", () => {
+      const result = runBashHook("cat > deploy.sh <<EOF-1\ncat .env\nEOF-1");
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe("ANSI-C and locale quoting", () => {

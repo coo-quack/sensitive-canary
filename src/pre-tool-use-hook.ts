@@ -416,6 +416,50 @@ interface HeredocDelimiter {
   allowTabs: boolean;
 }
 
+// The delimiter word starting at `line[from]`, with quote removal applied the way
+// the shell does it: `<<EOF`, `<<'EOF'`, `<<"EOF"` and `<<E"O"F` all end their
+// body at the line `EOF`. The word ends at whitespace or a shell metacharacter.
+//
+// A narrower character class (`[A-Za-z0-9_.]`) used to cut the word short, and the
+// truncated delimiter then never matched the real closing line: stripHeredocBodies
+// swallowed the rest of the command, so `cat > f <<EOF-1 … EOF-1` followed by
+// `cat .env` hid the read entirely.
+function readHeredocDelimiter(
+  line: string,
+  from: number,
+): { delim: string; next: number } {
+  let delim = "";
+  let i = from;
+
+  while (i < line.length) {
+    const ch = line[i] as string;
+    if (ch === "'" || ch === '"') {
+      i++;
+      while (i < line.length && line[i] !== ch) {
+        if (ch === '"' && line[i] === "\\" && line[i + 1] !== undefined) {
+          delim += line[i + 1];
+          i += 2;
+          continue;
+        }
+        delim += line[i];
+        i++;
+      }
+      i++; // closing quote, or end of line for an unbalanced one
+      continue;
+    }
+    if (ch === "\\" && line[i + 1] !== undefined) {
+      delim += line[i + 1];
+      i += 2;
+      continue;
+    }
+    if (/[\s|&;()<>`]/.test(ch)) break;
+    delim += ch;
+    i++;
+  }
+
+  return { delim, next: i };
+}
+
 // Heredoc delimiters introduced by one command line, in order. `<<-` allows a
 // tab-indented closing delimiter; `<<<` is a herestring and is not a heredoc.
 // Matches outside quotes only, so `echo "a <<EOF b"` is not a heredoc start.
@@ -453,23 +497,9 @@ function findHeredocDelimiters(line: string): HeredocDelimiter[] {
         continue;
       }
       while (line[j] === " " || line[j] === "\t") j++;
-      let delim = "";
-      const q = line[j];
-      if (q === "'" || q === '"') {
-        j++;
-        while (j < line.length && line[j] !== q) {
-          delim += line[j];
-          j++;
-        }
-        j++; // closing quote, or end of line for an unbalanced one
-      } else {
-        while (j < line.length && /[A-Za-z0-9_.]/.test(line[j] as string)) {
-          delim += line[j];
-          j++;
-        }
-      }
+      const { delim, next } = readHeredocDelimiter(line, j);
       if (delim) found.push({ delim, allowTabs });
-      i = j;
+      i = next;
       continue;
     }
     i++;

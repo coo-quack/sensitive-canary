@@ -69,6 +69,10 @@
   exempts the read tools it offers
 - `$'...'` (ANSI-C) and `$"..."` quoting no longer hide a path from the
   tokenizer
+- A heredoc delimiter carrying a hyphen or partial quoting (`<<EOF-1`, `<<E"O"F`)
+  is now read as the whole word. A truncated delimiter never matched its closing
+  line, so every following command was swallowed as heredoc body and a read
+  placed after it went unscanned
 
 ---
 
