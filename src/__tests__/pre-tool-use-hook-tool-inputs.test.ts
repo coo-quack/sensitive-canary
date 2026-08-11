@@ -1,0 +1,195 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runGrepHook, runToolHook } from "./hook-harness.ts";
+
+let tmpDir: string;
+beforeAll(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), "sensitive-canary-tool-inputs-"));
+});
+afterAll(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
+function writeFixture(name: string, content: string) {
+  const p = join(tmpDir, name);
+  writeFileSync(p, content, "utf8");
+  return p;
+}
+
+// Assembled so the full strings never appear in this file's source.
+const AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
+const TOKEN_VALUE = ["ghp_", "1234567890abcdefghij", "klmnopqrstuvwxyz"].join(
+  "",
+);
+
+describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
+  describe("Grep tool", () => {
+    it("should block on file with secret", () => {
+      const file = writeFixture("grep_tool.txt", `key=${AWS_KEY}`);
+      const result = runGrepHook(file);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("should allow on clean file", () => {
+      const file = writeFixture("clean_grep.txt", "normal content");
+      const result = runGrepHook(file);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should block on .env file", () => {
+      const file = writeFixture(".env", `TOKEN=${TOKEN_VALUE}`);
+      const result = runGrepHook(file);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("should allow on directory path (known limitation)", () => {
+      const result = runGrepHook(tmpDir);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should allow on non-existent path", () => {
+      const result = runGrepHook(join(tmpDir, "nonexistent.txt"));
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("other tools and MCP", () => {
+    it("mcp__filesystem__read_text_file should block on secret", () => {
+      const file = writeFixture("mcp_secret.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__filesystem__read_text_file", {
+        path: file,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp tool with nested path should block", () => {
+      const file = writeFixture("mcp_nested.txt", `secret=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__example__tool", {
+        arguments: { file_path: file },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp tool with path objects inside an array should block", () => {
+      const file = writeFixture("mcp_array.txt", `secret=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__example__tool", {
+        paths: [{ path: file }],
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp tool with nonexistent path should allow", () => {
+      const result = runToolHook("mcp__example__tool", {
+        path: "/api/v1/users",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("Write tool should allow (write operations are not checked)", () => {
+      const file = writeFixture("write_target.txt", "");
+      const result = runToolHook("Write", {
+        file_path: file,
+        content: "x",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("Glob tool should allow (not checked)", () => {
+      const file = writeFixture("glob_target.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("Glob", {
+        pattern: "*.ts",
+        path: file,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("TodoWrite tool should allow (not checked)", () => {
+      const result = runToolHook("TodoWrite", {
+        todos: [],
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("write-shaped MCP tools are exempt", () => {
+    it("mcp__fs__write_file should allow", () => {
+      const file = writeFixture("mcp_write.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__fs__write_file", {
+        path: file,
+        contents: "x",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("mcp__fs__move_file should allow", () => {
+      const file = writeFixture("mcp_move.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__fs__move_file", { path: file });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("mcp__fs__read_file should still block", () => {
+      const file = writeFixture("mcp_read.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__fs__read_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The write-name heuristic matches the tool component only: a server named
+    // "editor" or "readwrite" must not exempt the read tools it offers.
+    it("mcp__editor__read_file should block (server name is not the tool name)", () => {
+      const file = writeFixture("mcp_editor.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__editor__read_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp__readwrite__read_file should block (server name is not the tool name)", () => {
+      const file = writeFixture("mcp_readwrite.txt", `key=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__readwrite__read_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The exemption needs the verb to lead the name. As a substring test each of
+    // these read a file while being treated as a tool that only writes.
+    it("mcp__x__get_updates should block: it reads", () => {
+      const file = writeFixture("mcp_get_updates.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__x__get_updates", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp__x__read_and_write_file should block: it reads too", () => {
+      const file = writeFixture("mcp_read_and_write.txt", `key=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__x__read_and_write_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp__x__readwrite should block", () => {
+      const file = writeFixture("mcp_rw.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__x__readwrite", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp__x__createPage should allow (camelCase write verb leads)", () => {
+      const file = writeFixture("mcp_camel.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__x__createPage", { path: file });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("TodoWrite stays exempt through the explicit list", () => {
+      const file = writeFixture("todo_write.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("TodoWrite", { path: file });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+});

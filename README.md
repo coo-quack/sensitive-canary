@@ -92,7 +92,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -141,7 +141,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -449,32 +449,40 @@ When blocked, the terminal shows what was detected and how to bypass it.
 
 ### ② PreToolUse hook
 
-Runs just before Claude calls the `Read` or `Bash` tool.
+Runs just before Claude calls the `Read`, `Bash`, `Grep`, or MCP tools.
 
 ```
-Claude calls Read / Bash tool
+Claude calls Read / Bash / Grep / MCP tool
       ↓
 PreToolUse hook
       ↓
       ── Read tool ─────────────────────────────────────────────────────
       │  1. filename is .env / .env.* → blocked (secret category only)
       │  2. file contents contain secret / PII → blocked
-      └─ Bash tool ─────────────────────────────────────────────────────
-         1. env var values referenced in the command contain secret / PII → blocked
-         2. a bare env / printenv would print the whole environment → every
-            variable is scanned
-         3. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
-         4. the command is located past any wrapper (sudo, env VAR=1, timeout,
-            nice, xargs) and any leading VAR=value assignment
-         5. inline scripts (-c, -e, -pe) are parsed and scanned
-         6. file paths from input redirections, command substitutions and chained
-            commands are extracted and scanned
-         7. printing commands (cat, head, tail, sed, awk, grep, rg, cut, sort,
-            base64, xxd, strings, diff, comm, dd, and git subcommands) targeting
-            a named file → file contents scanned
+      │
+      ├─ Bash tool ──────────────────────────────────────────────────────
+      │  1. env var values referenced in the command contain secret / PII → blocked
+      │  2. a bare env / printenv would print the whole environment → every
+      │     variable is scanned
+      │  3. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
+      │  4. the command is located past any wrapper (sudo, env VAR=1, timeout,
+      │     nice, xargs) and any leading VAR=value assignment
+      │  5. inline scripts (-c, -e, -pe) are parsed and scanned
+      │  6. file paths from input redirections, command substitutions and chained
+      │     commands are extracted and scanned
+      │  7. printing commands (cat, head, tail, sed, awk, grep, rg, cut, sort,
+      │     base64, xxd, strings, diff, comm, dd, and git subcommands) targeting
+      │     a named file → file contents scanned
+      │
+      ├─ Grep tool ──────────────────────────────────────────────────────
+      │  1. target file path contains secret / PII → blocked
+      │
+      └─ MCP tools (mcp__*) ───────────────────────────────────────────
+         1. input fields naming an existing file (path, file_path, and nested
+            arguments) are scanned for secret / PII → blocked
 ```
 
-Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes.
+Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Tools whose name says they write, both the built-in `Write` and `Edit` and MCP tools such as `mcp__fs__write_file`, are skipped for the same reason.
 
 Neither is a command that sends its result back to the file it was handed. `sed -i`, `perl -i` and `ruby -i` (bundled forms such as `perl -pi -e` included) edit in place and write nothing to stdout. `git log <file>` is not a read either — it prints who changed the file and when — unless a patch is asked for with `-p`, `--patch` or `-U<n>`.
 
@@ -484,6 +492,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 ### Known Limitations
 
 - **Heredoc bodies** — a heredoc body is treated as text, not as commands, so `cat > deploy.sh <<'EOF'` writing a script that mentions `.env` is not itself a read. The trade-off is that a heredoc which *feeds* commands to another shell (`ssh host <<'EOF'` with a `cat /etc/secrets` in the body) is not inspected either.
+- **Directory targets** — nothing that names a directory rather than a file is scanned. That covers the Grep tool's `path` and a recursive search such as `grep -r pattern src/`, both of which would otherwise mean reading every file underneath.
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
 - **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
 - **`.env.*` is blocked by name** — the filename guard covers every `.env.*`, so a template like `.env.example` is blocked as well, now through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` for those.
