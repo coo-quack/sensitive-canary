@@ -497,6 +497,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.
 - **Programs that read files themselves** — `python script.py` is not scanned, because running a script does not print its source; whatever the script opens at run time is beyond the hook's reach.
 - **Heredoc bodies are not scanned** — a heredoc is treated as text, so a heredoc that feeds commands to a remote shell (`ssh host <<EOF` followed by `cat /secret`) is not caught.
+- **Nesting is followed four levels deep** — each command substitution and each inline script costs one level, so a read buried under five nested `$(…)` is not reached.
 - **Best effort only** — detection is not exhaustive. Arbitrary shell metacharacters, eval chains, and complex expansions may not be fully tracked.
 
 ---

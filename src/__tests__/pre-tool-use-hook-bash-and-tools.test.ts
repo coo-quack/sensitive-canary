@@ -163,6 +163,37 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       const result = runBashHook("cat <<EOF\nhello world\nEOF");
       expect(result.exitCode).toBe(0);
     });
+
+    // The substitution body carries parentheses of its own, so a scan that stops
+    // at the first `)` never sees the read inside it.
+    it("$(...) whose body contains parentheses should block", () => {
+      const file = writeFixture("sub_parens.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(
+        `echo $(python3 -c "print(open('${file}').read())")`,
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("nested $( $(...) ) should block on file with secret", () => {
+      const file = writeFixture("sub_nested.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`echo $(echo $(cat ${file}))`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("$(...) inside double quotes should block", () => {
+      const file = writeFixture("sub_dq.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`echo "$(cat ${file})"`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("$(...) inside single quotes should allow (no expansion)", () => {
+      const file = writeFixture("sub_sq.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`echo '$(cat ${file})'`);
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe("environment variables", () => {

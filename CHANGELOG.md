@@ -73,6 +73,10 @@
   is now read as the whole word. A truncated delimiter never matched its closing
   line, so every following command was swallowed as heredoc body and a read
   placed after it went unscanned
+- Command and process substitutions are found by counting parentheses instead of
+  by regex, so a body carrying parentheses of its own is no longer cut short:
+  `echo $(python3 -c "print(open('.env').read())")` is scanned now. Substitutions
+  inside single quotes are correctly left alone
 
 ---
 

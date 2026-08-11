@@ -240,11 +240,9 @@ const GIT_GLOBAL_FLAGS_WITH_OPERAND = new Set([
   "--config-env",
 ]);
 
-// Recursion limit for command substitutions and inline scripts.
+// Recursion limit for command substitutions and inline scripts. Nesting costs
+// one level per substitution, so `$( $( … ) )` is followed four deep.
 const MAX_NESTING_DEPTH = 4;
-
-// Passes made while peeling nested command substitutions.
-const MAX_SUBSTITUTION_PASSES = 8;
 
 // Longest quoted literal inside inline code still treated as a path candidate.
 const MAX_QUOTED_LITERAL_LENGTH = 4096;
@@ -533,31 +531,103 @@ function stripHeredocBodies(command: string): string {
   return kept.join("\n");
 }
 
-// Substitution syntaxes whose inner text is a command line in its own right:
-// `$(...)`, `<(...)`, `>(...)` and backticks.
-const SUBSTITUTION_PATTERNS = [
-  /\$\(([^()]*)\)/g,
-  /<\(([^()]*)\)/g,
-  />\(([^()]*)\)/g,
-  /`([^`]*)`/g,
+// Substitution syntaxes whose inner text is a command line in its own right.
+// Command substitution and backticks expand inside double quotes; the process
+// substitutions do not, so `echo "<(cat f)"` is a literal string.
+const SUBSTITUTIONS = [
+  { open: "$(", close: ")", expandsInDoubleQuotes: true },
+  { open: "<(", close: ")", expandsInDoubleQuotes: false },
+  { open: ">(", close: ")", expandsInDoubleQuotes: false },
+  { open: "`", close: "`", expandsInDoubleQuotes: true },
 ];
 
-// Inner text of every command substitution, process substitution and backtick
-// expression, innermost first. Each is a command line in its own right.
+// Index of the character closing a substitution whose body starts at `from`.
+// Parentheses are counted rather than matched with a regex, because a body
+// carries parentheses of its own: `$(python3 -c "print(open('.env').read())")`
+// was cut short at the first `)` by the old `[^()]*` pattern, and the read it
+// contained was never scanned. Quotes and backslashes inside the body are
+// respected. An unbalanced substitution runs to the end of the string.
+function findSubstitutionEnd(
+  command: string,
+  from: number,
+  close: string,
+): number {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let i = from; i < command.length; i++) {
+    const ch = command[i] as string;
+    if (ch === "\\" && quote !== "'") {
+      i++;
+      continue;
+    }
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (close === "`") {
+      if (ch === "`") return i;
+      continue;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      if (depth === 0) return i;
+      depth--;
+    }
+  }
+
+  return command.length;
+}
+
+// Inner text of every outermost command substitution, process substitution and
+// backtick expression. Each is a command line in its own right; nested ones are
+// reached because extractCommandRefs recurses into what this returns.
 function extractSubstitutions(command: string): string[] {
   const found: string[] = [];
-  let remaining = command;
+  let quote: string | null = null;
+  let i = 0;
 
-  for (let pass = 0; pass < MAX_SUBSTITUTION_PASSES; pass++) {
-    const before = remaining;
-    for (const pattern of SUBSTITUTION_PATTERNS) {
-      pattern.lastIndex = 0;
-      remaining = remaining.replace(pattern, (_, inner: string) => {
-        found.push(inner);
-        return " ";
-      });
+  while (i < command.length) {
+    const ch = command[i] as string;
+
+    if (ch === "\\") {
+      i += quote === "'" ? 1 : 2;
+      continue;
     }
-    if (remaining === before) break;
+    if (quote === "'") {
+      if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (quote === '"' && ch === '"') {
+      quote = null;
+      i++;
+      continue;
+    }
+    if (quote === null && (ch === "'" || ch === '"')) {
+      quote = ch;
+      i++;
+      continue;
+    }
+
+    const opener = SUBSTITUTIONS.find(
+      (s) =>
+        command.startsWith(s.open, i) &&
+        (quote === null || s.expandsInDoubleQuotes),
+    );
+    if (opener === undefined) {
+      i++;
+      continue;
+    }
+
+    const bodyStart = i + opener.open.length;
+    const end = findSubstitutionEnd(command, bodyStart, opener.close);
+    found.push(command.slice(bodyStart, end));
+    i = end + 1;
   }
 
   return found;
