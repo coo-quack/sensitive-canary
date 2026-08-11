@@ -56,6 +56,12 @@
   `AskUserQuestion`) and tools whose name leads with a write verb (`write_file`,
   `createPage`): naming a file they do not read is not a leak. The default
   matcher becomes `Read|Bash|Grep|mcp__.*`
+- Add an opt-in integration test that runs the hook inside a real headless
+  Claude Code session and asserts both halves of the block contract: the read is
+  stopped, and the reason reaches Claude. Every other test spawns the hook and
+  reads its output itself, which says nothing about whether the runtime acts on
+  it. Set `SENSITIVE_CANARY_INTEGRATION=1` to run it; it needs credentials and
+  network, so CI skips it
 - Heredoc bodies are treated as text, not commands: writing a script that
   mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known limitation: a
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,
