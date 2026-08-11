@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { extractFilePathsFromCommand } from "./lib/bash-commands.ts";
 import {
   applyAllowTags,
   dedupeFindings,
@@ -11,6 +12,7 @@ import {
   randomBird,
 } from "./lib/inspector.ts";
 import { enabledCategoriesFromEnv, type Finding, scan } from "./lib/rules.ts";
+import { extractEnvVarNames } from "./lib/shell.ts";
 
 interface HookInput {
   transcript_path?: string;
@@ -95,59 +97,6 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
 
   if (!lastUserMessage || toolResultAfterLastText) return new Set();
   return parseAllowTags([lastUserMessage]);
-}
-
-// ── Bash helpers ──────────────────────────────────────────────────────────────
-
-const FILE_READ_COMMANDS = new Set([
-  "cat",
-  "head",
-  "tail",
-  "less",
-  "more",
-  "bat",
-  "nl",
-]);
-
-function extractEnvVarNames(command: string): string[] {
-  const names = new Set<string>();
-  const re = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
-  for (const match of command.matchAll(re)) {
-    const name = match[1] ?? match[2];
-    if (name) names.add(name);
-  }
-  return [...names];
-}
-
-function extractFilePathsFromCommand(command: string): string[] {
-  const paths: string[] = [];
-  const segments = command.split(/\s*[|;&]+\s*/);
-
-  for (const seg of segments) {
-    const tokens = seg.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length < 2) continue;
-
-    const cmd = path.basename(tokens[0] ?? "");
-    if (!FILE_READ_COMMANDS.has(cmd)) continue;
-
-    let skipNext = false;
-    for (let i = 1; i < tokens.length; i++) {
-      if (skipNext) {
-        skipNext = false;
-        continue;
-      }
-      const tok = tokens[i];
-      if (!tok) continue;
-      if (tok.startsWith("-")) continue;
-      if (tok === ">" || tok === ">>" || tok === "<") {
-        skipNext = true;
-        continue;
-      }
-      paths.push(tok);
-    }
-  }
-
-  return [...new Set(paths)];
 }
 
 // ── .env pattern ──────────────────────────────────────────────────────────────
