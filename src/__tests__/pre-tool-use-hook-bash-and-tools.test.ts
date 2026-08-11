@@ -941,6 +941,41 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.exitCode).toBe(2);
       expect(result.decision).toBe("block");
     });
+
+    // The exemption needs the verb to lead the name. As a substring test each of
+    // these read a file while being treated as a tool that only writes.
+    it("mcp__x__get_updates should block: it reads", () => {
+      const file = writeFixture("mcp_get_updates.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__x__get_updates", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("mcp__x__read_and_write_file should block: it reads too", () => {
+      const file = writeFixture("mcp_read_and_write.txt", `key=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__x__read_and_write_file", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("mcp__x__readwrite should block", () => {
+      const file = writeFixture("mcp_rw.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__x__readwrite", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("mcp__x__createPage should allow (camelCase write verb leads)", () => {
+      const file = writeFixture("mcp_camel.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__x__createPage", { path: file });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("TodoWrite stays exempt through the explicit list", () => {
+      const file = writeFixture("todo_write.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("TodoWrite", { path: file });
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe("output process substitution", () => {

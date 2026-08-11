@@ -69,6 +69,10 @@
 - The write-name exemption for MCP tools now matches only the tool component
   of `mcp__<server>__<tool>`: a server named "editor" or "readwrite" no longer
   exempts the read tools it offers
+- The write-name exemption requires the verb to lead the tool name rather than
+  appear anywhere in it. As a substring test it exempted reads: "update" sits
+  inside `get_updates` and "write" inside `read_and_write_file`, so a tool that
+  returns file contents was treated as one that only writes
 - `$'...'` (ANSI-C) and `$"..."` quoting no longer hide a path from the
   tokenizer
 - A heredoc delimiter carrying a hyphen or partial quoting (`<<EOF-1`, `<<E"O"F`)

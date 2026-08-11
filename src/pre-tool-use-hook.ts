@@ -1186,14 +1186,37 @@ const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
 // an MCP tool's semantics are not otherwise knowable from its input. For MCP
 // tools (`mcp__<server>__<tool>`) only the tool component is matched — a server
 // named "editor" or "readwrite" must not exempt every read tool it offers.
-const WRITING_TOOL_NAME =
-  /(write|create|edit|update|append|delete|remove|move|rename|mkdir|copy)/i;
+// The verb has to be the first word of the name, not a substring of it anywhere.
+// As a substring test this exempted reads: "update" sits inside `get_updates`,
+// and "write" inside `read_and_write_file` — a tool that returns contents was
+// treated as one that only writes. Word boundaries are the `_`/`-` in snake and
+// kebab names and the capital in camelCase, so `write_file` and `createPage`
+// still match while `overwrite_file` and `readwrite` no longer do.
+//
+// Erring this way costs a false block on a noun-first write tool (`file_write`),
+// which is the direction to fail in. The built-in write tools are named
+// explicitly in TOOLS_WITHOUT_FILE_OUTPUT, so `TodoWrite` and `MultiEdit` do not
+// depend on this at all.
+const WRITING_TOOL_VERBS = new Set([
+  "write",
+  "create",
+  "edit",
+  "update",
+  "append",
+  "delete",
+  "remove",
+  "move",
+  "rename",
+  "mkdir",
+  "copy",
+]);
 
 function isWritingTool(tool: string): boolean {
   const name = tool.startsWith("mcp__")
     ? (tool.split("__").pop() ?? tool)
     : tool;
-  return WRITING_TOOL_NAME.test(name);
+  const [first] = name.split(/[^A-Za-z0-9]+|(?=[A-Z])/).filter(Boolean);
+  return first !== undefined && WRITING_TOOL_VERBS.has(first.toLowerCase());
 }
 
 // Input field names that commonly carry a filesystem path.
