@@ -38,6 +38,31 @@ jobs:
       - run: pnpm install
       - run: pnpm audit --audit-level high
 
+  # The release checklist asks for `version` in package.json and
+  # .claude-plugin/plugin.json to be bumped together. Twice it was not: the
+  # plugin manifest stayed at 0.5.1 while 0.6.0 and 0.7.0 were released, and
+  # nothing noticed, because release.yml reads the version from package.json
+  # alone. Strengthening the checklist wording would not have caught it. This is
+  # the check that does.
+  versions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.18.1'
+      - name: package.json and plugin.json declare the same version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
+          if [ "$pkg" != "$plugin" ]; then
+            echo "::error::version mismatch — package.json is $pkg, .claude-plugin/plugin.json is $plugin. Bump both (see the Release Checklist in CONTRIBUTING.md)."
+            exit 1
+          fi
+          echo "both declare $pkg"
+
   typecheck:
     runs-on: ubuntu-latest
     permissions:
