@@ -795,6 +795,23 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.exitCode).toBe(2);
       expect(result.decision).toBe("block");
     });
+
+    it("printenv with output redirected is still a dump", () => {
+      const result = runBashHook("printenv > out.txt", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("printenv naming one variable is not a dump", () => {
+      const result = runBashHook("printenv PATH > out.txt", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe("write-shaped MCP tools are exempt", () => {

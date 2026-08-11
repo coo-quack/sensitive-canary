@@ -642,6 +642,13 @@ function extractSubstitutions(command: string): string[] {
   return found;
 }
 
+// True for a redirection operator token: `<`, `>`, `<<`, `>>`, `<<<`. The
+// tokenizer emits each on its own, with any file-descriptor prefix dropped, and
+// the token after one is a target or a heredoc delimiter rather than an operand.
+function isRedirectionOperator(token: string): boolean {
+  return /^[<>]+$/.test(token);
+}
+
 // True for a token that cannot name a command: a flag, a redirection operator,
 // or a `VAR=value` assignment placed before one.
 function isNonCommandToken(token: string): boolean {
@@ -729,13 +736,25 @@ function inspectEnvironmentCommand(tokens: string[]): {
   const name = path.basename(cmdToken);
   if (name !== "env" && name !== "printenv") return nothing;
 
+  // `printenv` prints the whole environment unless it is given variables to
+  // print. A redirection target is not one of them: `printenv > out.txt` prints
+  // everything, and counting `out.txt` as a named variable left the environment
+  // unscanned.
   if (name === "printenv") {
-    const operands = tokens
-      .slice(start + 1)
-      .filter((t) => !isNonCommandToken(t));
-    return operands.length === 0
+    const rest = tokens.slice(start + 1);
+    const named: string[] = [];
+    for (let j = 0; j < rest.length; j++) {
+      const t = rest[j] ?? "";
+      if (isRedirectionOperator(t)) {
+        j++; // its target, or a heredoc delimiter
+        continue;
+      }
+      if (isNonCommandToken(t)) continue; // flags
+      named.push(t);
+    }
+    return named.length === 0
       ? { dumps: true, named: [] }
-      : { dumps: false, named: operands };
+      : { dumps: false, named };
   }
 
   // `env` prints the environment unless a subcommand follows its own
@@ -755,7 +774,7 @@ function inspectEnvironmentCommand(tokens: string[]): {
       ignoreEnvironment = true;
       continue;
     }
-    if (t === "<" || t === ">" || t === "<<" || t === ">>") {
+    if (isRedirectionOperator(t)) {
       j++; // redirection operator: its target is env's own argument here
       continue;
     }

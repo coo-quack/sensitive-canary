@@ -80,6 +80,8 @@
 - A file-descriptor prefix on a redirection (`env 2>err`) is read as part of the
   operator rather than as a token of its own, where it passed for `env`'s
   subcommand and ruled the environment dump out
+- `printenv > out.txt` counts as a whole-environment dump: the redirection target
+  was taken for a named variable
 
 ---
 
