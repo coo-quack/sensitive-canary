@@ -214,7 +214,9 @@ const POSIX_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 
 // git subcommands that can write file contents to stdout. Blob references such
 // as `git show HEAD:.env` name history, not the working tree, and stay
-// uncovered — only paths that exist on disk are scanned.
+// uncovered — only paths that exist on disk are scanned. `difftool` hands off
+// to an external tool and `stash` prints no file contents, so neither is here:
+// classifying them would push tokens like the `pop` in `git stash pop` as paths.
 const GIT_READ_SUBCOMMANDS = new Set([
   "show",
   "diff",
@@ -223,8 +225,19 @@ const GIT_READ_SUBCOMMANDS = new Set([
   "annotate",
   "grep",
   "cat-file",
-  "difftool",
-  "stash",
+]);
+
+// Global git flags that carry a separate value before the subcommand
+// (`git -C repo show f`, `git -c k=v show f`). Attached forms (`--git-dir=x`)
+// are single flag tokens and need no entry here.
+const GIT_GLOBAL_FLAGS_WITH_OPERAND = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+  "--config-env",
 ]);
 
 // Recursion limit for command substitutions and inline scripts.
@@ -396,13 +409,18 @@ function decodeAnsiCEscape(command: string, i: number): string {
   return simple[esc] ?? esc;
 }
 
+// One heredoc delimiter introduced by a command line. `allowTabs` marks the
+// `<<-` form, whose closing delimiter may be tab-indented.
+interface HeredocDelimiter {
+  delim: string;
+  allowTabs: boolean;
+}
+
 // Heredoc delimiters introduced by one command line, in order. `<<-` allows a
 // tab-indented closing delimiter; `<<<` is a herestring and is not a heredoc.
 // Matches outside quotes only, so `echo "a <<EOF b"` is not a heredoc start.
-function findHeredocDelimiters(
-  line: string,
-): { delim: string; allowTabs: boolean }[] {
-  const found: { delim: string; allowTabs: boolean }[] = [];
+function findHeredocDelimiters(line: string): HeredocDelimiter[] {
+  const found: HeredocDelimiter[] = [];
   let quote: string | null = null;
   let i = 0;
 
@@ -469,11 +487,11 @@ function findHeredocDelimiters(
 function stripHeredocBodies(command: string): string {
   const lines = command.split("\n");
   const kept: string[] = [];
-  const pending: { delim: string; allowTabs: boolean }[] = [];
+  const pending: HeredocDelimiter[] = [];
 
   for (const line of lines) {
     if (pending.length > 0) {
-      const first = pending[0] as { delim: string; allowTabs: boolean };
+      const first = pending[0] as HeredocDelimiter;
       const cmp = first.allowTabs ? line.replace(/^\t+/, "") : line;
       if (cmp === first.delim) pending.shift();
       continue;
@@ -485,6 +503,15 @@ function stripHeredocBodies(command: string): string {
   return kept.join("\n");
 }
 
+// Substitution syntaxes whose inner text is a command line in its own right:
+// `$(...)`, `<(...)`, `>(...)` and backticks.
+const SUBSTITUTION_PATTERNS = [
+  /\$\(([^()]*)\)/g,
+  /<\(([^()]*)\)/g,
+  />\(([^()]*)\)/g,
+  /`([^`]*)`/g,
+];
+
 // Inner text of every command substitution, process substitution and backtick
 // expression, innermost first. Each is a command line in its own right.
 function extractSubstitutions(command: string): string[] {
@@ -493,23 +520,13 @@ function extractSubstitutions(command: string): string[] {
 
   for (let pass = 0; pass < MAX_SUBSTITUTION_PASSES; pass++) {
     const before = remaining;
-    remaining = remaining
-      .replace(/\$\(([^()]*)\)/g, (_, inner: string) => {
-        found.push(inner);
-        return " ";
-      })
-      .replace(/<\(([^()]*)\)/g, (_, inner: string) => {
-        found.push(inner);
-        return " ";
-      })
-      .replace(/>\(([^()]*)\)/g, (_, inner: string) => {
-        found.push(inner);
-        return " ";
-      })
-      .replace(/`([^`]*)`/g, (_, inner: string) => {
+    for (const pattern of SUBSTITUTION_PATTERNS) {
+      pattern.lastIndex = 0;
+      remaining = remaining.replace(pattern, (_, inner: string) => {
         found.push(inner);
         return " ";
       });
+    }
     if (remaining === before) break;
   }
 
@@ -525,17 +542,19 @@ function isNonCommandToken(token: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
 }
 
-// Commands whose operands this hook knows how to interpret. `env` and `printenv`
+// Commands whose operands this hook knows how to interpret. Derived from
+// classifyCommand so the two cannot silently disagree. `env` and `printenv`
 // are absent on purpose: they are wrappers as often as they are commands, and
 // inspectEnvironmentCommand handles the cases where they print the environment.
 function isClassifiableCommand(name: string): boolean {
+  const b = classifyCommand(name);
   return (
-    FILE_READ_COMMANDS.has(name) ||
-    COUNT_ONLY_COMMANDS.has(name) ||
-    PATTERN_OR_SCRIPT_FIRST_COMMANDS.has(name) ||
-    INLINE_CODE_COMMANDS.has(name) ||
-    name === "git" ||
-    name === "dd"
+    b.printsOperands ||
+    b.firstOperandIsPatternOrScript ||
+    b.takesInlineCode ||
+    b.printsNothing ||
+    b.isGit ||
+    b.isDd
   );
 }
 
@@ -727,6 +746,8 @@ interface CommandBehaviour {
   printsNothing: boolean;
   // `git <subcommand> [paths]`.
   isGit: boolean;
+  // `dd if=<file>` names its input in an assignment-style operand.
+  isDd: boolean;
 }
 
 // Single place where a command name becomes a behaviour, so a name added to one
@@ -738,6 +759,7 @@ function classifyCommand(cmd: string): CommandBehaviour {
     takesInlineCode: INLINE_CODE_COMMANDS.has(cmd),
     printsNothing: COUNT_ONLY_COMMANDS.has(cmd),
     isGit: cmd === "git",
+    isDd: cmd === "dd",
   };
 }
 
@@ -814,7 +836,18 @@ function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
       continue;
     }
 
-    if (tok.startsWith("-")) continue;
+    if (tok.startsWith("-")) {
+      // A global git flag with a separate value consumes the next token too:
+      // in `git -C repo show f`, `repo` is not the subcommand.
+      if (
+        behaviour.isGit &&
+        !gitSubcommandSeen &&
+        GIT_GLOBAL_FLAGS_WITH_OPERAND.has(tok)
+      ) {
+        skipNext = true;
+      }
+      continue;
+    }
 
     if (behaviour.isGit) {
       if (!gitSubcommandSeen) {
@@ -828,7 +861,7 @@ function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
 
     // `if=<file>` names an input only for `dd`; other commands taking an
     // `if=` argument are not reading the file it names.
-    if (cmd === "dd") {
+    if (behaviour.isDd) {
       const ddInput = /^if=(.+)$/.exec(tok);
       if (ddInput?.[1]) {
         paths.push(ddInput[1]);

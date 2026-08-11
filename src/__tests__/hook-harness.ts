@@ -26,12 +26,12 @@ export interface HookResult {
   reason: string | null;
 }
 
-// Feed the hook a raw stdin payload, for cases where the payload is not valid
-// JSON and so cannot be described as a tool call.
-export function runHookWithRawInput(input: string): HookResult {
+// Spawn the hook with a raw stdin payload and assemble its verdict.
+function spawnHook(input: string, opts?: RunOptions): HookResult {
   const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
     input,
     encoding: "utf8",
+    env: opts?.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts?.env },
   });
   const { decision, reason } = parseHookOutput(result.stdout);
   return {
@@ -41,6 +41,12 @@ export function runHookWithRawInput(input: string): HookResult {
     decision,
     reason,
   };
+}
+
+// Feed the hook a raw stdin payload, for cases where the payload is not valid
+// JSON and so cannot be described as a tool call.
+export function runHookWithRawInput(input: string): HookResult {
+  return spawnHook(input);
 }
 
 export function parseHookOutput(stdout: string): {
@@ -66,19 +72,7 @@ export function runToolHook(
     tool_name: toolName,
     tool_input: toolInput,
   });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: opts?.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts?.env },
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    decision,
-    reason,
-  };
+  return spawnHook(input, opts);
 }
 
 // A tool call carrying a single `file_path`, as Read does.

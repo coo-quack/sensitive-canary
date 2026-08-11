@@ -433,6 +433,31 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       const result = runBashHook(`git add ${file}`);
       expect(result.exitCode).toBe(0);
     });
+
+    it("git -C <dir> show <secretFile> should block", () => {
+      const file = writeFixture("git_dash_c.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`git -C /tmp show ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("git -c k=v show <secretFile> should block", () => {
+      const file = writeFixture("git_dash_c_cfg.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`git -c core.pager=cat show ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("git difftool <secretFile> (hands off to external tool) should allow", () => {
+      const file = writeFixture("git_difftool.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`git difftool ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("git stash pop (prints no file contents) should allow", () => {
+      const result = runBashHook(`git stash pop`);
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe("quoted paths and dd", () => {

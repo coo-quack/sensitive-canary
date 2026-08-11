@@ -49,6 +49,11 @@
 - Path fields nested as objects inside an array (`{ paths: [{ path: "…" }] }`)
   are now found in Grep/MCP tool inputs; only plain string elements were
   collected before
+- Global git flags with a separate value no longer hide the subcommand:
+  `git -C repo show f` and `git -c k=v show f` are scanned like `git show f`
+- `git difftool` and `git stash` are no longer treated as content-printing
+  subcommands: one hands off to an external tool, the other prints no file
+  contents, and classifying them pushed tokens like `pop` as paths
 - Heredoc bodies are no longer scanned as shell commands: writing a script
   that mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known
   limitation: a heredoc that feeds commands to a remote shell
