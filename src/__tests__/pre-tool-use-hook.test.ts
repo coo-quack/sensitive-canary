@@ -9,13 +9,13 @@ const NODE_FLAGS = ["--experimental-strip-types"];
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function parseHookOutput(stdout: string) {
-  try {
-    const parsed = JSON.parse(stdout) as { decision?: string; reason?: string };
-    return { decision: parsed.decision ?? null, reason: parsed.reason ?? null };
-  } catch {
-    return { decision: null, reason: null };
-  }
+// The hook blocks by exiting 2, and writes the reason it offers Claude to
+// stderr. `blocked` is named for the outcome rather than for a payload field, so
+// a test says what it means and does not have to change if the way a block is
+// returned does.
+function readVerdict(result: { status: number | null; stderr: string }) {
+  const blocked = result.status === 2;
+  return { blocked, reason: blocked ? result.stderr : null };
 }
 
 let transcriptSeq = 0;
@@ -70,12 +70,12 @@ function runHook(
     encoding: "utf8",
     env: { ...process.env, ...opts?.env },
   });
-  const { decision, reason } = parseHookOutput(result.stdout);
+  const { blocked, reason } = readVerdict(result);
   return {
     exitCode: result.status ?? -1,
     stdout: result.stdout,
     stderr: result.stderr,
-    decision,
+    blocked,
     reason,
   };
 }
@@ -94,12 +94,12 @@ function runBashHook(
     encoding: "utf8",
     env: { ...process.env, ...opts?.env },
   });
-  const { decision, reason } = parseHookOutput(result.stdout);
+  const { blocked, reason } = readVerdict(result);
   return {
     exitCode: result.status ?? -1,
     stdout: result.stdout,
     stderr: result.stderr,
-    decision,
+    blocked,
     reason,
   };
 }
@@ -141,23 +141,23 @@ describe("pre-tool-use-hook — non-Read/non-Bash tools", () => {
 describe("pre-tool-use-hook — .env/.env.* name block (secret category)", () => {
   it("blocks .env regardless of content", () => {
     const p = writeFixture(".env", "DEBUG=true\nNODE_ENV=development\n");
-    const { exitCode, decision } = runHook("Read", p);
+    const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("blocks .env.local regardless of content", () => {
     const p = writeFixture(".env.local", "DEBUG=true\n");
-    const { exitCode, decision } = runHook("Read", p);
+    const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("blocks .env.production regardless of content", () => {
     const p = writeFixture(".env.production", "DEBUG=true\n");
-    const { exitCode, decision } = runHook("Read", p);
+    const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("includes [allow-secret], [allow-pii], and [allow-all] hints in reason", () => {
@@ -195,24 +195,24 @@ describe("pre-tool-use-hook — clean file", () => {
 describe("pre-tool-use-hook — sensitive content blocking", () => {
   it("blocks a file containing an AWS key", () => {
     const p = writeFixture("config.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision, reason } = runHook("Read", p);
+    const { exitCode, blocked, reason } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
     expect(reason).toContain("aws-access-key");
   });
 
   it("blocks a file containing an email address", () => {
     const p = writeFixture("contacts.txt", "Email: user@example.com\n");
-    const { exitCode, decision } = runHook("Read", p);
+    const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("blocks a file containing a private IP", () => {
     const p = writeFixture("infra.txt", "server: 192.168.1.100\n");
-    const { exitCode, decision } = runHook("Read", p);
+    const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("includes [allow-secret] and [allow-all] hints in reason for a secret", () => {
@@ -257,9 +257,9 @@ describe("pre-tool-use-hook — binary file handling", () => {
     ]);
     const p = join(tmpDir, "binary-secret-before-nul.bin");
     writeFileSync(p, content);
-    const { exitCode, decision } = runHook("Read", p);
+    const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("allows a binary file when no secret appears before the first NUL byte", () => {
@@ -317,11 +317,11 @@ describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {
 
 describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {
   it("blocks echo $TOKEN when TOKEN contains an AWS key", () => {
-    const { exitCode, decision } = runBashHook("echo $TOKEN", {
+    const { exitCode, blocked } = runBashHook("echo $TOKEN", {
       env: { TOKEN: "AKIAIOSFODNN7EXAMPLE" },
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("includes the variable name and rule in reason", () => {
@@ -368,9 +368,9 @@ describe("pre-tool-use-hook — Bash tool (command string)", () => {
   });
 
   it("blocks a Bash command containing an AWS key (e.g. echo)", () => {
-    const { exitCode, decision } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
+    const { exitCode, blocked } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("includes aws-access-key in reason for inline secret", () => {
@@ -394,17 +394,17 @@ describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
         `creds-${cmd}.txt`,
         "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n",
       );
-      const { exitCode, decision } = runBashHook(`${cmd} ${p}`);
+      const { exitCode, blocked } = runBashHook(`${cmd} ${p}`);
       expect(exitCode).toBe(2);
-      expect(decision).toBe("block");
+      expect(blocked).toBe(true);
     },
   );
 
   it("blocks cat on a file with PII", () => {
     const p = writeFixture("contacts-bash.txt", "Email: user@example.com\n");
-    const { exitCode, decision } = runBashHook(`cat ${p}`);
+    const { exitCode, blocked } = runBashHook(`cat ${p}`);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("allows cat on a clean file", () => {
@@ -420,9 +420,9 @@ describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
 
   it("blocks cat in a compound command (pipe) on a file with secrets", () => {
     const p = writeFixture("pipe-secret.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`cat ${p} | grep KEY`);
+    const { exitCode, blocked } = runBashHook(`cat ${p} | grep KEY`);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("allows cat in a compound command (pipe) on a clean file", () => {
@@ -433,9 +433,9 @@ describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
 
   it("blocks cat on a .env.* file by name", () => {
     const p = writeFixture(".env.bash-name", "DEBUG=true\n");
-    const { exitCode, decision } = runBashHook(`cat ${p}`);
+    const { exitCode, blocked } = runBashHook(`cat ${p}`);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("[allow-pii] bypasses cat on a .env.* file", () => {
@@ -499,11 +499,11 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
       "mixed-allow-pii.txt",
       "email=user@example.com\nkey=AKIAIOSFODNN7EXAMPLE\n",
     );
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("[allow-all] in the latest message is respected even with older messages", () => {
@@ -528,11 +528,11 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
       "config-old-allow.txt",
       "key=AKIAIOSFODNN7EXAMPLE\n",
     );
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("blocks when transcript path is missing (no allow tags)", () => {
@@ -540,9 +540,9 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
       "config-no-transcript.txt",
       "key=AKIAIOSFODNN7EXAMPLE\n",
     );
-    const { exitCode, decision } = runHook("Read", p);
+    const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("blocks when transcript path points to non-existent file", () => {
@@ -550,11 +550,11 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
       "config-bad-transcript.txt",
       "key=AKIAIOSFODNN7EXAMPLE\n",
     );
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: "/tmp/no-such-transcript.jsonl",
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   // ── Bash tool ──────────────────────────────────────────────────────────────
@@ -622,11 +622,11 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       "config-second-call.txt",
       "key=AKIAIOSFODNN7EXAMPLE\n",
     );
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("[allow-secret] is consumed after a tool_result", () => {
@@ -635,11 +635,11 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { toolResult: "first tool result" },
     ]);
     const p = writeFixture("secret-consumed.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("[allow-pii] is consumed after a tool_result", () => {
@@ -648,11 +648,11 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { toolResult: "previous tool output" },
     ]);
     const p = writeFixture("pii-consumed.txt", "email=user@example.com\n");
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("blocks when latest real user message has no allow tag despite earlier allow", () => {
@@ -666,11 +666,11 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       "no-allow-after-new-msg.txt",
       "key=AKIAIOSFODNN7EXAMPLE\n",
     );
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("[allow-all] consumed for Bash after tool_result", () => {
@@ -678,11 +678,11 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { text: "[allow-all] run the commands" },
       { toolResult: "result of first command" },
     ]);
-    const { exitCode, decision } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
+    const { exitCode, blocked } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("[allow-all] works for Bash when no tool_result yet", () => {
@@ -732,11 +732,11 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
 
   it("pii-only: still blocks a file containing PII", () => {
     const p = writeFixture("pii-only-pii.txt", "card: 4111111111111111");
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("secret-only: allows a file containing only PII", () => {
@@ -752,11 +752,11 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
       "secret-only-secret.txt",
       "key=AKIAIOSFODNN7EXAMPLE",
     );
-    const { exitCode, decision } = runHook("Read", p, {
+    const { exitCode, blocked } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("secret-only: allows a bash command containing only PII", () => {

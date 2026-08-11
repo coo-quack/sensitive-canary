@@ -62,6 +62,12 @@
   reads its output itself, which says nothing about whether the runtime acts on
   it. Set `SENSITIVE_CANARY_INTEGRATION=1` to run it; it needs credentials and
   network, so CI skips it
+- The PreToolUse block reason is written to stderr instead of to a stdout
+  `{"decision":"block"}` payload. Both reach Claude on the current version, but
+  the documentation describes stdout as ignored on a non-zero exit and takes the
+  PreToolUse decision from `hookSpecificOutput` rather than a top-level
+  `decision` field, so the old form depended on undescribed behaviour. Blocking
+  is unchanged: exit 2 is what stops the call
 - Heredoc bodies are treated as text, not commands: writing a script that
   mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known limitation: a
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,

@@ -487,7 +487,7 @@ Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated a
 
 Neither is a command that sends its result back to the file it was handed. `sed -i`, `perl -i` and `ruby -i` (bundled forms such as `perl -pi -e` included) edit in place and write nothing to stdout. `git log <file>` is not a read either — it prints who changed the file and when — unless a patch is asked for with `-p`, `--patch` or `-U<n>`.
 
-When blocked, Claude receives a JSON response explaining the reason and is prompted to tell the user.
+When blocked, the hook exits 2, which stops the tool call, and writes the reason to stderr, which is where Claude reads it from. The reason names what was detected and which allow tag lifts the block, and asks Claude to pass that on to the user.
 The terminal also receives a direct message (via `/dev/tty`).
 
 ### Known Limitations
