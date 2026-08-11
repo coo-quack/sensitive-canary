@@ -351,6 +351,15 @@ function tokenizeCommand(command: string): string[][] {
     }
 
     if (ch === "<" || ch === ">") {
+      // A file-descriptor prefix belongs to the operator, not to a token of its
+      // own: `env 2>err` has to tokenize like `env >err`, or the `2` reads as
+      // env's subcommand and the environment dump goes unnoticed. The number
+      // names neither a file nor a command, so it is dropped. Only digits
+      // written against the operator count, leaving `sort 1 >out` alone.
+      if (hasCurrent && /^\d+$/.test(current)) {
+        current = "";
+        hasCurrent = false;
+      }
       endToken();
       let op = ch;
       i++;

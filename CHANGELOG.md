@@ -77,6 +77,9 @@
   by regex, so a body carrying parentheses of its own is no longer cut short:
   `echo $(python3 -c "print(open('.env').read())")` is scanned now. Substitutions
   inside single quotes are correctly left alone
+- A file-descriptor prefix on a redirection (`env 2>err`) is read as part of the
+  operator rather than as a token of its own, where it passed for `env`'s
+  subcommand and ruled the environment dump out
 
 ---
 

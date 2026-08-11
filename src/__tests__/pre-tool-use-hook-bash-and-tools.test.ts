@@ -135,6 +135,13 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.exitCode).toBe(2);
       expect(result.decision).toBe("block");
     });
+
+    it("a file-descriptor prefix does not hide the operands", () => {
+      const file = writeFixture("fd_prefix.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat ${file} 2>/dev/null`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
   });
 
   describe("command substitution", () => {
@@ -771,6 +778,17 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
 
     it("env with output redirected is still a dump", () => {
       const result = runBashHook("env > out.txt", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    // The file descriptor belongs to the operator: read as a token of its own,
+    // `2` passed for env's subcommand and ruled the dump out.
+    it("env with stderr redirected is still a dump", () => {
+      const result = runBashHook("env 2>err.txt", {
         env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
         replaceEnv: true,
       });
