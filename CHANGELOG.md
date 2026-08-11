@@ -10,8 +10,10 @@
     `expand`, `unexpand`, `iconv`, `zcat`, `gzcat`, `bzcat`, `xzcat`, `zstdcat`,
     `diff`, `comm`, `join`, `look`
   - Add pattern-first commands whose later arguments are files: `sed`, `awk`, `gawk`,
-    `grep`, `egrep`, `fgrep`, `rg`, `ag`, `jq`, `yq`, `perl`, `ruby`
+    `grep`, `egrep`, `fgrep`, `rg`, `ag`, `jq`, `yq`
     (`sed -i` is exempt: it writes no stdout)
+  - Add `perl` and `ruby` one-liners, whose operands are input once the program is
+    given inline (`perl -pe '…' f`)
   - Unwrap wrapper commands (`sudo`, `env`, `timeout`, `nice`) to scan underlying commands
   - Parse and scan inline scripts (`-c`, `-e`, `-pe` flags) and their shell code
   - Extract file paths from input redirections (`<file`), command substitutions (`$(...)`, `` `...` ``, `<(...)`), and chained commands (newlines, `&&`, `;`)
