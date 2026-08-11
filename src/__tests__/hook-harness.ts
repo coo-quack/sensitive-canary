@@ -3,8 +3,15 @@
 // options shape, rather than a same-named helper per file.
 
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const HOOK = new URL("../pre-tool-use-hook.ts", import.meta.url).pathname;
+// fileURLToPath rather than `.pathname`, which leaves a checkout under a path
+// with spaces percent-encoded and hands `node` a filename that does not exist.
+// Exported so the integration test resolves the hook the same way: two copies of
+// this line meant one of them could be left behind.
+export const HOOK = fileURLToPath(
+  new URL("../pre-tool-use-hook.ts", import.meta.url),
+);
 const NODE_FLAGS = ["--experimental-strip-types"];
 
 export interface RunOptions {

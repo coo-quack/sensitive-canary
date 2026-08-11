@@ -30,6 +30,12 @@
   `sha256sum`) as non-reads, whether the file is named or fed in over `<`
 - Skip tools whose name says they write, so an MCP `write_file` given a path is
   treated like the built-in `Write` rather than as a read
+- Add an opt-in integration test that runs the hook inside a real headless
+  Claude Code session and asserts both halves of the block contract: the read is
+  stopped, and the reason reaches Claude. Every other test spawns the hook and
+  reads its output itself, which says nothing about whether the runtime acts on
+  it. Set `SENSITIVE_CANARY_INTEGRATION=1` to run it; it needs credentials and
+  network, so CI skips it
 
 ### Fixed
 
