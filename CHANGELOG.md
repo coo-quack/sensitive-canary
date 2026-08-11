@@ -54,6 +54,9 @@
 - `git difftool` and `git stash` are no longer treated as content-printing
   subcommands: one hands off to an external tool, the other prints no file
   contents, and classifying them pushed tokens like `pop` as paths
+- `env -S "cmd args"` is no longer treated as an environment dump, and the
+  split string is scanned as the command it runs: `env -S "cat secrets"`
+  blocks now
 - Heredoc bodies are no longer scanned as shell commands: writing a script
   that mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known
   limitation: a heredoc that feeds commands to a remote shell

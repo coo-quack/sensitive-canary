@@ -627,10 +627,12 @@ function inspectEnvironmentCommand(tokens: string[]): {
     }
     // `env` prints the environment unless a subcommand follows its own
     // arguments: assignments (`FOO=1`), flags, and the values of flags that
-    // take one (`-u FOO`, `-C dir`, `-S str`) are all env's own. With no
-    // subcommand the whole environment is printed — `env FOO=1` and
-    // `env -u FOO` included. Exception: `-i` starts from an empty environment,
-    // so only the given assignments (already scanned as command text) print.
+    // take one (`-u FOO`, `-C dir`) are all env's own. The `-S` split string
+    // is the subcommand itself (`env -S "cat f"` runs cat), so it rules a dump
+    // out. With no subcommand the whole environment is printed — `env FOO=1`
+    // and `env -u FOO` included. Exception: `-i` starts from an empty
+    // environment, so only the given assignments (already scanned as command
+    // text) print.
     if (name === "env") {
       const rest = tokens.slice(i + 1);
       let ignoreEnvironment = false;
@@ -645,16 +647,13 @@ function inspectEnvironmentCommand(tokens: string[]): {
           j++; // redirection operator: its target is env's own argument here
           continue;
         }
-        if (
-          t === "-u" ||
-          t === "--unset" ||
-          t === "-C" ||
-          t === "--chdir" ||
-          t === "-S" ||
-          t === "--split-string"
-        ) {
+        if (t === "-u" || t === "--unset" || t === "-C" || t === "--chdir") {
           j++; // flag value
           continue;
+        }
+        if (t === "-S" || t === "--split-string") {
+          hasCommand = true; // the split string is the subcommand
+          break;
         }
         if (isNonCommandToken(t)) continue; // flags and FOO=1 assignments
         hasCommand = true;
@@ -783,6 +782,22 @@ function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
     operands.some((t) => /^-i/.test(t) || t === "--in-place")
   ) {
     return { paths, envVars, dumpsEnvironment };
+  }
+
+  // `env -S "cmd args"` splits the string into the command it runs, so scan
+  // inside it the way inline code is scanned.
+  if (cmd === "env") {
+    for (let k = 0; k < operands.length; k++) {
+      const t = operands[k];
+      if (t !== "-S" && t !== "--split-string") continue;
+      const script = operands[k + 1];
+      if (script === undefined) continue;
+      const inner = extractCommandRefs(script, depth + 1);
+      paths.push(...inner.paths);
+      envVars.push(...inner.envVars);
+      dumpsEnvironment = dumpsEnvironment || inner.dumpsEnvironment;
+      k++;
+    }
   }
 
   const behaviour = classifyCommand(cmd);

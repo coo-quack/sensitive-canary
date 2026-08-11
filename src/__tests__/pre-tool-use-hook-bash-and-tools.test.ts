@@ -670,6 +670,21 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    it("env -S split string reading a secret should block", () => {
+      const file = writeFixture("env_split.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`env -S "cat ${file}"`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("env -S running a command is not a dump", () => {
+      const result = runBashHook(`env -S "echo hi"`, {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
     it("env with only assignments is still a dump", () => {
       const result = runBashHook("env FOO=1 BAR=2", {
         env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
