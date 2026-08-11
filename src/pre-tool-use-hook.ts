@@ -152,9 +152,10 @@ const COUNT_ONLY_COMMANDS = new Set([
 
 // Commands whose first non-flag argument is a pattern, expression or script,
 // and whose remaining non-flag arguments are files written to stdout.
-// General-purpose runtimes (`python`, `node`, `deno`, `bun`) are absent: they
-// execute their first argument rather than print it, and the files named after
-// it are argv, not output. Their inline code (`-c`, `-e`) is still scanned via
+// General-purpose runtimes (`python`, `node`, `deno`, `bun`, and `perl` and
+// `ruby` when they run a program file) are absent: they execute their first
+// argument rather than print it, and the files named after it are argv, not
+// output. Their inline code (`-c`, `-e`) is still scanned via
 // INLINE_CODE_COMMANDS.
 const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
   "sed",
@@ -167,9 +168,13 @@ const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
   "ag",
   "jq",
   "yq",
-  "perl",
-  "ruby",
 ]);
+
+// Interpreters whose file operands are input to a one-liner given inline:
+// `perl -pe 's/a/b/' f` and `ruby -pe '…' f` print f. Hand them a program file
+// instead and the operands are argv — `perl script.pl data.txt` prints neither —
+// so their operands count as reads only once inline code has been seen.
+const INLINE_CODE_READS_OPERANDS = new Set(["perl", "ruby"]);
 
 // Commands that run another command. They are stripped so the wrapped command
 // is classified instead: `sudo cat secrets` is treated as `cat secrets`.
@@ -668,6 +673,7 @@ function isClassifiableCommand(name: string): boolean {
     b.printsOperands ||
     b.firstOperandIsPatternOrScript ||
     b.takesInlineCode ||
+    b.inlineCodeReadsOperands ||
     b.printsNothing ||
     b.isGit ||
     b.isDd
@@ -868,6 +874,8 @@ interface CommandBehaviour {
   firstOperandIsPatternOrScript: boolean;
   // -c / -e introduce inline program text.
   takesInlineCode: boolean;
+  // Operands following inline program text are input files written to stdout.
+  inlineCodeReadsOperands: boolean;
   // Reads a file but prints only a measurement of it, and does not echo stdin.
   printsNothing: boolean;
   // `git <subcommand> [paths]`.
@@ -883,6 +891,7 @@ function classifyCommand(cmd: string): CommandBehaviour {
     printsOperands: FILE_READ_COMMANDS.has(cmd),
     firstOperandIsPatternOrScript: PATTERN_OR_SCRIPT_FIRST_COMMANDS.has(cmd),
     takesInlineCode: INLINE_CODE_COMMANDS.has(cmd),
+    inlineCodeReadsOperands: INLINE_CODE_READS_OPERANDS.has(cmd),
     printsNothing: COUNT_ONLY_COMMANDS.has(cmd),
     isGit: cmd === "git",
     isDd: cmd === "dd",
@@ -932,6 +941,7 @@ function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
   let skipNext = false;
   let collectNext = false;
   let codeNext = false;
+  let inlineCodeSeen = false;
   let patternSkipped = false;
   let gitSubcommandSeen = false;
   let gitReadsFiles = false;
@@ -951,6 +961,7 @@ function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
       // The expression came from -e/-c, so a later operand is a file, not the
       // script `perl file` would have run.
       patternSkipped = true;
+      if (behaviour.inlineCodeReadsOperands) inlineCodeSeen = true;
       const inner = extractCommandRefs(tok, depth + 1);
       paths.push(...inner.paths, ...extractQuotedLiterals(tok));
       envVars.push(...inner.envVars);
@@ -1016,7 +1027,11 @@ function collectSegmentRefs(tokens: string[], depth: number): CommandRefs {
       continue;
     }
 
-    if (behaviour.printsOperands || behaviour.firstOperandIsPatternOrScript) {
+    if (
+      behaviour.printsOperands ||
+      behaviour.firstOperandIsPatternOrScript ||
+      inlineCodeSeen
+    ) {
       paths.push(tok);
     }
   }

@@ -82,6 +82,11 @@
   subcommand and ruled the environment dump out
 - `printenv > out.txt` counts as a whole-environment dump: the redirection target
   was taken for a named variable
+- `perl script.pl data.txt` and `ruby script.rb data.txt` no longer have their
+  operands scanned as printed files, for the same reason `python` and `node` do
+  not: with a program file the operands are argv, not output. A one-liner given
+  inline (`perl -pe '…' f`, `ruby -pe '…' f`) still reads its operands and is
+  still scanned
 
 ---
 

@@ -400,6 +400,35 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // Same reasoning as python: with a program file the operands are argv, and
+    // only a one-liner given inline reads them as input.
+    it("perl script.pl <secretFile> should allow", () => {
+      const file = writeFixture("perl_argv.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`perl script.pl ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("ruby script.rb <secretFile> should allow", () => {
+      const file = writeFixture("ruby_argv.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`ruby script.rb ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("ruby -pe with file should block", () => {
+      const file = writeFixture("ruby_inline.txt", `pass=${AWS_KEY}`);
+      const result = runBashHook(`ruby -pe 'gsub(/a/, "b")' ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("perl -pe with two files should block on either", () => {
+      const clean = writeFixture("perl_clean.txt", "nothing here");
+      const file = writeFixture("perl_second.txt", `key=${TOKEN_VALUE}`);
+      const result = runBashHook(`perl -pe 's/a/b/' ${clean} ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
     it("sh -c 'echo hello world' should allow", () => {
       const result = runBashHook(`sh -c "echo hello world"`);
       expect(result.exitCode).toBe(0);
