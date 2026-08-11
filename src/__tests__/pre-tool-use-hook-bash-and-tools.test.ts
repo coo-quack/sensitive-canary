@@ -662,6 +662,24 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
       expect(result.decision).toBe("block");
     });
 
+    it("sudo -u root printenv should block when the environment holds a secret", () => {
+      const result = runBashHook("sudo -u root printenv", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
+    it("timeout 5 env should block when the environment holds a secret", () => {
+      const result = runBashHook("timeout 5 env", {
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.decision).toBe("block");
+    });
+
     it("env running a command is not a dump", () => {
       const result = runBashHook("env FOO=1 ls", {
         env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },

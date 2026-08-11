@@ -558,12 +558,20 @@ function isClassifiableCommand(name: string): boolean {
   );
 }
 
+// Commands a wrapper may hand off to. Beyond the classifiable ones, `env` and
+// `printenv` count here — and only here — so wrapper operands do not hide an
+// environment dump: `sudo -u root printenv` must still find printenv.
+function isWrapperTarget(name: string): boolean {
+  return isClassifiableCommand(name) || name === "env" || name === "printenv";
+}
+
 // Index of the token naming the command whose operands matter.
 //
 // The lead command is the first token that is not a flag, redirection or
 // `VAR=value` assignment. Only a known wrapper (`sudo`, `env`, `timeout`, …)
 // is peeled, by searching the rest of the segment for the first token this
-// hook can classify; anything else is treated as the command itself. Searching
+// hook can classify (`env` and `printenv` included, so their detection behind
+// wrapper operands works); anything else is treated as the command itself. Searching
 // unconditionally mistook operands for commands: `echo cat secrets` resolved
 // to `cat`, and a file that was never read was scanned and blocked. Wrappers
 // are still not peeled by counting their flags: `sudo -u root cat f` would
@@ -590,80 +598,71 @@ function findCommandIndex(tokens: string[]): number {
   for (let i = lead + 1; i < tokens.length; i++) {
     const tok = tokens[i] ?? "";
     if (isNonCommandToken(tok)) continue;
-    if (isClassifiableCommand(path.basename(tok))) return i;
+    if (isWrapperTarget(path.basename(tok))) return i;
   }
   return lead;
 }
 
 // `env` and `printenv` print the environment unless they are being used to run
-// another command. `sudo printenv` counts; `env FOO=1 cat f` does not.
+// another command. `sudo printenv` counts; `env FOO=1 cat f` does not. The
+// command is located with findCommandIndex, so wrapper flags and operands
+// (`sudo -u root printenv`, `timeout 5 env`) cannot hide it.
 function inspectEnvironmentCommand(tokens: string[]): {
   dumps: boolean;
   named: string[];
 } {
   const nothing = { dumps: false, named: [] };
 
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i] ?? "";
-    if (isNonCommandToken(tok)) continue;
+  const start = findCommandIndex(tokens);
+  const cmdToken = tokens[start];
+  if (cmdToken === undefined) return nothing;
 
-    const name = path.basename(tok);
-    if (name !== "env" && name !== "printenv") {
-      // Wrappers may still precede it; any other command rules both out.
-      if (
-        WRAPPER_COMMANDS.has(name) ||
-        WRAPPER_COMMANDS_WITH_OPERAND.has(name)
-      ) {
-        continue;
-      }
-      return nothing;
-    }
+  const name = path.basename(cmdToken);
+  if (name !== "env" && name !== "printenv") return nothing;
 
-    const operands = tokens.slice(i + 1).filter((t) => !isNonCommandToken(t));
-    if (name === "printenv") {
-      return operands.length === 0
-        ? { dumps: true, named: [] }
-        : { dumps: false, named: operands };
-    }
-    // `env` prints the environment unless a subcommand follows its own
-    // arguments: assignments (`FOO=1`), flags, and the values of flags that
-    // take one (`-u FOO`, `-C dir`) are all env's own. The `-S` split string
-    // is the subcommand itself (`env -S "cat f"` runs cat), so it rules a dump
-    // out. With no subcommand the whole environment is printed — `env FOO=1`
-    // and `env -u FOO` included. Exception: `-i` starts from an empty
-    // environment, so only the given assignments (already scanned as command
-    // text) print.
-    if (name === "env") {
-      const rest = tokens.slice(i + 1);
-      let ignoreEnvironment = false;
-      let hasCommand = false;
-      for (let j = 0; j < rest.length; j++) {
-        const t = rest[j] ?? "";
-        if (t === "-i" || t === "--ignore-environment") {
-          ignoreEnvironment = true;
-          continue;
-        }
-        if (t === "<" || t === ">" || t === "<<" || t === ">>") {
-          j++; // redirection operator: its target is env's own argument here
-          continue;
-        }
-        if (t === "-u" || t === "--unset" || t === "-C" || t === "--chdir") {
-          j++; // flag value
-          continue;
-        }
-        if (t === "-S" || t === "--split-string") {
-          hasCommand = true; // the split string is the subcommand
-          break;
-        }
-        if (isNonCommandToken(t)) continue; // flags and FOO=1 assignments
-        hasCommand = true;
-        break;
-      }
-      return { dumps: !hasCommand && !ignoreEnvironment, named: [] };
-    }
+  if (name === "printenv") {
+    const operands = tokens
+      .slice(start + 1)
+      .filter((t) => !isNonCommandToken(t));
+    return operands.length === 0
+      ? { dumps: true, named: [] }
+      : { dumps: false, named: operands };
   }
 
-  return nothing;
+  // `env` prints the environment unless a subcommand follows its own
+  // arguments: assignments (`FOO=1`), flags, and the values of flags that
+  // take one (`-u FOO`, `-C dir`) are all env's own. The `-S` split string
+  // is the subcommand itself (`env -S "cat f"` runs cat), so it rules a dump
+  // out. With no subcommand the whole environment is printed — `env FOO=1`
+  // and `env -u FOO` included. Exception: `-i` starts from an empty
+  // environment, so only the given assignments (already scanned as command
+  // text) print.
+  const rest = tokens.slice(start + 1);
+  let ignoreEnvironment = false;
+  let hasCommand = false;
+  for (let j = 0; j < rest.length; j++) {
+    const t = rest[j] ?? "";
+    if (t === "-i" || t === "--ignore-environment") {
+      ignoreEnvironment = true;
+      continue;
+    }
+    if (t === "<" || t === ">" || t === "<<" || t === ">>") {
+      j++; // redirection operator: its target is env's own argument here
+      continue;
+    }
+    if (t === "-u" || t === "--unset" || t === "-C" || t === "--chdir") {
+      j++; // flag value
+      continue;
+    }
+    if (t === "-S" || t === "--split-string") {
+      hasCommand = true; // the split string is the subcommand
+      break;
+    }
+    if (isNonCommandToken(t)) continue; // flags and FOO=1 assignments
+    hasCommand = true;
+    break;
+  }
+  return { dumps: !hasCommand && !ignoreEnvironment, named: [] };
 }
 
 // True when `token` introduces inline program text for `cmd`. POSIX shells only

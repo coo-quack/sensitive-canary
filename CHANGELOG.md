@@ -57,6 +57,9 @@
 - `env -S "cmd args"` is no longer treated as an environment dump, and the
   split string is scanned as the command it runs: `env -S "cat secrets"`
   blocks now
+- Wrapper flags and operands no longer hide an environment dump:
+  `sudo -u root printenv` and `timeout 5 env` are detected like bare
+  `printenv` / `env`
 - Heredoc bodies are no longer scanned as shell commands: writing a script
   that mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known
   limitation: a heredoc that feeds commands to a remote shell
