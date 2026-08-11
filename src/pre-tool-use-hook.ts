@@ -355,6 +355,18 @@ function tokenizeCommand(command: string): string[][] {
       continue;
     }
 
+    // A subshell holds a command line of its own. Without this, `(cat secrets)`
+    // tokenized as `(cat` and `secrets)`, naming neither a command this hook
+    // classifies nor a path that exists, and the read went unseen. The opening
+    // paren of `$(`, `<(` and `>(` lands here too, which only means the inner
+    // command is reached twice — extractSubstitutions already recurses into it,
+    // and the paths are deduplicated.
+    if (ch === "(" || ch === ")") {
+      endSegment();
+      i++;
+      continue;
+    }
+
     if (ch === "<" || ch === ">") {
       // A file-descriptor prefix belongs to the operator, not to a token of its
       // own: `env 2>err` has to tokenize like `env >err`, or the `2` reads as
@@ -654,12 +666,30 @@ function isRedirectionOperator(token: string): boolean {
   return /^[<>]+$/.test(token);
 }
 
+// Shell keywords and the brace-group delimiters. They stand where a command
+// name would, so a segment led by one used to be classified as a command called
+// `{` or `then` and its operands never looked at: `{ cat secrets; }` and
+// `if …; then cat secrets; fi` both read a file nothing noticed.
+const SHELL_KEYWORD_TOKENS = new Set([
+  "{",
+  "}",
+  "!",
+  "then",
+  "else",
+  "elif",
+  "do",
+  "done",
+  "fi",
+  "in",
+]);
+
 // True for a token that cannot name a command: a flag, a redirection operator,
-// or a `VAR=value` assignment placed before one.
+// a `VAR=value` assignment placed before one, or a shell keyword.
 function isNonCommandToken(token: string): boolean {
   if (token.startsWith("-") || token.startsWith("<") || token.startsWith(">")) {
     return true;
   }
+  if (SHELL_KEYWORD_TOKENS.has(token)) return true;
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
 }
 

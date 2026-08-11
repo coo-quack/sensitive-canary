@@ -84,6 +84,12 @@
   subcommand and ruled the environment dump out
 - `printenv > out.txt` counts as a whole-environment dump: the redirection target
   was taken for a named variable
+- A subshell is tokenized as the command line it is, so `(cat secrets)` and
+  `echo hi && (cat secrets)` are scanned. The parens used to stay attached to
+  their neighbours, leaving a command called `(cat` and a path called `secrets)`
+- A segment led by a brace-group delimiter or a shell keyword no longer hides its
+  command: `{ cat secrets; }`, `if …; then cat secrets; fi` and
+  `for … do cat secrets; done` are scanned like a bare `cat`
 - `perl script.pl data.txt` and `ruby script.rb data.txt` no longer have their
   operands scanned as printed files, for the same reason `python` and `node` do
   not: with a program file the operands are argv, not output. A one-liner given

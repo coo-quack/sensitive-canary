@@ -463,6 +463,66 @@ describe("pre-tool-use-hook — Bash forms and other tools", () => {
     });
   });
 
+  // A grouping construct or a shell keyword stands where a command name would.
+  // Segments led by one were classified as a command called `(cat` or `then`,
+  // and the file they read was never looked at.
+  describe("grouped and keyword-led commands", () => {
+    it("subshell should block on file with secret", () => {
+      const file = writeFixture("subshell.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`(cat ${file})`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("subshell after && should block", () => {
+      const file = writeFixture("subshell_and.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`echo hi && (cat ${file})`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("subshell piped onward should block", () => {
+      const file = writeFixture("subshell_pipe.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`(cat ${file}) | head`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("brace group should block on file with secret", () => {
+      const file = writeFixture("brace_group.txt", `token=${TOKEN_VALUE}`);
+      const result = runBashHook(`{ cat ${file}; }`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("command after then should block", () => {
+      const file = writeFixture("if_then.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`if true; then cat ${file}; fi`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("command after do should block", () => {
+      const file = writeFixture("for_do.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`for f in a; do cat ${file}; done`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("subshell on a clean file should allow", () => {
+      const file = writeFixture("subshell_clean.txt", "nothing here");
+      const result = runBashHook(`(cat ${file})`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The parens are inside single quotes, so they are text rather than a group.
+    it("awk program using $(NF) should allow", () => {
+      const file = writeFixture("awk_nf.txt", "one two three");
+      const result = runBashHook(`awk '{print $(NF)}' ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a quoted subshell is text and should allow", () => {
+      const file = writeFixture("quoted_subshell.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`echo '(cat ${file})'`);
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   describe("git subcommands", () => {
     it("git diff <secretFile> should block", () => {
       const file = writeFixture("git_diff.txt", `key=${AWS_KEY}`);
