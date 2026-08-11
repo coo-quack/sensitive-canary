@@ -461,32 +461,38 @@ PreToolUse hook
       │  2. file contents contain secret / PII → blocked
       └─ Bash tool ─────────────────────────────────────────────────────
          1. env var values referenced in the command contain secret / PII → blocked
-         2. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
-         3. cat / head / tail / etc. targeting a file → file contents scanned
+         2. a bare env / printenv would print the whole environment → every
+            variable is scanned
+         3. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
+         4. the command is located past any wrapper (sudo, env VAR=1, timeout,
+            nice, xargs) and any leading VAR=value assignment
+         5. inline scripts (-c, -e, -pe) are parsed and scanned
+         6. file paths from input redirections, command substitutions and chained
+            commands are extracted and scanned
+         7. printing commands (cat, head, tail, sed, awk, grep, rg, cut, sort,
+            base64, xxd, strings, diff, comm, dd, and git subcommands) targeting
+            a named file → file contents scanned
 ```
+
+Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes.
+
+Neither is a command that sends its result back to the file it was handed. `sed -i`, `perl -i` and `ruby -i` (bundled forms such as `perl -pi -e` included) edit in place and write nothing to stdout. `git log <file>` is not a read either — it prints who changed the file and when — unless a patch is asked for with `-p`, `--patch` or `-U<n>`.
 
 When blocked, Claude receives a JSON response explaining the reason and is prompted to tell the user.
 The terminal also receives a direct message (via `/dev/tty`).
 
-#### Known limitation: heredoc bodies
+### Known Limitations
 
-A heredoc body is treated as text, not as commands, so writing a script that mentions `.env` is not itself a read:
-
-```bash
-cat > deploy.sh <<'EOF'
-cat .env
-EOF
-```
-
-The trade-off is that a heredoc which *feeds* commands to another shell is not inspected either:
-
-```bash
-ssh host <<'EOF'
-cat /etc/secrets
-EOF
-```
-
-The `cat` inside that body runs on the remote host, and the hook does not scan it.
+- **Heredoc bodies** — a heredoc body is treated as text, not as commands, so `cat > deploy.sh <<'EOF'` writing a script that mentions `.env` is not itself a read. The trade-off is that a heredoc which *feeds* commands to another shell (`ssh host <<'EOF'` with a `cat /etc/secrets` in the body) is not inspected either.
+- **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
+- **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
+- **`.env.*` is blocked by name** — the filename guard covers every `.env.*`, so a template like `.env.example` is blocked as well, now through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` for those.
+- **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
+- **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.
+- **Programs that read files themselves** — `python script.py` is not scanned, because running a script does not print its source; whatever the script opens at run time is beyond the hook's reach.
+- **A flag's value that happens to name a file** — `head -n 5 f` collects the `5` as a path candidate, so a file called `5` in the working directory is scanned. Harmless in practice, since only paths that exist are read.
+- **Inline program text is followed four levels deep** — each `-c` / `-e` script inside another costs one level, so a read buried five interpreters down is not reached. Nested command substitutions are not bounded this way.
+- **Best effort only** — detection is not exhaustive. Arbitrary shell metacharacters, eval chains, and complex expansions may not be fully tracked.
 
 ---
 
