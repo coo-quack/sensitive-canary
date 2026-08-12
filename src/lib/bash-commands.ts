@@ -270,6 +270,16 @@ export interface CommandRefs {
   dumpsEnvironment: boolean;
 }
 
+// Fold one set of refs into another. A command line yields refs from several
+// places — its substitutions, each of its segments, the inline code it carries,
+// an `env -S` string — and combining them is the same three lines each time,
+// which is how it came to be written out three times with a closure alongside.
+function mergeRefs(into: CommandRefs, refs: CommandRefs): void {
+  into.paths.push(...refs.paths);
+  into.envVars.push(...refs.envVars);
+  into.dumpsEnvironment = into.dumpsEnvironment || refs.dumpsEnvironment;
+}
+
 // What this hook knows about how a command treats its operands.
 interface CommandBehaviour {
   // Every non-flag operand is a file written to stdout.
@@ -493,51 +503,41 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
 // Everything a Bash command reveals that the hook can inspect before it runs:
 // the files whose contents it may print, and the environment it may expose.
 export function extractCommandRefs(command: string, depth = 0): CommandRefs {
-  const paths: string[] = [];
-  const envVars: string[] = [];
-  let dumpsEnvironment = false;
+  const refs: CommandRefs = { paths: [], envVars: [], dumpsEnvironment: false };
 
-  if (depth > MAX_NESTING_DEPTH) return { paths, envVars, dumpsEnvironment };
-
-  const merge = (refs: CommandRefs): void => {
-    paths.push(...refs.paths);
-    envVars.push(...refs.envVars);
-    dumpsEnvironment = dumpsEnvironment || refs.dumpsEnvironment;
-  };
+  if (depth > MAX_NESTING_DEPTH) return refs;
 
   // Heredoc bodies are text, not commands; strip them before any other pass.
   const text = stripHeredocBodies(command);
 
   // `echo $(cat secrets)` reads secrets just as `cat secrets` does.
   for (const inner of extractSubstitutions(text)) {
-    merge(extractCommandRefs(inner, depth + 1));
+    mergeRefs(refs, extractCommandRefs(inner, depth + 1));
   }
 
   for (const tokens of tokenizeCommand(text)) {
     const environment = inspectEnvironmentCommand(tokens);
-    if (environment.dumps) dumpsEnvironment = true;
-    envVars.push(...environment.named);
+    if (environment.dumps) refs.dumpsEnvironment = true;
+    refs.envVars.push(...environment.named);
 
-    merge(collectSegmentRefs(tokens, depth));
+    mergeRefs(refs, collectSegmentRefs(tokens, depth));
   }
 
   return {
-    paths: [...new Set(paths)],
-    envVars: [...new Set(envVars)],
-    dumpsEnvironment,
+    paths: [...new Set(refs.paths)],
+    envVars: [...new Set(refs.envVars)],
+    dumpsEnvironment: refs.dumpsEnvironment,
   };
 }
 
 // File paths one segment of a command line may print, plus anything found inside
 // inline program text it carries.
 function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
-  const paths: string[] = [];
-  const envVars: string[] = [];
-  let dumpsEnvironment = false;
+  const refs: CommandRefs = { paths: [], envVars: [], dumpsEnvironment: false };
 
   const start = findCommandIndex(tokens);
   const cmdToken = tokens[start];
-  if (cmdToken === undefined) return { paths, envVars, dumpsEnvironment };
+  if (cmdToken === undefined) return refs;
 
   const cmd = path.basename(cmdToken.value);
   const operands = tokens.slice(start + 1);
@@ -545,7 +545,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
   // In-place editing sends the result back to the file, so nothing reaches
   // stdout and nothing is read into the conversation.
   if (editsInPlace(cmd, operands)) {
-    return { paths, envVars, dumpsEnvironment };
+    return refs;
   }
 
   // `env -S "cmd args"` splits the string into the command it runs, so scan
@@ -556,10 +556,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       if (t !== "-S" && t !== "--split-string") continue;
       const script = operands[k + 1]?.value;
       if (script === undefined) continue;
-      const inner = extractCommandRefs(script, depth + 1);
-      paths.push(...inner.paths);
-      envVars.push(...inner.envVars);
-      dumpsEnvironment = dumpsEnvironment || inner.dumpsEnvironment;
+      mergeRefs(refs, extractCommandRefs(script, depth + 1));
       k++;
     }
   }
@@ -581,7 +578,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     }
     if (collectNext) {
       collectNext = false;
-      paths.push(tok.value);
+      refs.paths.push(tok.value);
       continue;
     }
     if (codeNext) {
@@ -590,10 +587,8 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       // script `perl file` would have run.
       patternSkipped = true;
       if (behaviour.inlineCodeReadsOperands) inlineCodeSeen = true;
-      const inner = extractCommandRefs(tok.value, depth + 1);
-      paths.push(...inner.paths, ...extractQuotedLiterals(tok.value));
-      envVars.push(...inner.envVars);
-      dumpsEnvironment = dumpsEnvironment || inner.dumpsEnvironment;
+      mergeRefs(refs, extractCommandRefs(tok.value, depth + 1));
+      refs.paths.push(...extractQuotedLiterals(tok.value));
       continue;
     }
 
@@ -647,7 +642,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
         gitReadsFiles = gitSubcommandPrintsFiles(tok.value, operands);
         continue;
       }
-      if (gitReadsFiles) paths.push(tok.value);
+      if (gitReadsFiles) refs.paths.push(tok.value);
       continue;
     }
 
@@ -656,7 +651,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     if (behaviour.isDd) {
       const ddInput = /^if=(.+)$/.exec(tok.value);
       if (ddInput?.[1]) {
-        paths.push(ddInput[1]);
+        refs.paths.push(ddInput[1]);
         continue;
       }
     }
@@ -671,9 +666,9 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       behaviour.firstOperandIsPatternOrScript ||
       inlineCodeSeen
     ) {
-      paths.push(tok.value);
+      refs.paths.push(tok.value);
     }
   }
 
-  return { paths, envVars, dumpsEnvironment };
+  return refs;
 }
