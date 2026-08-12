@@ -5,8 +5,18 @@
 // Everything here answers "what are the pieces of this command line". What a
 // piece does with its operands is bash-commands.ts.
 
-// Longest quoted literal inside inline code still treated as a path candidate.
-const MAX_QUOTED_LITERAL_LENGTH = 4096;
+// One token of a command line, with quotes removed.
+//
+// `redirect` records where the token came from, which quote removal otherwise
+// destroys: `cat > out` writes a file and `cat ">" secrets` reads one, yet both
+// yield a token whose text is `>`. Reading the text alone, the second looked
+// like a redirection and the operand after it was skipped as an output target —
+// so `grep ">" secrets`, an ordinary way to search for a `>` character, went
+// unscanned. Only the source form separates the two.
+export interface ShellToken {
+  value: string;
+  redirect: boolean;
+}
 
 // Variable names referenced by the command, including expansion forms that carry
 // a suffix such as `${TOKEN:-fallback}` or `${TOKEN#prefix}`.
@@ -24,16 +34,16 @@ export function extractEnvVarNames(command: string): string[] {
 // segment into tokens with quotes removed. Redirection operators become tokens of
 // their own so that `wc -l <f` and `wc -l < f` tokenize alike. Substitutions are
 // left in place; extractSubstitutions handles them against the raw string.
-export function tokenizeCommand(command: string): string[][] {
-  const segments: string[][] = [];
-  let tokens: string[] = [];
+export function tokenizeCommand(command: string): ShellToken[][] {
+  const segments: ShellToken[][] = [];
+  let tokens: ShellToken[] = [];
   let current = "";
   let hasCurrent = false;
   let i = 0;
 
   const endToken = (): void => {
     if (hasCurrent) {
-      tokens.push(current);
+      tokens.push({ value: current, redirect: false });
       current = "";
       hasCurrent = false;
     }
@@ -112,10 +122,11 @@ export function tokenizeCommand(command: string): string[][] {
 
     if (ch === "<" || ch === ">") {
       // A file-descriptor prefix belongs to the operator, not to a token of its
-      // own: `env 2>err` has to tokenize like `env >err`, or the `2` reads as
-      // env's subcommand and the environment dump goes unnoticed. The number
-      // names neither a file nor a command, so it is dropped. Only digits
-      // written against the operator count, leaving `sort 1 >out` alone.
+      // own, so `cmd 2>err` tokenizes like `cmd >err`. Left as a token, the `2`
+      // would read as an operand of the command — a filename, or a subcommand
+      // for whatever later decides what a command does with its operands. It
+      // names neither, so it is dropped. Only digits written against the
+      // operator count, leaving `sort 1 >out` alone.
       if (hasCurrent && /^\d+$/.test(current)) {
         current = "";
         hasCurrent = false;
@@ -127,7 +138,7 @@ export function tokenizeCommand(command: string): string[][] {
         op += ch;
         i++;
       }
-      tokens.push(op);
+      tokens.push({ value: op, redirect: true });
       continue;
     }
 
@@ -279,8 +290,8 @@ function findHeredocDelimiters(line: string): HeredocDelimiter[] {
 // `cat > deploy.sh <<EOF` followed by a script that mentions `.env` reads
 // nothing, and scanning the body as shell blocked exactly that everyday case.
 // The trade-off: a heredoc that *feeds* commands to a remote shell
-// (`ssh host <<EOF\ncat /secret\nEOF`) is no longer caught. Documented as a
-// known limitation in the README.
+// (`ssh host <<EOF\ncat /secret\nEOF`) is no longer caught. Written up as a
+// known limitation under "② PreToolUse hook" in the README.
 export function stripHeredocBodies(command: string): string {
   const lines = command.split("\n");
   const kept: string[] = [];
@@ -353,8 +364,9 @@ function findSubstitutionEnd(
 }
 
 // Inner text of every outermost command substitution, process substitution and
-// backtick expression. Each is a command line in its own right; nested ones are
-// reached because extractCommandRefs recurses into what this returns.
+// backtick expression. Only the outermost ones: each is a command line in its
+// own right, so a nested substitution is reached by the caller feeding what this
+// returns back through it.
 export function extractSubstitutions(command: string): string[] {
   const found: string[] = [];
   let quote: string | null = null;
@@ -402,11 +414,13 @@ export function extractSubstitutions(command: string): string[] {
   return found;
 }
 
-// True for a redirection operator token: `<`, `>`, `<<`, `>>`, `<<<`. The
-// tokenizer emits each on its own, with any file-descriptor prefix dropped, and
-// the token after one is a target or a heredoc delimiter rather than an operand.
-export function isRedirectionOperator(token: string): boolean {
-  return /^[<>]+$/.test(token);
+// True for a redirection operator the tokenizer read from the source: `<`, `>`,
+// `<<`, `>>`, `<<<`, each emitted on its own with any file-descriptor prefix
+// dropped. The token after one is a target or a heredoc delimiter rather than an
+// operand. A quoted word reading `>` is not one of these, which is the whole
+// point of carrying `redirect` on the token rather than testing its text.
+export function isRedirectionOperator(token: ShellToken): boolean {
+  return token.redirect;
 }
 
 // Shell keywords and the brace-group delimiters. They stand where a command
@@ -436,31 +450,12 @@ const SHELL_KEYWORD_TOKENS = new Set([
   "select",
 ]);
 
-// True for a token that cannot name a command: a flag, a redirection operator,
-// a `VAR=value` assignment placed before one, or a shell keyword.
-export function isNonCommandToken(token: string): boolean {
-  if (token.startsWith("-") || token.startsWith("<") || token.startsWith(">")) {
-    return true;
-  }
-  if (SHELL_KEYWORD_TOKENS.has(token)) return true;
-  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
-}
-
-// Quoted literals inside inline program text — the ".env" in
-// `python3 -c "print(open('.env').read())"`. Literals containing line breaks or
-// tabs are skipped: those are messages and patterns, not paths. Spaces are
-// kept, so a path like `open('my secret.txt')` is still found.
-export function extractQuotedLiterals(code: string): string[] {
-  const literals: string[] = [];
-  for (const match of code.matchAll(/'([^']*)'|"([^"]*)"/g)) {
-    const value = match[1] ?? match[2];
-    if (
-      value &&
-      value.length <= MAX_QUOTED_LITERAL_LENGTH &&
-      !/[\t\r\n]/.test(value)
-    ) {
-      literals.push(value);
-    }
-  }
-  return literals;
+// True for a token that cannot name a command: a redirection operator, a flag, a
+// `VAR=value` assignment placed before one, or a shell keyword.
+export function isNonCommandToken(token: ShellToken): boolean {
+  if (token.redirect) return true;
+  const { value } = token;
+  if (value.startsWith("-")) return true;
+  if (SHELL_KEYWORD_TOKENS.has(value)) return true;
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(value);
 }

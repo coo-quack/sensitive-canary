@@ -23,7 +23,9 @@ const FILE_READ_COMMANDS = new Set([
   "nl",
 ]);
 
-// Recursion limit for command substitutions.
+// How deep a chain of nested command substitutions is followed. `depth` counts
+// nesting, so the command line itself is 0 and four levels of substitution below
+// it are inspected.
 const MAX_NESTING_DEPTH = 4;
 
 // Paths whose contents a command on this line may write to stdout.
@@ -47,7 +49,8 @@ export function extractFilePathsFromCommand(
     // `VAR=value` assignment, and not a keyword standing where a name would.
     const lead = tokens.findIndex((t) => !isNonCommandToken(t));
     if (lead === -1) continue;
-    if (!FILE_READ_COMMANDS.has(path.basename(tokens[lead] ?? ""))) continue;
+    const leadName = path.basename(tokens[lead]?.value ?? "");
+    if (!FILE_READ_COMMANDS.has(leadName)) continue;
 
     let skipNext = false;
     let collectNext = false;
@@ -58,19 +61,18 @@ export function extractFilePathsFromCommand(
       }
       if (collectNext) {
         collectNext = false;
-        paths.push(tok);
-        continue;
-      }
-      if (tok === "<") {
-        collectNext = true; // stdin is fed from the next token
+        paths.push(tok.value);
         continue;
       }
       if (isRedirectionOperator(tok)) {
-        skipNext = true; // an output target or a heredoc delimiter
+        // `<` feeds stdin from the next token; every other form names an output
+        // target or a heredoc delimiter.
+        if (tok.value === "<") collectNext = true;
+        else skipNext = true;
         continue;
       }
-      if (tok.startsWith("-")) continue;
-      paths.push(tok);
+      if (tok.value.startsWith("-")) continue;
+      paths.push(tok.value);
     }
   }
 

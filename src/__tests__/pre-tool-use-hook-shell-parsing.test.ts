@@ -226,6 +226,55 @@ describe("pre-tool-use-hook — shell parsing", () => {
     });
   });
 
+  describe("redirection operators against quoted words", () => {
+    it("a quoted > is an operand, not a redirection", () => {
+      const file = writeFixture("quoted_gt.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat ">" ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("a quoted >> is an operand, not a redirection", () => {
+      const file = writeFixture("quoted_gtgt.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`cat ">>" ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("an unquoted > still marks the next token as an output target", () => {
+      const file = writeFixture("real_gt.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat > ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("an unquoted >> still marks the next token as an output target", () => {
+      const file = writeFixture("real_gtgt.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`cat >> ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("environment variable expansion", () => {
+    it("an expansion with a default should block when the var holds a secret", () => {
+      const pathVal = process.env["PATH"] ?? "";
+      const result = runBashHook(`echo $\{TOKEN:-fallback}`, {
+        env: { PATH: pathVal, TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("an expansion with a default should allow when the var is unset", () => {
+      const pathVal = process.env["PATH"] ?? "";
+      const result = runBashHook(`echo $\{UNSET_VAR:-safe_default}`, {
+        env: { PATH: pathVal },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   describe("output process substitution", () => {
     it(">(...) should block on file with secret", () => {
       const file = writeFixture("psub_out.txt", `key=${AWS_KEY}`);
