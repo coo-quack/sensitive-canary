@@ -10,7 +10,6 @@ import {
   extractQuotedLiterals,
   extractSubstitutions,
   isNonCommandToken,
-  isRedirectionOperator,
   type ShellToken,
   stripHeredocBodies,
   tokenizeCommand,
@@ -426,7 +425,7 @@ function inspectEnvironmentCommand(tokens: ShellToken[]): {
     for (let j = 0; j < rest.length; j++) {
       const t = rest[j];
       if (t === undefined) continue;
-      if (isRedirectionOperator(t)) {
+      if (t.redirect) {
         j++; // its target, or a heredoc delimiter
         continue;
       }
@@ -457,7 +456,7 @@ function inspectEnvironmentCommand(tokens: ShellToken[]): {
       ignoreEnvironment = true;
       continue;
     }
-    if (isRedirectionOperator(t)) {
+    if (t.redirect) {
       j++; // redirection operator: its target is env's own argument here
       continue;
     }

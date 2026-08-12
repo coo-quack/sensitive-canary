@@ -15,6 +15,10 @@
 // unscanned. Only the source form separates the two.
 export interface ShellToken {
   value: string;
+  // True for a redirection operator the tokenizer read from the source: `<`,
+  // `>`, `<<`, `>>`, `<<<`, each emitted on its own with any file-descriptor
+  // prefix dropped. The token after one is a target or a heredoc delimiter
+  // rather than an operand.
   redirect: boolean;
 }
 
@@ -412,15 +416,6 @@ export function extractSubstitutions(command: string): string[] {
   }
 
   return found;
-}
-
-// True for a redirection operator the tokenizer read from the source: `<`, `>`,
-// `<<`, `>>`, `<<<`, each emitted on its own with any file-descriptor prefix
-// dropped. The token after one is a target or a heredoc delimiter rather than an
-// operand. A quoted word reading `>` is not one of these, which is the whole
-// point of carrying `redirect` on the token rather than testing its text.
-export function isRedirectionOperator(token: ShellToken): boolean {
-  return token.redirect;
 }
 
 // Shell keywords and the brace-group delimiters. They stand where a command

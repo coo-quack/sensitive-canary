@@ -25,7 +25,6 @@ interface HookInput {
   tool_input?: Record<string, unknown> & {
     file_path?: string;
     command?: string;
-    path?: string;
   };
 }
 
