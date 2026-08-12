@@ -35,6 +35,14 @@ export const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
 // which is the direction to fail in. The built-in write tools are named
 // explicitly in TOOLS_WITHOUT_FILE_OUTPUT, so `TodoWrite` and `MultiEdit` do not
 // depend on this at all.
+//
+// What the exemption assumes is that the tool returns no file contents, which is
+// not quite what its name says. `update` and `copy` are where the two come
+// apart: a tool called `update_file` or `copy_file` opens a file to do its work,
+// and one that returned the result would go unscanned. They stay, because the
+// alternative costs more — scanning them blocks writing to a file that already
+// holds a secret, which is not a leak — and the gap that leaves is written up
+// under Known Limitations in the README.
 const WRITING_TOOL_VERBS = new Set([
   "write",
   "create",
@@ -57,19 +65,36 @@ export function isWritingTool(tool: string): boolean {
   return first !== undefined && WRITING_TOOL_VERBS.has(first.toLowerCase());
 }
 
-// Input field names that commonly carry a filesystem path.
+// Input field names that commonly carry a filesystem path, compared with
+// separators and case removed. Listing the spellings instead meant the same
+// field was missed under a different one: `file_path` and `filePath` were both
+// here, but `filepath` was not, and neither was `filename` or `source_path`.
+// Normalising is a rule where a list of spellings is a list of the ones someone
+// happened to think of.
 const PATH_FIELD_NAMES = new Set([
-  "file_path",
-  "filePath",
+  "filepath",
+  "filename",
+  "filenames",
   "path",
   "paths",
   "file",
-  "absolute_path",
-  "notebook_path",
+  "files",
+  "absolutepath",
+  "notebookpath",
+  "sourcepath",
 ]);
 
-// Depth to which a tool's input object is searched for path-bearing fields.
-const MAX_PATH_FIELD_DEPTH = 2;
+// `file_path`, `filePath`, `FILE_PATH` and `filepath` are one name here.
+function isPathFieldName(key: string): boolean {
+  return PATH_FIELD_NAMES.has(key.replace(/[^A-Za-z0-9]/g, "").toLowerCase());
+}
+
+// Depth to which a tool's input object is searched for path-bearing fields. Two
+// levels left `{ a: { b: { c: { path } } } }` unscanned, which is not a shape a
+// tool has to be perverse to use; four costs nothing on inputs this size, and
+// the bound is here at all so a deeply nested input cannot make the hook walk
+// an arbitrary tree before a tool call.
+const MAX_PATH_FIELD_DEPTH = 4;
 
 export function collectPathFields(
   input: Record<string, unknown>,
@@ -80,9 +105,9 @@ export function collectPathFields(
 
   for (const [key, value] of Object.entries(input)) {
     if (typeof value === "string") {
-      if (PATH_FIELD_NAMES.has(key)) found.push(value);
+      if (isPathFieldName(key)) found.push(value);
     } else if (Array.isArray(value)) {
-      if (PATH_FIELD_NAMES.has(key)) {
+      if (isPathFieldName(key)) {
         found.push(...value.filter((v): v is string => typeof v === "string"));
       }
       // Paths also arrive as objects inside an array, e.g.

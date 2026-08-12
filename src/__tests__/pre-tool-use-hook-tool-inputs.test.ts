@@ -85,6 +85,50 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.blocked).toBe(true);
     });
 
+    // A distinct shape from the array of objects above, reached by a different
+    // branch of the collector.
+    it("mcp tool with an array of path strings should block", () => {
+      const file = writeFixture("mcp_str_array.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__example__tool", { paths: [file] });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // Field names are compared with separators and case removed, so a tool
+    // spelling the same field differently is still seen. Listing the spellings
+    // meant `file_path` and `filePath` were covered and `filepath` was not.
+    it.each([
+      ["filepath", "alias_filepath.txt"],
+      ["FILE_PATH", "alias_shout.txt"],
+      ["filename", "alias_filename.txt"],
+      ["source_path", "alias_source.txt"],
+      ["absolutePath", "alias_abs_camel.txt"],
+    ])("mcp tool naming the field %s should block", (field, fixture) => {
+      const file = writeFixture(fixture, `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__example__tool", { [field]: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("mcp tool with a path four levels down should block", () => {
+      const file = writeFixture("mcp_deep.txt", `secret=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__example__tool", {
+        a: { b: { c: { path: file } } },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The bound is there so a deeply nested input cannot make the hook walk an
+    // arbitrary tree before a tool call; past it, a path is not found.
+    it("mcp tool with a path below the depth bound should allow", () => {
+      const file = writeFixture("mcp_too_deep.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__example__tool", {
+        a: { b: { c: { d: { e: { path: file } } } } },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
     it("mcp tool with nonexistent path should allow", () => {
       const result = runToolHook("mcp__example__tool", {
         path: "/api/v1/users",

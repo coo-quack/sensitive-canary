@@ -46,10 +46,12 @@
   `sha256sum`) as non-reads, whether the file is named or fed in over `<`
 - Inspect the file inputs of every tool other than `Read` and `Bash`, `Grep` and
   the MCP tools included. An input field naming an existing regular file is
-  scanned before the call: `file_path`, `filePath`, `path`, `paths`, `file`,
-  `absolute_path` and `notebook_path`, found up to two levels down and inside
-  arrays of objects. A field naming a directory is left alone. Exempt are the
-  tools that surface no file contents (`Write`, `Edit`, `MultiEdit`,
+  scanned before the call: `path`, `paths`, `file`, `files`, `filepath`,
+  `filename`, `filenames`, `absolutepath`, `notebookpath` and `sourcepath`,
+  compared with separators and case removed so that `file_path`, `filePath` and
+  `filepath` are one name. Found up to four levels down and inside arrays, of
+  strings and of objects alike. A field naming a directory is left alone.
+  Exempt are the tools that surface no file contents (`Write`, `Edit`, `MultiEdit`,
   `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`,
   `AskUserQuestion`) and tools whose name leads with a write verb (`write_file`,
   `createPage`): naming a file they do not read is not a leak. The default
