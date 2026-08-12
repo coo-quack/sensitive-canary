@@ -220,6 +220,25 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.blocked).toBe(true);
     });
 
+    // A run of capitals is one word. Splitting on every capital left
+    // `WRITE_FILE` as single letters, so its first word was `W` and a write tool
+    // was scanned like a read.
+    it.each(["WRITE_FILE", "UPDATE-FILE", "copyFile"])(
+      "%s should allow",
+      (tool) => {
+        const file = writeFixture(`caps_${tool}.txt`, `key=${AWS_KEY}`);
+        const result = runToolHook(`mcp__fs__${tool}`, { path: file });
+        expect(result.exitCode).toBe(0);
+      },
+    );
+
+    it("mcp__fs__READ_FILE should still block", () => {
+      const file = writeFixture("caps_read.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__fs__READ_FILE", { path: file });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
     // The write-name heuristic matches the tool component only: a server named
     // "editor" or "readwrite" must not exempt the read tools it offers.
     it("mcp__editor__read_file should block (server name is not the tool name)", () => {

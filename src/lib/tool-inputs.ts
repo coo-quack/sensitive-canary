@@ -28,8 +28,9 @@ export const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
 // As a substring test this exempted reads: "update" sits inside `get_updates`,
 // and "write" inside `read_and_write_file` — a tool that returns contents was
 // treated as one that only writes. Word boundaries are the `_`/`-` in snake and
-// kebab names and the capital in camelCase, so `write_file` and `createPage`
-// still match while `overwrite_file` and `readwrite` no longer do.
+// kebab names and, in camelCase, a capital that follows a lowercase letter — so
+// `write_file`, `createPage` and `WRITE_FILE` all match while `overwrite_file`
+// and `readwrite` no longer do.
 //
 // Erring this way costs a false block on a noun-first write tool (`file_write`),
 // which is the direction to fail in. The built-in write tools are named
@@ -57,11 +58,24 @@ const WRITING_TOOL_VERBS = new Set([
   "copy",
 ]);
 
+// The first word of a tool name. Splitting on every capital broke the all-caps
+// spelling: `WRITE_FILE` came apart into single letters and its first word was
+// `W`, so a write tool was scanned as a read. A capital only starts a new word
+// when it follows a lowercase letter or a digit, which is what camelCase means;
+// a run of capitals is one word.
+function firstWord(name: string): string | undefined {
+  const [first] = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+  return first;
+}
+
 export function isWritingTool(tool: string): boolean {
   const name = tool.startsWith("mcp__")
     ? (tool.split("__").pop() ?? tool)
     : tool;
-  const [first] = name.split(/[^A-Za-z0-9]+|(?=[A-Z])/).filter(Boolean);
+  const first = firstWord(name);
   return first !== undefined && WRITING_TOOL_VERBS.has(first.toLowerCase());
 }
 
