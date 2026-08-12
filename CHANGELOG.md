@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Parse Bash commands as shell syntax rather than by splitting on whitespace.
+  The tokenizer understands quotes (including `$'…'` and `$"…"`), heredoc
+  bodies, command and process substitutions, subshells, shell keywords,
+  redirection operators and their file-descriptor prefixes. Several ordinary
+  ways of naming a file were invisible to the old split: a path with a space in
+  it, `cat <secrets` with no space, a `cat` on the second line of a multi-line
+  command, `(cat secrets)`, `while cat secrets; do :; done`, and
+  `echo $(cat secrets)`
+- Tokens record whether they came from a redirection operator or from a word, so
+  a quoted `>` is read as an operand. `grep ">" secrets`, an ordinary way to
+  search a file for a `>` character, previously had `secrets` skipped as though
+  it were an output target
+- Scan the value of a variable referenced through an expansion that carries a
+  suffix, such as `${TOKEN:-fallback}` or `${TOKEN#prefix}`. Only the bare
+  `$TOKEN` and `${TOKEN}` forms were recognised before
+- Heredoc bodies are treated as text, not commands: writing a script that
+  mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known limitation: a
+  heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,
+  written up under "② PreToolUse hook" in the README
+
+---
+
 ## v0.7.0 (2026-08-04)
 
 ### Features

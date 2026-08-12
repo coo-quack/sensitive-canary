@@ -468,6 +468,26 @@ PreToolUse hook
 When blocked, Claude receives a JSON response explaining the reason and is prompted to tell the user.
 The terminal also receives a direct message (via `/dev/tty`).
 
+#### Known limitation: heredoc bodies
+
+A heredoc body is treated as text, not as commands, so writing a script that mentions `.env` is not itself a read:
+
+```bash
+cat > deploy.sh <<'EOF'
+cat .env
+EOF
+```
+
+The trade-off is that a heredoc which *feeds* commands to another shell is not inspected either:
+
+```bash
+ssh host <<'EOF'
+cat /etc/secrets
+EOF
+```
+
+The `cat` inside that body runs on the remote host, and the hook does not scan it.
+
 ---
 
 ## Allow Tags (detailed)
