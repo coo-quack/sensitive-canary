@@ -300,6 +300,21 @@ interface CommandBehaviour {
 
 // Single place where a command name becomes a behaviour, so a name added to one
 // list cannot silently disagree with another.
+//
+// Not every per-command decision belongs here, and two deliberately stay out.
+// isClassifiableCommand below reads this record generically — any truthy field
+// means "operands understood" — which is what lets a new field be added without
+// updating it, and also what a field has to respect to live here:
+//
+//   - `WRITE_TARGET_FLAGS[cmd]` would arrive as a Set, truthy even when empty,
+//     making every command classifiable and stopping the wrapper search at the
+//     first operand it meets.
+//   - `cmd === "env"` for the `-S` string would make `env` classifiable, and
+//     `env` is left out on purpose: it is a wrapper as often as a command.
+//
+// Both are therefore read from their tables at the point of use rather than
+// folded in here. Anything added to this record must be a boolean that means
+// "this hook understands what the command does with its operands".
 function classifyCommand(cmd: string): CommandBehaviour {
   return {
     printsOperands: FILE_READ_COMMANDS.has(cmd),
