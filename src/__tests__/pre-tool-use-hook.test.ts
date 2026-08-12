@@ -75,6 +75,37 @@ describe("pre-tool-use-hook — non-Read/non-Bash tools", () => {
   });
 });
 
+// ── which channel a block is reported on ──────────────────────────────────────
+
+// The reason goes on stderr alone. Writing to both channels would leave the
+// documented one dead, because stdout wins and stderr is discarded when both
+// carry text — measured with probe hooks, and the reason this hook writes one.
+// Nothing asserted the stdout half of that, so a payload could come back on
+// stdout and every other test would still pass.
+describe("pre-tool-use-hook — block channel", () => {
+  it("reports the reason on stderr and writes nothing to stdout", () => {
+    const p = writeFixture(".env", "DEBUG=true\n");
+    const { exitCode, stdout, stderr } = runHook("Read", p);
+    expect(exitCode).toBe(2);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("allow-secret");
+  });
+
+  // An allowed call cannot be recognised by an empty stderr: node's type
+  // stripping is experimental, so it warns there on every run. That is why the
+  // harness reads the reason only when the exit code says a block happened,
+  // rather than treating whatever is on stderr as one.
+  it("says nothing about a block when the call is allowed", () => {
+    const p = writeFixture("channel-clean.txt", "nothing here\n");
+    const { exitCode, stdout, stderr, reason } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe("");
+    expect(reason).toBeNull();
+    expect(stderr).not.toContain("allow-secret");
+    expect(stderr).not.toContain("Blocked");
+  });
+});
+
 // ── .env / .env.* — secret name block ─────────────────────────────────────────
 
 describe("pre-tool-use-hook — .env/.env.* name block (secret category)", () => {
