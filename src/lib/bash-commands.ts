@@ -211,15 +211,34 @@ function gitSubcommandPrintsFiles(
 // Commands whose `-i` rewrites the files it is handed instead of printing them.
 // Not every `-i` means that: `grep -i` matches case-insensitively and still
 // prints, which is why this is a list rather than a check on the flag alone.
-// `perl` and `ruby` bundle their short flags, so the in-place flag arrives as
-// `-pi` as often as `-i`, and `perl -i.bak` carries its backup suffix attached.
 const IN_PLACE_EDIT_COMMANDS = new Set(["sed", "perl", "ruby"]);
+
+// Short switches that carry no value, so a bundle of them can be read letter by
+// letter. `perl` and `ruby` bundle: the in-place flag arrives as `-pi` as often
+// as `-i`. Anything outside this set ends the reading, because the letters after
+// it are its value rather than more switches — which is the whole point of the
+// set. `-[A-Za-z]*i` looked like it covered the bundles, and did, but it also
+// matched the `i` inside `-MList::Util`, `-Mstrict` and `-Ilib`, so an ordinary
+// `perl -Ilib -pe 'print' secrets` was taken for an in-place edit and the file
+// went unscanned. That is a missed read, the direction that costs something.
+const VALUELESS_SHORT_SWITCHES = new Set("0aclnpsStuvwCVWX");
+
+// True when a token is the in-place flag: `-i`, `-i.bak`, a bundle reaching `i`
+// through valueless switches only (`-pi`, `-lpi`, `-pie`), or the long form.
+function isInPlaceFlag(value: string): boolean {
+  if (value === "--in-place" || value.startsWith("--in-place=")) return true;
+  if (!value.startsWith("-") || value.startsWith("--")) return false;
+
+  for (const ch of value.slice(1)) {
+    if (ch === "i") return true;
+    if (!VALUELESS_SHORT_SWITCHES.has(ch)) return false;
+  }
+  return false;
+}
 
 function editsInPlace(cmd: string, operands: ShellToken[]): boolean {
   if (!IN_PLACE_EDIT_COMMANDS.has(cmd)) return false;
-  return operands.some(
-    ({ value }) => value === "--in-place" || /^-[A-Za-z]*i/.test(value),
-  );
+  return operands.some(({ value }) => isInPlaceFlag(value));
 }
 
 // Global git flags that carry a separate value before the subcommand

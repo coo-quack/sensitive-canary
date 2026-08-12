@@ -26,9 +26,12 @@
   `join`, `look`, plus a second class whose first non-flag argument is a pattern
   or script and whose remaining arguments are files (`sed`, `awk`, `grep`, `rg`,
   `ag`, `jq`, `yq`). In-place editing is exempt: `sed -i`, `perl -i` and
-  `ruby -i` (including bundled forms such as `perl -pi -e`) send the result back
-  to the file and write nothing to stdout. `grep -i` is unaffected — its `-i` is
-  case-insensitive matching, and it still prints
+  `ruby -i` (including bundled forms such as `perl -pi -e` and `perl -lpi`) send
+  the result back to the file and write nothing to stdout. A bundle is read
+  letter by letter and stops at the first switch that carries a value, so
+  `perl -Ilib -pe` and `perl -MList::Util -pe` are reads rather than in-place
+  edits. `grep -i` is unaffected — its `-i` is case-insensitive matching, and it
+  still prints
 - Locate the command past a wrapper (`sudo`, `env VAR=1`, `timeout N`, `nice`,
   `xargs`, `stdbuf`) and past a leading `VAR=value` assignment, so the wrapped
   command is classified instead of the wrapper
