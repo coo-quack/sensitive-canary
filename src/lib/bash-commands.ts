@@ -316,6 +316,16 @@ function isWrapperTarget(name: string): boolean {
 // still walks past those. That is the direction to be wrong in: it collects
 // paths that are not read rather than missing a read, and `sudo -u root cat f`
 // depends on it, because `root` is not distinguishable from a command name.
+//
+// Treat this as a stopgap rather than a list to grow. Each name added buys one
+// more false positive and leaves the general case untouched, and a list that
+// accumulates one report at a time is the shape of a rule nobody wrote down. The
+// real fix is to model each wrapper's own arguments — the flags that take a
+// value, and the leading operand of `timeout` and `flock` — so the command
+// position is determinate and no allowlist is needed. That was not done here
+// because an incomplete table of those flags fails the other way, missing reads
+// instead of over-reporting them. If a third false positive of this shape turns
+// up, do that instead of adding a sixth name.
 const ARGUMENT_ONLY_COMMANDS = new Set([
   "echo",
   "printf",
