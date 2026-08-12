@@ -449,7 +449,7 @@ When blocked, the terminal shows what was detected and how to bypass it.
 
 ### ② PreToolUse hook
 
-Runs just before Claude calls the `Read`, `Bash`, `Grep`, or MCP tools.
+Runs just before Claude calls the `Read`, `Bash` or `Grep` tool, or any MCP tool.
 
 ```
 Claude calls Read / Bash / Grep / MCP tool
@@ -474,15 +474,16 @@ PreToolUse hook
       │     base64, xxd, strings, diff, comm, dd, and git subcommands) targeting
       │     a named file → file contents scanned
       │
-      ├─ Grep tool ──────────────────────────────────────────────────────
-      │  1. target file path contains secret / PII → blocked
-      │
-      └─ MCP tools (mcp__*) ───────────────────────────────────────────
-         1. input fields naming an existing file (path, file_path, and nested
-            arguments) are scanned for secret / PII → blocked
+      └─ every other tool, Grep and mcp__* included ─────────────────────
+         1. input fields naming an existing file are scanned for
+            secret / PII → blocked
 ```
 
-Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Tools whose name says they write, both the built-in `Write` and `Edit` and MCP tools such as `mcp__fs__write_file`, are skipped for the same reason.
+The fields searched are `file_path`, `filePath`, `path`, `paths`, `file`, `absolute_path` and `notebook_path`, found up to two levels down and inside arrays of objects — so both `{ "path": "…" }` and `{ "args": { "paths": [{ "path": "…" }] } }` are covered. A field naming a directory is left alone.
+
+Which tools reach the hook at all is the matcher's business, and the default (`Read|Bash|Grep|mcp__.*`) sends it `Read`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives.
+
+Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Neither are the tools that surface no file contents — `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`, `AskUserQuestion` — nor any tool whose name leads with a write verb, such as `mcp__fs__write_file` or `createPage`.
 
 Neither is a command that sends its result back to the file it was handed. `sed -i`, `perl -i` and `ruby -i` (bundled forms such as `perl -pi -e` included) edit in place and write nothing to stdout. `git log <file>` is not a read either — it prints who changed the file and when — unless a patch is asked for with `-p`, `--patch` or `-U<n>`.
 

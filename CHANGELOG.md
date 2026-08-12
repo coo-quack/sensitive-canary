@@ -44,12 +44,16 @@
   output is redirected
 - Treat commands that only measure a file (`wc`, `cksum`, `md5sum`, `sha1sum`,
   `sha256sum`) as non-reads, whether the file is named or fed in over `<`
-- Inspect the `Grep` tool: its `path` is scanned when it names a regular file
-- Inspect every other tool, MCP included: input fields that name an existing
-  regular file (`path`, `file_path`, nested up to two levels) are scanned before
-  the call. `Write`, `Edit`, `Glob`, `TodoWrite` and tools whose name leads with a
-  write verb are exempt, since naming a file they do not read is not a leak. The
-  default matcher becomes `Read|Bash|Grep|mcp__.*`
+- Inspect the file inputs of every tool other than `Read` and `Bash`, `Grep` and
+  the MCP tools included. An input field naming an existing regular file is
+  scanned before the call: `file_path`, `filePath`, `path`, `paths`, `file`,
+  `absolute_path` and `notebook_path`, found up to two levels down and inside
+  arrays of objects. A field naming a directory is left alone. Exempt are the
+  tools that surface no file contents (`Write`, `Edit`, `MultiEdit`,
+  `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`,
+  `AskUserQuestion`) and tools whose name leads with a write verb (`write_file`,
+  `createPage`): naming a file they do not read is not a leak. The default
+  matcher becomes `Read|Bash|Grep|mcp__.*`
 - Heredoc bodies are treated as text, not commands: writing a script that
   mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known limitation: a
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,
