@@ -252,6 +252,23 @@ describe("pre-tool-use-hook — shell parsing", () => {
       const result = runBashHook(`cat >> ${file}`);
       expect(result.exitCode).toBe(0);
     });
+
+    // The `<` case the other direction: a printing command fed over stdin does
+    // print the file, so the token after the operator is collected rather than
+    // skipped. `wc -l <file` above is the non-read half of the same branch.
+    it("a printing command fed over < blocks, with no space", () => {
+      const file = writeFixture("stdin_nospace.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat <${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("a printing command fed over < blocks, with a space", () => {
+      const file = writeFixture("stdin_space.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`cat < ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
   });
 
   describe("environment variable expansion", () => {
