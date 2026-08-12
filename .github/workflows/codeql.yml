@@ -19,6 +19,14 @@ on:
 
 permissions: {}
 
+# Two pushes in quick succession otherwise run two full analyses of the same
+# branch, and the older one's results are stale the moment it finishes.
+# Cancelling is safe here: every trigger analyses a single ref, so the surviving
+# run covers the tree the cancelled one was working towards.
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
