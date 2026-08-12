@@ -22,6 +22,42 @@ export interface ShellToken {
   redirect: boolean;
 }
 
+// Where reading continues after `s[i]`, and the quote state there.
+//
+// `consumed` marks a position that was quoting syntax rather than content: an
+// opening or closing quote, or a backslash and the character it escapes. A
+// caller skips those and inspects only the rest.
+interface QuoteStep {
+  next: number;
+  quote: string | null;
+  consumed: boolean;
+}
+
+// The one place the quoting rule is written down: a quote character opens a run
+// and its twin closes it, and a backslash escapes the next character everywhere
+// except inside single quotes, where it is literal.
+//
+// Three scanners each spelled that rule out for themselves — as
+// `quote === '"' && ch === "\\"`, as `ch === "\\" && quote !== "'"`, and as
+// `i += quote === "'" ? 1 : 2`. They agreed, which is the point: three spellings
+// of one rule agree until someone corrects one of them.
+function stepQuote(s: string, i: number, quote: string | null): QuoteStep {
+  const ch = s[i] as string;
+
+  if (ch === "\\" && quote !== "'") {
+    return { next: i + 2, quote, consumed: true };
+  }
+  if (quote !== null) {
+    return ch === quote
+      ? { next: i + 1, quote: null, consumed: true }
+      : { next: i + 1, quote, consumed: false };
+  }
+  if (ch === "'" || ch === '"') {
+    return { next: i + 1, quote: ch, consumed: true };
+  }
+  return { next: i + 1, quote: null, consumed: false };
+}
+
 // Variable names referenced by the command, including expansion forms that carry
 // a suffix such as `${TOKEN:-fallback}` or `${TOKEN#prefix}`.
 export function extractEnvVarNames(command: string): string[] {
@@ -251,22 +287,13 @@ function findHeredocDelimiters(line: string): HeredocDelimiter[] {
   let i = 0;
 
   while (i < line.length) {
+    const step = stepQuote(line, i, quote);
+    quote = step.quote;
+    if (step.consumed || quote !== null) {
+      i = step.next;
+      continue;
+    }
     const ch = line[i] as string;
-    if (quote !== null) {
-      if (quote === '"' && ch === "\\") i++;
-      else if (ch === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      i++;
-      continue;
-    }
-    if (ch === "\\") {
-      i += 2;
-      continue;
-    }
     if (ch === "<" && line[i + 1] === "<") {
       let j = i + 2;
       let allowTabs = false;
@@ -339,27 +366,24 @@ function findSubstitutionEnd(
   let depth = 0;
   let quote: string | null = null;
 
-  for (let i = from; i < command.length; i++) {
+  let i = from;
+  while (i < command.length) {
+    const step = stepQuote(command, i, quote);
+    quote = step.quote;
+    if (step.consumed || quote !== null) {
+      i = step.next;
+      continue;
+    }
     const ch = command[i] as string;
-    if (ch === "\\" && quote !== "'") {
-      i++;
-      continue;
-    }
-    if (quote !== null) {
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      continue;
-    }
+    const at = i;
+    i = step.next;
     if (close === "`") {
-      if (ch === "`") return i;
+      if (ch === "`") return at;
       continue;
     }
     if (ch === "(") depth++;
     else if (ch === ")") {
-      if (depth === 0) return i;
+      if (depth === 0) return at;
       depth--;
     }
   }
@@ -376,36 +400,24 @@ export function extractSubstitutions(command: string): string[] {
   let quote: string | null = null;
   let i = 0;
 
+  // Unlike the scanners above, this one has to look inside double quotes: a
+  // command substitution expands there. So it skips only what `stepQuote` calls
+  // consumed, and asks the quote state whether an opener counts where it stands.
   while (i < command.length) {
-    const ch = command[i] as string;
-
-    if (ch === "\\") {
-      i += quote === "'" ? 1 : 2;
-      continue;
-    }
-    if (quote === "'") {
-      if (ch === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (quote === '"' && ch === '"') {
-      quote = null;
-      i++;
-      continue;
-    }
-    if (quote === null && (ch === "'" || ch === '"')) {
-      quote = ch;
-      i++;
+    const step = stepQuote(command, i, quote);
+    quote = step.quote;
+    if (step.consumed) {
+      i = step.next;
       continue;
     }
 
     const opener = SUBSTITUTIONS.find(
       (s) =>
         command.startsWith(s.open, i) &&
-        (quote === null || s.expandsInDoubleQuotes),
+        (quote === null || (quote === '"' && s.expandsInDoubleQuotes)),
     );
     if (opener === undefined) {
-      i++;
+      i = step.next;
       continue;
     }
 
