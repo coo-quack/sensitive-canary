@@ -82,7 +82,8 @@
 ### CI
 
 - Add a `versions` job that fails when `package.json` and
-  `.claude-plugin/plugin.json` declare different versions
+  `.claude-plugin/plugin.json` declare different versions, or when either
+  declares nothing that looks like one
 
 ---
 
