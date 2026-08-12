@@ -303,6 +303,27 @@ function isWrapperTarget(name: string): boolean {
   return isClassifiableCommand(name) || name === "env" || name === "printenv";
 }
 
+// Commands that write their operands out without ever opening them.
+//
+// These matter only to the wrapper search below, as the point where it has to
+// stop: everything after one of them is its own argument list. Without that
+// stop, `sudo echo cat secrets` walked past `echo` looking for a name it could
+// classify, found `cat` among echo's arguments, and blocked a command that
+// reads nothing.
+//
+// The set is deliberately short and cannot be complete — any command this hook
+// does not classify might be the one a wrapper handed off to, and the search
+// still walks past those. That is the direction to be wrong in: it collects
+// paths that are not read rather than missing a read, and `sudo -u root cat f`
+// depends on it, because `root` is not distinguishable from a command name.
+const ARGUMENT_ONLY_COMMANDS = new Set([
+  "echo",
+  "printf",
+  "true",
+  "false",
+  ":",
+]);
+
 // Index of the token naming the command whose operands matter.
 //
 // The lead command is the first token that is not a flag, redirection or
@@ -316,6 +337,12 @@ function isWrapperTarget(name: string): boolean {
 // mistake `root` for the command, and `timeout -s KILL 5 cat f` would
 // mistake `5`. Falling back to the lead leaves an unknown command classified
 // as itself.
+//
+// The search past a wrapper carries the same hazard one step further in, which
+// is why it stops at an ARGUMENT_ONLY_COMMANDS name: `sudo echo cat secrets`
+// otherwise resolved to the `cat` sitting in echo's arguments. Past any other
+// unclassifiable name the search continues, since that name may be a wrapper
+// flag's value rather than the command.
 function findCommandIndex(tokens: ShellToken[]): number {
   let lead = -1;
   for (let i = 0; i < tokens.length; i++) {
@@ -337,7 +364,8 @@ function findCommandIndex(tokens: ShellToken[]): number {
   for (let i = lead + 1; i < tokens.length; i++) {
     const tok = tokens[i];
     if (tok === undefined || isNonCommandToken(tok)) continue;
-    if (isWrapperTarget(path.basename(tok.value))) return i;
+    const name = path.basename(tok.value);
+    if (isWrapperTarget(name) || ARGUMENT_ONLY_COMMANDS.has(name)) return i;
   }
   return lead;
 }

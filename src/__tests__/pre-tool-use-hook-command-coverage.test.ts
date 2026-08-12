@@ -735,6 +735,41 @@ describe("pre-tool-use-hook — command classification", () => {
       const result = runBashHook(`printf cat ${file}`);
       expect(result.exitCode).toBe(0);
     });
+
+    // Behind a wrapper, the same operand had to survive one more search. The
+    // wrapper peel walked past `echo` looking for a name it could classify and
+    // found the `cat` in echo's arguments.
+    it("sudo echo cat <secretFile> should allow", () => {
+      const file = writeFixture("sudo_echo_cat.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`sudo echo cat ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("timeout 5 echo cat <secretFile> should allow", () => {
+      const file = writeFixture("timeout_echo_cat.txt", `key=${TOKEN_VALUE}`);
+      const result = runBashHook(`timeout 5 echo cat ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The stop must not cost the reads it was sitting in front of. A wrapper
+    // flag's value is indistinguishable from a command name, so the search has
+    // to keep going past it.
+    it("sudo -u root cat <secretFile> should still block", () => {
+      const file = writeFixture("sudo_u_root_cat.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`sudo -u root cat ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("timeout -s KILL 5 cat <secretFile> should still block", () => {
+      const file = writeFixture(
+        "timeout_kill_cat.txt",
+        `secret=${TOKEN_VALUE}`,
+      );
+      const result = runBashHook(`timeout -s KILL 5 cat ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
   });
 
   // Held back from the shell-parsing change: each needs a classification this
