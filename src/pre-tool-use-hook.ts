@@ -177,7 +177,8 @@ function block(
       fs.closeSync(fd);
     }
   } catch {
-    process.stderr.write(terminalMessage);
+    // No controlling terminal. The reason written to stderr below carries the
+    // same detection lines, so there is nothing to fall back to.
   }
 
   const reasonLines = [
@@ -191,12 +192,20 @@ function block(
     "Please tell the user about this block and suggest the appropriate tag.",
   ];
 
-  process.stdout.write(
-    `${JSON.stringify({
-      decision: "block",
-      reason: reasonLines.join("\n"),
-    })}\n`,
-  );
+  // Exit 2 blocks the tool call and stderr is the documented way to say why.
+  //
+  // The reason used to be written to stdout as `{"decision":"block", …}`. That
+  // does reach Claude on the current version — measured with a probe hook, not
+  // assumed — but the documentation says stdout is ignored on a non-zero exit
+  // and that PreToolUse takes its decision from `hookSpecificOutput`, not from a
+  // top-level `decision` field. So the old form worked by way of behaviour no
+  // longer described anywhere, and a release could drop it without breaking a
+  // documented contract. Blocking would survive that (exit 2 is the block), but
+  // the reason and the allow-tag guidance would not.
+  //
+  // When both channels carry text, stdout wins and stderr is discarded, so
+  // writing both would leave the documented one dead. Hence stderr alone.
+  process.stderr.write(`${reasonLines.join("\n")}\n`);
   process.exit(2);
 }
 

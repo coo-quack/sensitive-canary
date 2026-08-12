@@ -33,7 +33,9 @@ export interface HookResult {
   // payload it is read from, so a test says what it means and does not have to
   // change if the way a block is returned ever does.
   blocked: boolean;
-  // The text the hook offers Claude on a block, from its stdout payload.
+  // The text Claude receives on a block. Read from stderr, which is where a
+  // hook exiting 2 is heard; on an allowed call there is none, so a config
+  // warning printed to stderr is not mistaken for a reason.
   reason: string | null;
 }
 
@@ -50,18 +52,8 @@ function spawnHook(input: string, opts?: RunOptions): HookResult {
     stdout: result.stdout,
     stderr: result.stderr,
     blocked: exitCode === 2,
-    reason: parseReason(result.stdout),
+    reason: exitCode === 2 ? result.stderr : null,
   };
-}
-
-// The hook's block payload carries the reason it offers Claude. A run that
-// allowed the call writes nothing, so there is nothing to parse.
-function parseReason(stdout: string): string | null {
-  try {
-    return (JSON.parse(stdout) as { reason?: string }).reason ?? null;
-  } catch {
-    return null;
-  }
 }
 
 // Feed the hook a raw stdin payload, for cases where the payload is not valid
