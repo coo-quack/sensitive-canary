@@ -1,28 +1,12 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runBashHook } from "./hook-harness.ts";
+import { describe, expect, it } from "vitest";
+import {
+  AWS_KEY,
+  runBashHook,
+  TOKEN_VALUE,
+  useFixtureDir,
+} from "./hook-harness.ts";
 
-let tmpDir: string;
-beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "sensitive-canary-shell-"));
-});
-afterAll(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
-function writeFixture(name: string, content: string) {
-  const p = join(tmpDir, name);
-  writeFileSync(p, content, "utf8");
-  return p;
-}
-
-// Assembled so the full strings never appear in this file's source.
-const AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
-const TOKEN_VALUE = ["ghp_", "1234567890abcdefghij", "klmnopqrstuvwxyz"].join(
-  "",
-);
+const writeFixture = useFixtureDir("shell");
 
 describe("pre-tool-use-hook — shell parsing", () => {
   describe("command substitution", () => {

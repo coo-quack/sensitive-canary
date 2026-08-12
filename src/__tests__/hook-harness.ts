@@ -1,9 +1,14 @@
-// Shared way to run the PreToolUse hook as a child process and read its verdict.
-// Both hook test files use it so that "run the hook" has one meaning and one
-// options shape, rather than a same-named helper per file.
+// Shared way to run the PreToolUse hook as a child process and read its verdict,
+// and to give it a file to read. The hook test files use these so that "run the
+// hook" and "write a fixture" each have one meaning and one options shape, rather
+// than a same-named helper per file.
 
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll } from "vitest";
 
 // fileURLToPath rather than `.pathname`, which leaves a checkout under a path
 // with spaces percent-encoded and hands `node` a filename that does not exist.
@@ -92,3 +97,48 @@ export function runBashHook(command: string, opts?: RunOptions): HookResult {
 export function runGrepHook(searchPath: string, opts?: RunOptions): HookResult {
   return runToolHook("Grep", { pattern: "foo", path: searchPath }, opts);
 }
+
+// A temp directory for one test file's fixtures, made before its tests and
+// removed after them, with the `writeFixture` that belongs to it.
+//
+// Three test files opened with the same twenty lines, differing only in the
+// mkdtemp prefix. This module already exists so that running the hook has one
+// meaning rather than one per file; writing a file for it to scan is the same
+// kind of thing.
+export interface FixtureWriter {
+  // Write a fixture and return its absolute path.
+  (name: string, content: string): string;
+  // A path inside the directory without writing anything — the directory itself
+  // when no name is given. For the cases that need a target which is not a
+  // regular file: a directory, or a name that does not exist.
+  path(name?: string): string;
+}
+
+export function useFixtureDir(label: string): FixtureWriter {
+  let dir = "";
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), `sensitive-canary-${label}-`));
+  });
+  afterAll(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const write = (name: string, content: string): string => {
+    const p = join(dir, name);
+    writeFileSync(p, content, "utf8");
+    return p;
+  };
+  return Object.assign(write, {
+    path: (name?: string) => (name === undefined ? dir : join(dir, name)),
+  });
+}
+
+// Assembled so the full strings never appear in a test file's source. The
+// integration test deliberately uses neither: a canonical key is recited from
+// memory by a live session, which its leak assertion cannot tell from a leak.
+export const AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
+export const TOKEN_VALUE = [
+  "ghp_",
+  "1234567890abcdefghij",
+  "klmnopqrstuvwxyz",
+].join("");

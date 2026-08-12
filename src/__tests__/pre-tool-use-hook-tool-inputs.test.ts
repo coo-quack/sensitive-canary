@@ -1,28 +1,13 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runGrepHook, runToolHook } from "./hook-harness.ts";
+import { describe, expect, it } from "vitest";
+import {
+  AWS_KEY,
+  runGrepHook,
+  runToolHook,
+  TOKEN_VALUE,
+  useFixtureDir,
+} from "./hook-harness.ts";
 
-let tmpDir: string;
-beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "sensitive-canary-tool-inputs-"));
-});
-afterAll(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
-function writeFixture(name: string, content: string) {
-  const p = join(tmpDir, name);
-  writeFileSync(p, content, "utf8");
-  return p;
-}
-
-// Assembled so the full strings never appear in this file's source.
-const AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
-const TOKEN_VALUE = ["ghp_", "1234567890abcdefghij", "klmnopqrstuvwxyz"].join(
-  "",
-);
+const writeFixture = useFixtureDir("tool-inputs");
 
 describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
   describe("Grep tool", () => {
@@ -47,12 +32,12 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
     });
 
     it("should allow on directory path (known limitation)", () => {
-      const result = runGrepHook(tmpDir);
+      const result = runGrepHook(writeFixture.path());
       expect(result.exitCode).toBe(0);
     });
 
     it("should allow on non-existent path", () => {
-      const result = runGrepHook(join(tmpDir, "nonexistent.txt"));
+      const result = runGrepHook(writeFixture.path("nonexistent.txt"));
       expect(result.exitCode).toBe(0);
     });
   });
