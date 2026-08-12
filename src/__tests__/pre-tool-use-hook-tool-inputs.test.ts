@@ -129,6 +129,41 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // The field-name list can only hold names someone thought of, so a value
+    // shaped like a path is collected whatever its field is called.
+    it.each(["target", "document", "uri", "input", "attachment"])(
+      "mcp tool naming an absolute path under %s should block",
+      (field) => {
+        const file = writeFixture(`shape_${field}.txt`, `key=${AWS_KEY}`);
+        const result = runToolHook("mcp__example__tool", { [field]: file });
+        expect(result.exitCode).toBe(2);
+        expect(result.blocked).toBe(true);
+      },
+    );
+
+    it("mcp tool with an unlisted field holding an array of paths should block", () => {
+      const file = writeFixture("shape_array.txt", `secret=${TOKEN_VALUE}`);
+      const result = runToolHook("mcp__example__tool", { args: [file] });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The other half of that rule, and the reason it is not "any string": a
+    // search pattern is not a path. `.env` exists in most checkouts, so
+    // collecting every string would block a search for the text `.env` as
+    // though it were a read of the file.
+    it("a search pattern that names an existing file should allow", () => {
+      writeFixture(".env", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__example__search", { pattern: ".env" });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a bare word under an unlisted field should allow", () => {
+      writeFixture("secrets", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__example__search", { query: "secrets" });
+      expect(result.exitCode).toBe(0);
+    });
+
     it("mcp tool with nonexistent path should allow", () => {
       const result = runToolHook("mcp__example__tool", {
         path: "/api/v1/users",
