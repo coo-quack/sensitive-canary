@@ -26,17 +26,23 @@ pnpm run ci         # typecheck + lint + tests (full CI check)
 ```
 main
  ├── develop          ← integration branch
- │    └── feature/*  ← new features and non-urgent fixes
+ │    └── <type>/*   ← everything that is not an urgent production fix
  └── hotfix/*        ← urgent production fixes
 ```
+
+Name the branch for the kind of change, using the same `<type>` vocabulary as the
+Conventional Commits requirement below: `feat/`, `fix/`, `refactor/`, `test/`,
+`docs/`, `ci/`, `chore/`. `feature/` is accepted as a synonym of `feat/`. What
+matters is that the prefix says what sort of change it is, so that a list of open
+branches reads the way the commit history does.
 
 ### Normal development
 
 ```
-feature/your-feature  →  develop  →  main (release)
+<type>/short-description  →  develop  →  main (release)
 ```
 
-1. Branch from `develop`: `git checkout -b feature/your-feature develop`
+1. Branch from `develop`: `git checkout -b feat/your-feature develop`
 2. Open a PR targeting `develop`
 3. After review and approval, merge into `develop`
 4. When ready to release, open a PR from `develop` → `main`
@@ -60,12 +66,21 @@ If the backport PR has conflicts, resolve them manually before merging.
 4. Update `docs/rules.md` — add full reference entry
 5. Update `CHANGELOG.md` — note the new rule under the next version
 
+## Changelog
+
+Changes land under a `## Unreleased` heading at the top of `CHANGELOG.md`, in the
+same `### Features` / `### Fixes` / `### CI` sections a released version uses. The
+release turns that heading into `## vX.Y.Z (YYYY-MM-DD)` rather than writing the
+notes from scratch, so an entry is written by the PR that makes the change, while
+the reason for it is still at hand.
+
 ## Release Checklist
 
 When bumping a version, open a PR from `develop` → `main` with:
 
-1. Update `version` in `package.json` and `.claude-plugin/plugin.json` — the `versions` job in CI fails when the two disagree
-2. Update `CHANGELOG.md` with a new `## vX.Y.Z (YYYY-MM-DD)` section
+1. Update `version` in `package.json` and `.claude-plugin/plugin.json` — the `versions` job in CI fails when the two disagree, or when either declares no version
+   - Correcting a mismatch is the one version edit that does not need a release PR: the two files disagreeing is a bug, and CI is red until it is fixed
+2. Rename `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z (YYYY-MM-DD)`
    - `docs/changelog.md` is a symlink to `CHANGELOG.md` — do not edit it separately
    - This content is automatically used as the GitHub Release notes by `release.yml`
 3. Review `docs/rules.md` — add/update any changed rules
