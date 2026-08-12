@@ -7,18 +7,18 @@ Thanks for your interest in contributing to Sensitive Canary!
 ```bash
 git clone https://github.com/coo-quack/sensitive-canary.git
 cd sensitive-canary
-npm install
+pnpm install
 ```
 
 ## Commands
 
 ```bash
-npm test           # Run tests
-npm run test:watch # Run tests in watch mode
-npm run typecheck  # Type check with tsc
-npm run lint       # Check with Biome
-npm run fix        # Lint + auto-fix with Biome
-npm run ci         # typecheck + lint + tests (full CI check)
+pnpm test          # Run tests
+pnpm run test:watch # Run tests in watch mode
+pnpm run typecheck  # Type check with tsc
+pnpm run lint       # Check with Biome
+pnpm run fix        # Lint + auto-fix with Biome
+pnpm run ci         # typecheck + lint + tests (full CI check)
 ```
 
 ## Branching Strategy
@@ -70,6 +70,7 @@ When bumping a version, open a PR from `develop` → `main` with:
    - This content is automatically used as the GitHub Release notes by `release.yml`
 3. Review `docs/rules.md` — add/update any changed rules
 4. Review `README.md` — update rule counts and tables if needed
+5. Run the integration test (see below) — CI never does, and it is the only check that the block still reaches Claude
 
 After merging into `main`, `release.yml` automatically:
 - Creates a git tag `vX.Y.Z`
@@ -77,13 +78,25 @@ After merging into `main`, `release.yml` automatically:
 
 The documentation site is also redeployed automatically on merge to `main`.
 
+## Integration test
+
+`src/__tests__/pre-tool-use-hook.integration.test.ts` runs the hook inside a real headless Claude Code session. It is the only test that checks Claude Code acts on what the hook says — the rest spawn the hook and read its output themselves, which passes whether or not the runtime reads that channel.
+
+It needs credentials and network, so it is opt-in and CI skips it:
+
+```bash
+SENSITIVE_CANARY_INTEGRATION=1 pnpm test src/__tests__/pre-tool-use-hook.integration.test.ts
+```
+
+Run it by hand whenever the way a block is returned changes — the exit code, the channel the reason is written to, or the shape of the payload.
+
 ## Pull Requests
 
 - Follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `hotfix:`, etc.)
-- All tests must pass (`npm test`)
-- Lint must pass (`npm run lint`)
+- All tests must pass (`pnpm test`)
+- Lint must pass (`pnpm run lint`)
 - One approval required to merge
 
 ## Code Style
 
-Enforced by [Biome](https://biomejs.dev/). Run `npm run fix` before committing.
+Enforced by [Biome](https://biomejs.dev/). Run `pnpm run fix` before committing.
