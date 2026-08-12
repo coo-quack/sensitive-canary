@@ -2,7 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { extractFilePathsFromCommand } from "./lib/bash-commands.ts";
+import { extractCommandRefs } from "./lib/bash-commands.ts";
 import {
   applyAllowTags,
   dedupeFindings,
@@ -265,8 +265,14 @@ process.stdin.on("end", () => {
 
   if (tool === "Bash") {
     const command = input.command ?? "";
+    const refs = extractCommandRefs(command);
 
-    for (const varName of extractEnvVarNames(command)) {
+    // A bare `env` or `printenv` prints everything, so every variable is in play.
+    const envVarNames = refs.dumpsEnvironment
+      ? Object.keys(process.env)
+      : [...new Set([...extractEnvVarNames(command), ...refs.envVars])];
+
+    for (const varName of envVarNames) {
       const value = process.env[varName];
       if (!value) continue;
       const findings = applyAllowTags(
@@ -301,7 +307,7 @@ process.stdin.on("end", () => {
       );
     }
 
-    for (const fp of extractFilePathsFromCommand(command)) {
+    for (const fp of refs.paths) {
       scanFile(fp, allowTags);
     }
 

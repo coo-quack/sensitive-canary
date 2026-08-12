@@ -459,3 +459,25 @@ export function isNonCommandToken(token: ShellToken): boolean {
   if (SHELL_KEYWORD_TOKENS.has(value)) return true;
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(value);
 }
+
+// Longest quoted literal inside inline code still treated as a path candidate.
+const MAX_QUOTED_LITERAL_LENGTH = 4096;
+
+// Quoted literals inside inline program text — the ".env" in
+// `python3 -c "print(open('.env').read())"`. Literals containing line breaks or
+// tabs are skipped: those are messages and patterns, not paths. Spaces are kept,
+// so a path like `open('my secret.txt')` is still found.
+export function extractQuotedLiterals(code: string): string[] {
+  const literals: string[] = [];
+  for (const match of code.matchAll(/'([^']*)'|"([^"]*)"/g)) {
+    const value = match[1] ?? match[2];
+    if (
+      value &&
+      value.length <= MAX_QUOTED_LITERAL_LENGTH &&
+      !/[\t\r\n]/.test(value)
+    ) {
+      literals.push(value);
+    }
+  }
+  return literals;
+}

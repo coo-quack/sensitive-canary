@@ -19,6 +19,31 @@
 - Scan the value of a variable referenced through an expansion that carries a
   suffix, such as `${TOKEN:-fallback}` or `${TOKEN#prefix}`. Only the bare
   `$TOKEN` and `${TOKEN}` forms were recognised before
+- Expand the set of commands whose operands are treated as files written to
+  stdout, from seven to around forty: `tac`, `rev`, `strings`, `xxd`, `od`,
+  `hexdump`, `base64`, `cut`, `sort`, `uniq`, `shuf`, `column`, `paste`, `fold`,
+  `fmt`, `pr`, `expand`, `unexpand`, `iconv`, the `z*cat` family, `diff`, `comm`,
+  `join`, `look`, plus a second class whose first non-flag argument is a pattern
+  or script and whose remaining arguments are files (`sed`, `awk`, `grep`, `rg`,
+  `ag`, `jq`, `yq`). In-place editing is exempt: `sed -i`, `perl -i` and
+  `ruby -i` (including bundled forms such as `perl -pi -e`) send the result back
+  to the file and write nothing to stdout. `grep -i` is unaffected — its `-i` is
+  case-insensitive matching, and it still prints
+- Locate the command past a wrapper (`sudo`, `env VAR=1`, `timeout N`, `nice`,
+  `xargs`, `stdbuf`) and past a leading `VAR=value` assignment, so the wrapped
+  command is classified instead of the wrapper
+- Parse and scan inline program text from `-c` / `-e` / `-pe`, both as a nested
+  command line and for the quoted path literals in it, which is what catches
+  `python3 -c "open('.env').read()"`
+- Scan the file operands of git subcommands that print contents (`show`, `diff`,
+  `blame`, `annotate`, `grep`, `cat-file`) and of `dd if=`. `git log` counts only
+  when a patch is asked for (`-p`, `--patch`, `-U<n>`, and the merge-diff forms):
+  without one it prints who changed the file and when, never a line of it
+- Scan every environment variable when a bare `env` or `printenv` would print the
+  whole environment, including behind a wrapper (`sudo printenv`) and when the
+  output is redirected
+- Treat commands that only measure a file (`wc`, `cksum`, `md5sum`, `sha1sum`,
+  `sha256sum`) as non-reads, whether the file is named or fed in over `<`
 - Heredoc bodies are treated as text, not commands: writing a script that
   mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known limitation: a
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,
