@@ -73,7 +73,7 @@
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,
   written up under "② PreToolUse hook" in the README
 
-### Fixed
+### Fixes
 
 - `.claude-plugin/plugin.json` declared `0.5.1` while `package.json` declared
   `0.7.0`: the release checklist asks for both, and the bump was missed for
