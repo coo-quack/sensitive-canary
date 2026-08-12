@@ -85,17 +85,36 @@ function runHeadless(prompt: string): string {
 
   // A session that never ran would satisfy the leak assertion for the wrong
   // reason — no output cannot contain a secret — and then fail the second one
-  // with nothing to explain why. Say so here instead.
-  if (result.error) {
+  // with nothing to explain why. Say so here instead, and separate the ways it
+  // can happen: a missing CLI, a run that never came back, and a run that came
+  // back unhappy each need a different thing done about them.
+  const error = result.error as (Error & { code?: string }) | undefined;
+  if (error?.code === "ENOENT") {
     throw new Error(
-      `could not run \`claude -p\`: ${result.error.message}. The integration test needs the Claude Code CLI on PATH and a signed-in session.`,
+      "`claude` is not on PATH. The integration test drives the real CLI; install it, or leave SENSITIVE_CANARY_INTEGRATION unset to skip.",
     );
   }
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-  if (output.trim() === "") {
+  if (error?.code === "ETIMEDOUT") {
     throw new Error(
-      `\`claude -p\` produced no output (exit ${result.status}). Check that the CLI is signed in.`,
+      `\`claude -p\` did not finish within ${TIMEOUT_MS} ms and was killed. A headless session is a network round trip — check connectivity before raising the timeout.`,
     );
+  }
+  if (error) {
+    throw new Error(`could not run \`claude -p\`: ${error.message}`);
+  }
+
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+  // A non-zero exit means the session itself failed, not that the hook blocked
+  // anything: the hook's block is reported inside a session that still exits 0.
+  // The output is passed through because whatever went wrong is in it.
+  if (result.status !== 0) {
+    throw new Error(
+      `\`claude -p\` exited ${result.status}:\n${output.trim() || "(no output)"}`,
+    );
+  }
+  if (output.trim() === "") {
+    throw new Error("`claude -p` exited 0 but produced no output.");
   }
   return output;
 }
