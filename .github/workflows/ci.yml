@@ -38,6 +38,47 @@ jobs:
       - run: pnpm install
       - run: pnpm audit --audit-level high
 
+  # The release checklist asks for `version` in package.json and
+  # .claude-plugin/plugin.json to be bumped together. Twice it was not: the
+  # plugin manifest stayed at 0.5.1 while 0.6.0 and 0.7.0 were released, and
+  # nothing noticed, because release.yml reads the version from package.json
+  # alone. Strengthening the checklist wording would not have caught it. This is
+  # the check that notices — reported as a failure here, though only a rule
+  # requiring this check would stop a merge past it.
+  versions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+      - name: package.json and plugin.json declare the same version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
+
+          # A comparison of two values goes quiet when neither is a value:
+          # `node -p` prints "undefined" for a missing field and "null" for a
+          # null one, and exits 0 either way, so two manifests declaring no
+          # version agreed with each other and this job passed saying so. Each
+          # side has to look like a version before the two are compared — a
+          # shape test rather than a list of the ways it can be absent, which
+          # would need extending every time a new one turns up.
+          for value in "$pkg" "$plugin"; do
+            if ! printf '%s' "$value" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "::error::a manifest declares no usable version — package.json is '$pkg', .claude-plugin/plugin.json is '$plugin'."
+              exit 1
+            fi
+          done
+
+          if [ "$pkg" != "$plugin" ]; then
+            echo "::error::version mismatch — package.json is $pkg, .claude-plugin/plugin.json is $plugin. Bump both (see the Release Checklist in CONTRIBUTING.md)."
+            exit 1
+          fi
+          echo "both declare $pkg"
+
   typecheck:
     runs-on: ubuntu-latest
     permissions:

@@ -73,6 +73,18 @@
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,
   written up under "② PreToolUse hook" in the README
 
+### Fixes
+
+- `.claude-plugin/plugin.json` declared `0.5.1` while `package.json` declared
+  `0.7.0`: the release checklist asks for both, and the bump was missed for
+  0.6.0 and 0.7.0. The plugin manifest now matches the released version
+
+### CI
+
+- Add a `versions` job that fails when `package.json` and
+  `.claude-plugin/plugin.json` declare different versions, or when either
+  declares nothing that looks like one
+
 ---
 
 ## v0.7.0 (2026-08-04)
