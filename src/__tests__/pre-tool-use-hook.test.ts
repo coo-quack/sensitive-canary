@@ -1,22 +1,10 @@
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-const HOOK = new URL("../pre-tool-use-hook.ts", import.meta.url).pathname;
-const NODE_FLAGS = ["--experimental-strip-types"];
+import { runBashHook, runHook, runHookWithRawInput } from "./hook-harness.ts";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-// The hook blocks by exiting 2, and writes the reason it offers Claude to
-// stderr. `blocked` is named for the outcome rather than for a payload field, so
-// a test says what it means and does not have to change if the way a block is
-// returned does.
-function readVerdict(result: { status: number | null; stderr: string }) {
-  const blocked = result.status === 2;
-  return { blocked, reason: blocked ? result.stderr : null };
-}
 
 let transcriptSeq = 0;
 
@@ -53,55 +41,6 @@ function writeTranscriptWithToolResults(
   const p = join(tmpDir, `transcript-${++transcriptSeq}.jsonl`);
   writeFileSync(p, lines.join("\n"), "utf8");
   return p;
-}
-
-function runHook(
-  toolName: string,
-  filePath: string,
-  opts?: { env?: Record<string, string>; transcriptPath?: string },
-) {
-  const input = JSON.stringify({
-    transcript_path: opts?.transcriptPath,
-    tool_name: toolName,
-    tool_input: { file_path: filePath },
-  });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...opts?.env },
-  });
-  const { blocked, reason } = readVerdict(result);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    blocked,
-    reason,
-  };
-}
-
-function runBashHook(
-  command: string,
-  opts?: { env?: Record<string, string>; transcriptPath?: string },
-) {
-  const input = JSON.stringify({
-    transcript_path: opts?.transcriptPath,
-    tool_name: "Bash",
-    tool_input: { command },
-  });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...opts?.env },
-  });
-  const { blocked, reason } = readVerdict(result);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    blocked,
-    reason,
-  };
 }
 
 // ── temp directory for fixture files ─────────────────────────────────────────
@@ -700,11 +639,8 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
 
 describe("pre-tool-use-hook — malformed input", () => {
   it("exits 0 on invalid JSON", () => {
-    const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-      input: "not json",
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
+    const { exitCode } = runHookWithRawInput("not json");
+    expect(exitCode).toBe(0);
   });
 });
 
