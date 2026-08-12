@@ -44,6 +44,18 @@
   output is redirected
 - Treat commands that only measure a file (`wc`, `cksum`, `md5sum`, `sha1sum`,
   `sha256sum`) as non-reads, whether the file is named or fed in over `<`
+- Inspect the file inputs of every tool other than `Read` and `Bash`, `Grep` and
+  the MCP tools included. An input field naming an existing regular file is
+  scanned before the call: `path`, `paths`, `file`, `files`, `filepath`,
+  `filename`, `filenames`, `absolutepath`, `notebookpath` and `sourcepath`,
+  compared with separators and case removed so that `file_path`, `filePath` and
+  `filepath` are one name. Found up to four levels down and inside arrays, of
+  strings and of objects alike. A field naming a directory is left alone.
+  Exempt are the tools that surface no file contents (`Write`, `Edit`, `MultiEdit`,
+  `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`,
+  `AskUserQuestion`) and tools whose name leads with a write verb (`write_file`,
+  `createPage`): naming a file they do not read is not a leak. The default
+  matcher becomes `Read|Bash|Grep|mcp__.*`
 - Heredoc bodies are treated as text, not commands: writing a script that
   mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known limitation: a
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,

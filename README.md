@@ -92,7 +92,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -141,7 +141,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -449,32 +449,41 @@ When blocked, the terminal shows what was detected and how to bypass it.
 
 ### ② PreToolUse hook
 
-Runs just before Claude calls the `Read` or `Bash` tool.
+Runs just before Claude calls the `Read`, `Bash` or `Grep` tool, or any MCP tool.
 
 ```
-Claude calls Read / Bash tool
+Claude calls Read / Bash / Grep / MCP tool
       ↓
 PreToolUse hook
       ↓
       ── Read tool ─────────────────────────────────────────────────────
       │  1. filename is .env / .env.* → blocked (secret category only)
       │  2. file contents contain secret / PII → blocked
-      └─ Bash tool ─────────────────────────────────────────────────────
-         1. env var values referenced in the command contain secret / PII → blocked
-         2. a bare env / printenv would print the whole environment → every
-            variable is scanned
-         3. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
-         4. the command is located past any wrapper (sudo, env VAR=1, timeout,
-            nice, xargs) and any leading VAR=value assignment
-         5. inline scripts (-c, -e, -pe) are parsed and scanned
-         6. file paths from input redirections, command substitutions and chained
-            commands are extracted and scanned
-         7. printing commands (cat, head, tail, sed, awk, grep, rg, cut, sort,
-            base64, xxd, strings, diff, comm, dd, and git subcommands) targeting
-            a named file → file contents scanned
+      │
+      ├─ Bash tool ──────────────────────────────────────────────────────
+      │  1. env var values referenced in the command contain secret / PII → blocked
+      │  2. a bare env / printenv would print the whole environment → every
+      │     variable is scanned
+      │  3. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
+      │  4. the command is located past any wrapper (sudo, env VAR=1, timeout,
+      │     nice, xargs) and any leading VAR=value assignment
+      │  5. inline scripts (-c, -e, -pe) are parsed and scanned
+      │  6. file paths from input redirections, command substitutions and chained
+      │     commands are extracted and scanned
+      │  7. printing commands (cat, head, tail, sed, awk, grep, rg, cut, sort,
+      │     base64, xxd, strings, diff, comm, dd, and git subcommands) targeting
+      │     a named file → file contents scanned
+      │
+      └─ every other tool, Grep and mcp__* included ─────────────────────
+         1. input fields naming an existing file are scanned for
+            secret / PII → blocked
 ```
 
-Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes.
+The field names searched are `path`, `paths`, `file`, `files`, `filepath`, `filename`, `filenames`, `absolutepath`, `notebookpath` and `sourcepath`, compared with separators and case removed — so `file_path`, `filePath` and `filepath` are one name. They are found up to four levels down and inside arrays, both of strings and of objects, so `{ "path": "…" }`, `{ "paths": ["…"] }` and `{ "args": { "paths": [{ "path": "…" }] } }` are all covered. A field naming a directory is left alone.
+
+Which tools reach the hook at all is the matcher's business, and the default (`Read|Bash|Grep|mcp__.*`) sends it `Read`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives.
+
+Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Neither are the tools that surface no file contents — `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`, `AskUserQuestion` — nor any tool whose name leads with a write verb, such as `mcp__fs__write_file` or `createPage`.
 
 Neither is a command that sends its result back to the file it was handed. `sed -i`, `perl -i` and `ruby -i` (bundled forms such as `perl -pi -e` included) edit in place and write nothing to stdout. `git log <file>` is not a read either — it prints who changed the file and when — unless a patch is asked for with `-p`, `--patch` or `-U<n>`.
 
@@ -484,6 +493,9 @@ The terminal also receives a direct message (via `/dev/tty`).
 ### Known Limitations
 
 - **Heredoc bodies** — a heredoc body is treated as text, not as commands, so `cat > deploy.sh <<'EOF'` writing a script that mentions `.env` is not itself a read. The trade-off is that a heredoc which *feeds* commands to another shell (`ssh host <<'EOF'` with a `cat /etc/secrets` in the body) is not inspected either.
+- **Directory targets** — nothing that names a directory rather than a file is scanned. That covers the Grep tool's `path` and a recursive search such as `grep -r pattern src/`, both of which would otherwise mean reading every file underneath.
+- **A write-named tool that also returns contents** — the exemption reads a tool's name, and assumes a name led by a write verb means the tool surfaces no file contents. `update` and `copy` are where those two things come apart: `mcp__*__update_file` and `mcp__*__copy_file` open a file to do their work, and one that returned the result would not be scanned. Scanning them instead would block writing to a file that already holds a secret, which is not a leak, so the exemption stays as it is.
+- **Field names not on the list** — a tool that carries its path under a name outside the list above (`target`, `document`, `uri`) is not scanned. The names are compared with separators and case removed, so spelling variants of a listed name are covered, but a different word is not.
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
 - **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
 - **`.env.*` is blocked by name** — the filename guard covers every `.env.*`, so a template like `.env.example` is blocked as well, now through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` for those.

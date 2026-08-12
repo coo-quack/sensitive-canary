@@ -13,13 +13,19 @@ import {
 } from "./lib/inspector.ts";
 import { enabledCategoriesFromEnv, type Finding, scan } from "./lib/rules.ts";
 import { extractEnvVarNames } from "./lib/shell.ts";
+import {
+  collectPathFields,
+  isWritingTool,
+  TOOLS_WITHOUT_FILE_OUTPUT,
+} from "./lib/tool-inputs.ts";
 
 interface HookInput {
   transcript_path?: string;
   tool_name?: string;
-  tool_input?: {
+  tool_input?: Record<string, unknown> & {
     file_path?: string;
     command?: string;
+    path?: string;
   };
 }
 
@@ -196,6 +202,21 @@ function block(
 
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
+// Scan a candidate only when it names an existing regular file. Tools whose
+// "path" means something else (a URL route, an object key) are left alone.
+function scanIfRegularFile(
+  candidate: string | undefined,
+  allowTags: Set<string>,
+): void {
+  if (!candidate) return;
+  try {
+    if (!fs.statSync(candidate).isFile()) return;
+  } catch {
+    return;
+  }
+  scanFile(candidate, allowTags);
+}
+
 function scanFile(filePath: string, allowTags: Set<string>): void {
   if (shouldBlockEnvFile(filePath)) {
     if (allowTags.size > 0) return;
@@ -312,6 +333,16 @@ process.stdin.on("end", () => {
     }
 
     process.exit(0);
+  }
+
+  // Every other tool, Grep and the MCP tools included: those can return file
+  // contents the same way Read does, so a field naming an existing file is
+  // scanned before the call. Grep needs no branch of its own — its `path` is one
+  // of the fields collected here, and it is neither exempt nor named as a writer.
+  if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool) && !isWritingTool(tool)) {
+    for (const candidate of collectPathFields(input)) {
+      scanIfRegularFile(candidate, allowTags);
+    }
   }
 
   process.exit(0);
