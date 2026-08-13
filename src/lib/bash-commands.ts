@@ -212,32 +212,46 @@ function gitSubcommandPrintsFiles(
 // prints, which is why this is a list rather than a check on the flag alone.
 const IN_PLACE_EDIT_COMMANDS = new Set(["sed", "perl", "ruby"]);
 
-// Short switches that carry no value, so a bundle of them can be read letter by
-// letter. `perl` and `ruby` bundle: the in-place flag arrives as `-pi` as often
-// as `-i`. Anything outside this set ends the reading, because the letters after
-// it are its value rather than more switches — which is the whole point of the
-// set. `-[A-Za-z]*i` looked like it covered the bundles, and did, but it also
-// matched the `i` inside `-MList::Util`, `-Mstrict` and `-Ilib`, so an ordinary
-// `perl -Ilib -pe 'print' secrets` was taken for an in-place edit and the file
-// went unscanned. That is a missed read, the direction that costs something.
-const VALUELESS_SHORT_SWITCHES = new Set("0aclnpsStuvwCVWX");
+// Short switches each of these commands accepts without a value, so a bundle of
+// them can be read one letter at a time in search of the `i`.
+//
+// Per command, because the letters differ and sharing one set got it wrong in
+// both directions: `E`, `r` and `z` are valueless for `sed` but absent from a
+// set chosen for `perl`, so the everyday `sed -Ei` was read as a non-in-place
+// command and its file scanned; while `0` was present for `perl -0777`, which
+// made `sed -0i` — not a sed flag at all — look like an in-place edit and left
+// its file unscanned.
+//
+// A letter that is not here stops the reading, whether it takes a value or the
+// list simply does not know it. That is the fail-closed direction: the command
+// is then treated as one that prints, and its operands are scanned.
+// `e` is absent from every line on purpose: it introduces a script for all three,
+// and a sed script contains `i` as its insert command, so reading past `-e` would
+// find an `i` in the program text and call the command an in-place edit.
+export const VALUELESS_SHORT_SWITCHES: Record<string, string> = {
+  sed: "anszEru",
+  perl: "aclnpsStTuUvwWX",
+  ruby: "acdlnpsSTUvwWy",
+};
 
-// True when a token is the in-place flag: `-i`, `-i.bak`, a bundle reaching `i`
-// through valueless switches only (`-pi`, `-lpi`, `-pie`), or the long form.
-function isInPlaceFlag(value: string): boolean {
+// True when a token is the in-place flag for `cmd`: `-i`, `-i.bak`, a bundle
+// reaching `i` past that command's valueless switches (`-pi`, `-lpi`, `-Ei`), or
+// the long form with or without a backup suffix.
+export function isInPlaceFlag(cmd: string, value: string): boolean {
   if (value === "--in-place" || value.startsWith("--in-place=")) return true;
   if (!value.startsWith("-") || value.startsWith("--")) return false;
 
+  const valueless = VALUELESS_SHORT_SWITCHES[cmd] ?? "";
   for (const ch of value.slice(1)) {
     if (ch === "i") return true;
-    if (!VALUELESS_SHORT_SWITCHES.has(ch)) return false;
+    if (!valueless.includes(ch)) return false;
   }
   return false;
 }
 
 function editsInPlace(cmd: string, operands: ShellToken[]): boolean {
   if (!IN_PLACE_EDIT_COMMANDS.has(cmd)) return false;
-  return operands.some(({ value }) => isInPlaceFlag(value));
+  return operands.some(({ value }) => isInPlaceFlag(cmd, value));
 }
 
 // Global git flags that carry a separate value before the subcommand

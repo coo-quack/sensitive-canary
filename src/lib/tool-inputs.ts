@@ -44,7 +44,10 @@ export const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
 // alternative costs more — scanning them blocks writing to a file that already
 // holds a secret, which is not a leak — and the gap that leaves is written up
 // under Known Limitations in the README.
-const WRITING_TOOL_VERBS = new Set([
+// Exported so the tests can generate a case per verb rather than list the ones
+// someone remembered: a verb added here without a test is what let `WRITE_FILE`
+// go unexempt for a release.
+export const WRITING_TOOL_VERBS = new Set([
   "write",
   "create",
   "edit",
