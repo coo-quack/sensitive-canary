@@ -64,7 +64,7 @@ If the backport PR has conflicts, resolve them manually before merging.
 2. Add tests to `src/lib/__tests__/rules.test.ts` — cover true positives, false negatives, and entropy filtering
 3. Update `README.md` — add to the detection rules table
 4. Update `docs/rules.md` — add full reference entry
-5. Update `CHANGELOG.md` — note the new rule under the next version
+5. Update `CHANGELOG.md` — add the rule under `## Unreleased` (see [Changelog](#changelog))
 
 ## Changelog
 
