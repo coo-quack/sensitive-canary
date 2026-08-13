@@ -10,7 +10,11 @@
 // removes its case rather than leaving a stale assertion behind.
 
 import { describe, expect, it } from "vitest";
-import { IN_PLACE_EDITORS, isInPlaceFlag } from "../bash-commands.ts";
+import {
+  IN_PLACE_EDITORS,
+  isInPlaceFlag,
+  PATTERN_SUPPLYING_FLAGS,
+} from "../bash-commands.ts";
 import {
   collectPathFields,
   isWritingTool,
@@ -59,9 +63,19 @@ describe("every write verb is exempt in every spelling", () => {
 });
 
 describe("in-place flags, per command and per switch letter", () => {
-  it.each(IN_PLACE_COMMANDS)("%s: -i and its long forms", (cmd) => {
-    for (const flag of ["-i", "-i.bak", "--in-place", "--in-place=.bak"]) {
+  it.each(IN_PLACE_COMMANDS)("%s: -i and -i with a suffix", (cmd) => {
+    for (const flag of ["-i", "-i.bak"]) {
       expect(isInPlaceFlag(cmd, flag), `${cmd} ${flag}`).toBe(true);
+    }
+  });
+
+  // The long form is sed's alone. perl and ruby spell it `-i` and would reject
+  // `--in-place`, so accepting it from them left their files unscanned.
+  it("only sed accepts the long form", () => {
+    for (const flag of ["--in-place", "--in-place=.bak"]) {
+      expect(isInPlaceFlag("sed", flag), `sed ${flag}`).toBe(true);
+      expect(isInPlaceFlag("perl", flag), `perl ${flag}`).toBe(false);
+      expect(isInPlaceFlag("ruby", flag), `ruby ${flag}`).toBe(false);
     }
   });
 
@@ -142,14 +156,32 @@ describe("table invariants", () => {
     },
   );
 
-  // Which commands edit in place, written out. The generated cases walk the
-  // table's keys, so they follow it wherever it goes; this is what notices a
-  // command being added to it or dropped from it.
-  it("the in-place editors are sed, perl and ruby", () => {
-    expect(Object.keys(IN_PLACE_EDITORS).sort()).toEqual([
-      "perl",
-      "ruby",
-      "sed",
+  // The table written out, letters and all. The generated cases walk it, so they
+  // follow it wherever it goes: a deleted letter deletes its own case and a new
+  // command brings its own. Measured — dropping `u` from `sed` passed everything.
+  //
+  // Deleting a letter is the fail-closed direction (the file gets scanned) and
+  // adding one is not, so this matters in both, and an equality covers both.
+  it("is exactly this", () => {
+    expect(IN_PLACE_EDITORS).toEqual({
+      sed: "anszEru",
+      perl: "aclnpsStTuUvwWX",
+      ruby: "acdlnpsSTUvwWy",
+    });
+  });
+
+  // The other table this file's subject depends on. A pattern flag deleted from
+  // it stops marking the pattern as supplied, and the file that follows is eaten
+  // as the pattern instead of being scanned — measured: deleting `--from-file`
+  // passed every test.
+  it("the pattern-supplying flags are exactly these", () => {
+    expect([...PATTERN_SUPPLYING_FLAGS].sort()).toEqual([
+      "--expression",
+      "--file",
+      "--from-file",
+      "--regexp",
+      "-e",
+      "-f",
     ]);
   });
 

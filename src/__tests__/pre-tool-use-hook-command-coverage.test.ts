@@ -245,6 +245,13 @@ describe("pre-tool-use-hook — command classification", () => {
       ["grep -faws", "attached_grep_f.txt"],
       ["sed -e's/a/b/'", "attached_sed_e.txt"],
       ["sed -ei\\hello", "attached_sed_insert.txt"],
+      // A one-character attached value. Every other case here uses several, and
+      // the test for "is there anything after the flag" is a length comparison:
+      // off by one and `grep -e. secrets` stops being scanned while these pass.
+      ["grep -e.", "attached_one_char.txt"],
+      ["grep -ex", "attached_one_letter.txt"],
+      ["grep -fp", "attached_f_one.txt"],
+      ["sed -ep", "attached_sed_one.txt"],
     ])("%s should block the file it is given", (prefix, fixture) => {
       const file = writeFixture(fixture, `key=${AWS_KEY}`);
       const result = runBashHook(`${prefix} ${file}`);

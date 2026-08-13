@@ -90,7 +90,7 @@ const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
 // `sed --expression='s/a/b/' secrets` consumed the file as the pattern and never
 // scanned it. The separate-value forms name a pattern or a pattern file, neither
 // of which is printed, so their value is skipped rather than collected.
-const PATTERN_SUPPLYING_FLAGS = new Set([
+export const PATTERN_SUPPLYING_FLAGS = new Set([
   "-e",
   "--regexp",
   "--expression",
@@ -261,16 +261,21 @@ export const IN_PLACE_EDITORS: Record<string, string> = {
 };
 
 // True when `cmd` edits in place given `value` as one of its flags: `-i`,
-// `-i.bak`, a bundle reaching `i` past that command's valueless switches
-// (`-pi`, `-lpi`, `-Ei`), or the long form with or without a backup suffix.
+// `-i.bak`, or a bundle reaching `i` past that command's valueless switches
+// (`-pi`, `-lpi`, `-Ei`).
 //
 // A command absent from the table is not an in-place editor at all, so no flag of
 // it counts — `grep -i` and `grep --in-place` alike.
+//
+// `--in-place` is sed's alone. Accepting it from every command in the table meant
+// `perl --in-place=.bak -pe 'x' secrets` and the same for `ruby` were treated as
+// in-place edits and their files went unscanned, though neither interpreter has
+// that flag: perl and ruby spell it `-i`, and would reject the long form.
 export function isInPlaceFlag(cmd: string, value: string): boolean {
   const valueless = IN_PLACE_EDITORS[cmd];
   if (valueless === undefined) return false;
 
-  if (value === "--in-place" || value.startsWith("--in-place=")) return true;
+  if (cmd === "sed" && value.replace(/=.*/, "") === "--in-place") return true;
   if (!value.startsWith("-") || value.startsWith("--")) return false;
 
   for (const ch of value.slice(1)) {
