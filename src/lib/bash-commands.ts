@@ -90,7 +90,7 @@ const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
 // `sed --expression='s/a/b/' secrets` consumed the file as the pattern and never
 // scanned it. The separate-value forms name a pattern or a pattern file, neither
 // of which is printed, so their value is skipped rather than collected.
-const PATTERN_SUPPLYING_FLAGS = new Set([
+export const PATTERN_SUPPLYING_FLAGS = new Set([
   "-e",
   "--regexp",
   "--expression",
@@ -98,6 +98,28 @@ const PATTERN_SUPPLYING_FLAGS = new Set([
   "--file",
   "--from-file",
 ]);
+
+// Whether a flag token supplies the pattern, and whether its value is already
+// attached to it.
+//
+// Three spellings carry a value: separate (`-e aws`, `--regexp aws`), attached
+// after `=` (`--regexp=aws`), and attached directly to a short flag
+// (`-eaws`, `sed -e's/a/b/'`). Only the first two were recognised, so an attached
+// short value left `patternSkipped` unset and the file that followed was eaten as
+// the pattern — `grep -eaws secrets` and `sed -e's/a/b/' secrets` scanned nothing.
+function patternSupplyingFlag(token: string): "attached" | "separate" | null {
+  const equals = token.indexOf("=");
+  const beforeEquals = equals === -1 ? token : token.slice(0, equals);
+  if (PATTERN_SUPPLYING_FLAGS.has(beforeEquals)) {
+    return equals === -1 ? "separate" : "attached";
+  }
+  // A short flag with its value written against it. Long flags are excluded:
+  // `--file-name` is not `--file` with `-name` attached.
+  if (!token.startsWith("--") && token.length > 2) {
+    if (PATTERN_SUPPLYING_FLAGS.has(token.slice(0, 2))) return "attached";
+  }
+  return null;
+}
 
 // Flags of a read command whose separate value names a file to write, not one to
 // read: `sort -o out.txt in.txt` prints nothing of `out.txt`, and scanning it
@@ -207,13 +229,17 @@ function gitSubcommandPrintsFiles(
   return GIT_READ_SUBCOMMANDS.has(subcommand);
 }
 
-// Commands whose `-i` rewrites the files it is handed instead of printing them.
-// Not every `-i` means that: `grep -i` matches case-insensitively and still
-// prints, which is why this is a list rather than a check on the flag alone.
-const IN_PLACE_EDIT_COMMANDS = new Set(["sed", "perl", "ruby"]);
-
-// Short switches each of these commands accepts without a value, so a bundle of
-// them can be read one letter at a time in search of the `i`.
+// Commands whose `-i` rewrites the files it is handed instead of printing them,
+// each with the short switches it accepts without a value.
+//
+// Being on this list at all is what makes `-i` mean in-place: `grep -i` matches
+// case-insensitively and still prints. The letters are what let a bundle be read
+// one at a time in search of the `i`.
+//
+// One table rather than two. A separate set of command names said the same thing
+// as these keys, and the two could disagree — adding `awk` to the set alone made
+// `awk -i` an in-place edit, which a test had to be written to catch. Nothing can
+// disagree with itself.
 //
 // Per command, because the letters differ and sharing one set got it wrong in
 // both directions: `E`, `r` and `z` are valueless for `sed` but absent from a
@@ -228,20 +254,30 @@ const IN_PLACE_EDIT_COMMANDS = new Set(["sed", "perl", "ruby"]);
 // `e` is absent from every line on purpose: it introduces a script for all three,
 // and a sed script contains `i` as its insert command, so reading past `-e` would
 // find an `i` in the program text and call the command an in-place edit.
-export const VALUELESS_SHORT_SWITCHES: Record<string, string> = {
+export const IN_PLACE_EDITORS: Record<string, string> = {
   sed: "anszEru",
   perl: "aclnpsStTuUvwWX",
   ruby: "acdlnpsSTUvwWy",
 };
 
-// True when a token is the in-place flag for `cmd`: `-i`, `-i.bak`, a bundle
-// reaching `i` past that command's valueless switches (`-pi`, `-lpi`, `-Ei`), or
-// the long form with or without a backup suffix.
+// True when `cmd` edits in place given `value` as one of its flags: `-i`,
+// `-i.bak`, or a bundle reaching `i` past that command's valueless switches
+// (`-pi`, `-lpi`, `-Ei`).
+//
+// A command absent from the table is not an in-place editor at all, so no flag of
+// it counts — `grep -i` and `grep --in-place` alike.
+//
+// `--in-place` is sed's alone. Accepting it from every command in the table meant
+// `perl --in-place=.bak -pe 'x' secrets` and the same for `ruby` were treated as
+// in-place edits and their files went unscanned, though neither interpreter has
+// that flag: perl and ruby spell it `-i`, and would reject the long form.
 export function isInPlaceFlag(cmd: string, value: string): boolean {
-  if (value === "--in-place" || value.startsWith("--in-place=")) return true;
+  const valueless = IN_PLACE_EDITORS[cmd];
+  if (valueless === undefined) return false;
+
+  if (cmd === "sed" && value.replace(/=.*/, "") === "--in-place") return true;
   if (!value.startsWith("-") || value.startsWith("--")) return false;
 
-  const valueless = VALUELESS_SHORT_SWITCHES[cmd] ?? "";
   for (const ch of value.slice(1)) {
     if (ch === "i") return true;
     if (!valueless.includes(ch)) return false;
@@ -250,7 +286,6 @@ export function isInPlaceFlag(cmd: string, value: string): boolean {
 }
 
 function editsInPlace(cmd: string, operands: ShellToken[]): boolean {
-  if (!IN_PLACE_EDIT_COMMANDS.has(cmd)) return false;
   return operands.some(({ value }) => isInPlaceFlag(cmd, value));
 }
 
@@ -652,14 +687,15 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       // The value of an output flag is written, not read.
       if (WRITE_TARGET_FLAGS[cmd]?.has(tok.value)) skipNext = true;
 
-      // The pattern arrived as a flag, so no operand stands in for it. An
-      // attached value (`--regexp=aws`) is already part of this token; a
-      // separate one is a pattern or a pattern file, and neither is printed.
+      // The pattern arrived as a flag, so no operand stands in for it.
       if (behaviour.firstOperandIsPatternOrScript) {
-        const [flag] = tok.value.split("=", 1) as [string];
-        if (PATTERN_SUPPLYING_FLAGS.has(flag)) {
+        const supply = patternSupplyingFlag(tok.value);
+        if (supply !== null) {
           patternSkipped = true;
-          if (!tok.value.includes("=")) skipNext = true;
+          // Only a flag still waiting for its value consumes the next token. A
+          // value already attached — `--regexp=aws`, or `-eaws` — is part of
+          // this one.
+          if (supply === "separate") skipNext = true;
         }
       }
       continue;

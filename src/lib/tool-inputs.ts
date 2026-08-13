@@ -88,7 +88,7 @@ export function isWritingTool(tool: string): boolean {
 // here, but `filepath` was not, and neither was `filename` or `source_path`.
 // Normalising is a rule where a list of spellings is a list of the ones someone
 // happened to think of.
-const PATH_FIELD_NAMES = new Set([
+export const PATH_FIELD_NAMES = new Set([
   "filepath",
   "filename",
   "filenames",

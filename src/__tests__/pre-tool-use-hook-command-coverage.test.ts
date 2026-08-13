@@ -93,7 +93,7 @@ describe("pre-tool-use-hook — command classification", () => {
 
     // The five inputs a previous version of the in-place check changed without
     // meaning to. The letters themselves are covered per command in
-    // pre-tool-use-hook-flag-coverage.test.ts; these are here because that is
+    // src/lib/__tests__/flag-and-verb-tables.test.ts; these are here because that is
     // where the mistake showed up — as an exit code, on commands people type.
     it.each([
       ["sed -Ei 's/a/b/'", "sed_Ei.txt"],
@@ -117,8 +117,7 @@ describe("pre-tool-use-hook — command classification", () => {
       expect(result.blocked).toBe(true);
     });
 
-    // `-e` introduces a script and a sed script uses `i` to insert, so reading
-    // past it would find an `i` in the program text.
+    // See IN_PLACE_EDITORS for why `-e` stops the bundle being read.
     it("sed -e with an insert command should block", () => {
       const file = writeFixture("sed_e_insert.txt", `secret=${TOKEN_VALUE}`);
       const result = runBashHook(`sed -e 'i\\hello' ${file}`);
@@ -234,6 +233,38 @@ describe("pre-tool-use-hook — command classification", () => {
       const file = writeFixture("grep_f.txt", `key=${AWS_KEY}`);
       const result = runBashHook(`grep -f ${patterns} ${file}`);
       expect(result.exitCode).toBe(2);
+    });
+
+    // A short flag can carry its value written against it, and that spelling was
+    // not recognised: the flag looked like a plain flag, nothing marked the
+    // pattern as supplied, and the file that followed was consumed as the pattern
+    // instead of being scanned. Present since before this work, in all three of
+    // these forms.
+    it.each([
+      ["grep -eaws", "attached_grep_e.txt"],
+      ["grep -faws", "attached_grep_f.txt"],
+      ["sed -e's/a/b/'", "attached_sed_e.txt"],
+      ["sed -ei\\hello", "attached_sed_insert.txt"],
+      // A one-character attached value. Every other case here uses several, and
+      // the test for "is there anything after the flag" is a length comparison:
+      // off by one and `grep -e. secrets` stops being scanned while these pass.
+      ["grep -e.", "attached_one_char.txt"],
+      ["grep -ex", "attached_one_letter.txt"],
+      ["grep -fp", "attached_f_one.txt"],
+      ["sed -ep", "attached_sed_one.txt"],
+    ])("%s should block the file it is given", (prefix, fixture) => {
+      const file = writeFixture(fixture, `key=${AWS_KEY}`);
+      const result = runBashHook(`${prefix} ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The separate-value spelling still consumes the next token, so a pattern
+    // that happens to name a secret-bearing file is not scanned as an operand.
+    it("grep -e with a separate value does not scan that value", () => {
+      const file = writeFixture("sep_value.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`grep -e ${file} /dev/null`);
+      expect(result.exitCode).toBe(0);
     });
 
     it("sort -o should allow: its value is written, not read", () => {
