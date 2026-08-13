@@ -89,6 +89,26 @@ function isPathFieldName(key: string): boolean {
   return PATH_FIELD_NAMES.has(key.replace(/[^A-Za-z0-9]/g, "").toLowerCase());
 }
 
+// A value that names a path whatever its field is called. The list above can
+// only hold names someone thought of, so a tool carrying its path under `target`
+// or `document` went unscanned; this is the second way in.
+//
+// It is deliberately not "any string". Collecting every string would read a
+// search pattern as a path: `grep` for the literal `.env` arrives as
+// `{ pattern: ".env" }`, `.env` exists, and the name guard would then block a
+// search for that text as though it were a read of the file. A separator is the
+// cheapest test that tells a path from a word, and the cost of using it is that
+// a bare filename under an unlisted field name is still missed.
+function looksLikePath(value: string): boolean {
+  return value.includes("/");
+}
+
+// Whether a value is worth statting: either its field name says path, or the
+// value is shaped like one.
+function isPathCandidate(key: string, value: string): boolean {
+  return isPathFieldName(key) || looksLikePath(value);
+}
+
 // Depth to which a tool's input object is searched for path-bearing fields. Two
 // levels left `{ a: { b: { c: { path } } } }` unscanned, which is not a shape a
 // tool has to be perverse to use; four costs nothing on inputs this size, and
@@ -105,15 +125,19 @@ export function collectPathFields(
 
   for (const [key, value] of Object.entries(input)) {
     if (typeof value === "string") {
-      if (isPathFieldName(key)) found.push(value);
+      if (isPathCandidate(key, value)) found.push(value);
     } else if (Array.isArray(value)) {
-      if (isPathFieldName(key)) {
-        found.push(...value.filter((v): v is string => typeof v === "string"));
-      }
-      // Paths also arrive as objects inside an array, e.g.
-      // `{ paths: [{ path: "…" }] }` — recurse into those elements too.
       for (const item of value) {
-        if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+        if (typeof item === "string") {
+          // An element inherits the array's field name: `{ paths: ["…"] }`.
+          if (isPathCandidate(key, item)) found.push(item);
+        } else if (
+          // Paths also arrive as objects inside an array, e.g.
+          // `{ paths: [{ path: "…" }] }` — recurse into those elements too.
+          item !== null &&
+          typeof item === "object" &&
+          !Array.isArray(item)
+        ) {
           found.push(
             ...collectPathFields(item as Record<string, unknown>, depth + 1),
           );

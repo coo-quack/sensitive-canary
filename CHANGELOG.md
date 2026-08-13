@@ -49,7 +49,12 @@
   scanned before the call: `path`, `paths`, `file`, `files`, `filepath`,
   `filename`, `filenames`, `absolutepath`, `notebookpath` and `sourcepath`,
   compared with separators and case removed so that `file_path`, `filePath` and
-  `filepath` are one name. Found up to four levels down and inside arrays, of
+  `filepath` are one name. Beyond those names, any value containing a `/` is
+  treated as a path whatever its field is called, which covers a tool carrying
+  one under `target`, `document` or `uri`. The `/` is what keeps a search
+  pattern from being read as a path — `{ "pattern": ".env" }` searches for that
+  text rather than reading the file — at the cost of missing a bare filename
+  under an unlisted name. Found up to four levels down and inside arrays, of
   strings and of objects alike. A field naming a directory is left alone.
   Exempt are the tools that surface no file contents (`Write`, `Edit`, `MultiEdit`,
   `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`,

@@ -479,7 +479,13 @@ PreToolUse hook
             secret / PII → blocked
 ```
 
-The field names searched are `path`, `paths`, `file`, `files`, `filepath`, `filename`, `filenames`, `absolutepath`, `notebookpath` and `sourcepath`, compared with separators and case removed — so `file_path`, `filePath` and `filepath` are one name. They are found up to four levels down and inside arrays, both of strings and of objects, so `{ "path": "…" }`, `{ "paths": ["…"] }` and `{ "args": { "paths": [{ "path": "…" }] } }` are all covered. A field naming a directory is left alone.
+A value is scanned when either its field name says path or the value itself is shaped like one.
+
+The field names are `path`, `paths`, `file`, `files`, `filepath`, `filename`, `filenames`, `absolutepath`, `notebookpath` and `sourcepath`, compared with separators and case removed — so `file_path`, `filePath` and `filepath` are one name. Beyond those, any value containing a `/` is treated as a path whatever its field is called, which is what covers a tool carrying its path under `target`, `document` or `uri`.
+
+The `/` is what separates a path from a word, and it is there so that a search pattern is not read as a path: `{ "pattern": ".env" }` is a search for the text `.env`, not a read of the file, and `.env` exists in most checkouts. The cost is that a bare filename under an unlisted field name is still missed.
+
+Values are found up to four levels down and inside arrays, both of strings and of objects, so `{ "path": "…" }`, `{ "paths": ["…"] }`, `{ "args": ["/abs/…"] }` and `{ "args": { "paths": [{ "path": "…" }] } }` are all covered. A field naming a directory is left alone.
 
 Which tools reach the hook at all is the matcher's business, and the default (`Read|Bash|Grep|mcp__.*`) sends it `Read`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives.
 
@@ -495,7 +501,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **Heredoc bodies** — a heredoc body is treated as text, not as commands, so `cat > deploy.sh <<'EOF'` writing a script that mentions `.env` is not itself a read. The trade-off is that a heredoc which *feeds* commands to another shell (`ssh host <<'EOF'` with a `cat /etc/secrets` in the body) is not inspected either.
 - **Directory targets** — nothing that names a directory rather than a file is scanned. That covers the Grep tool's `path` and a recursive search such as `grep -r pattern src/`, both of which would otherwise mean reading every file underneath.
 - **A write-named tool that also returns contents** — the exemption reads a tool's name, and assumes a name led by a write verb means the tool surfaces no file contents. `update` and `copy` are where those two things come apart: `mcp__*__update_file` and `mcp__*__copy_file` open a file to do their work, and one that returned the result would not be scanned. Scanning them instead would block writing to a file that already holds a secret, which is not a leak, so the exemption stays as it is.
-- **Field names not on the list** — a tool that carries its path under a name outside the list above (`target`, `document`, `uri`) is not scanned. The names are compared with separators and case removed, so spelling variants of a listed name are covered, but a different word is not.
+- **A bare filename under an unlisted field name** — a value is treated as a path when its field name says so or when it contains a `/`. A tool passing `{ "target": "secrets.txt" }` satisfies neither, so it is not scanned. Requiring the `/` is deliberate: without it, a search for the text `.env` would be blocked as though the file had been read.
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
 - **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
 - **`.env.*` is blocked by name** — the filename guard covers every `.env.*`, so a template like `.env.example` is blocked as well, now through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` for those.
