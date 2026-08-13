@@ -236,6 +236,31 @@ describe("pre-tool-use-hook — command classification", () => {
       expect(result.exitCode).toBe(2);
     });
 
+    // A short flag can carry its value written against it, and that spelling was
+    // not recognised: the flag looked like a plain flag, nothing marked the
+    // pattern as supplied, and the file that followed was consumed as the pattern
+    // instead of being scanned. Present since before this work, in all three of
+    // these forms.
+    it.each([
+      ["grep -eaws", "attached_grep_e.txt"],
+      ["grep -faws", "attached_grep_f.txt"],
+      ["sed -e's/a/b/'", "attached_sed_e.txt"],
+      ["sed -ei\\hello", "attached_sed_insert.txt"],
+    ])("%s should block the file it is given", (prefix, fixture) => {
+      const file = writeFixture(fixture, `key=${AWS_KEY}`);
+      const result = runBashHook(`${prefix} ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The separate-value spelling still consumes the next token, so a pattern
+    // that happens to name a secret-bearing file is not scanned as an operand.
+    it("grep -e with a separate value does not scan that value", () => {
+      const file = writeFixture("sep_value.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`grep -e ${file} /dev/null`);
+      expect(result.exitCode).toBe(0);
+    });
+
     it("sort -o should allow: its value is written, not read", () => {
       const out = writeFixture("sort_out.txt", `key=${AWS_KEY}`);
       const input = writeFixture("sort_in.txt", "clean");

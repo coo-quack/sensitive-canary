@@ -11,10 +11,16 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  IN_PLACE_EDIT_COMMANDS,
   isInPlaceFlag,
   VALUELESS_SHORT_SWITCHES,
 } from "../lib/bash-commands.ts";
-import { isWritingTool, WRITING_TOOL_VERBS } from "../lib/tool-inputs.ts";
+import {
+  collectPathFields,
+  isWritingTool,
+  PATH_FIELD_NAMES,
+  WRITING_TOOL_VERBS,
+} from "../lib/tool-inputs.ts";
 
 const VERBS = [...WRITING_TOOL_VERBS];
 const IN_PLACE_COMMANDS = Object.keys(VALUELESS_SHORT_SWITCHES);
@@ -111,5 +117,84 @@ describe("in-place flags, per command and per switch letter", () => {
     ["ruby", "-pi"],
   ])("%s %s is an in-place edit", (cmd, flag) => {
     expect(isInPlaceFlag(cmd, flag)).toBe(true);
+  });
+});
+
+// Invariants of the tables themselves.
+//
+// The generated cases above guarantee that every entry has a case. They cannot
+// say whether an entry belongs: they assert what the table says, so a wrong entry
+// is asserted as correct. Measured — injecting `e` into `sed`'s valueless
+// switches, which would read a sed script's insert command as the in-place flag,
+// passed all of them.
+//
+// These are the properties that hold regardless of what the tables contain, so
+// they fail on a wrong entry rather than agreeing with it.
+describe("table invariants", () => {
+  // `e` introduces a script for all three commands. Reading past it walks into
+  // program text, where `i` is sed's insert command.
+  it.each(Object.keys(VALUELESS_SHORT_SWITCHES))(
+    "%s does not treat -e as valueless",
+    (cmd) => {
+      expect(VALUELESS_SHORT_SWITCHES[cmd]).not.toContain("e");
+    },
+  );
+
+  // A digit begins a value for `perl -0777` and is not a switch for the others.
+  it.each(Object.keys(VALUELESS_SHORT_SWITCHES))(
+    "%s treats no digit as valueless",
+    (cmd) => {
+      expect(VALUELESS_SHORT_SWITCHES[cmd]).not.toMatch(/[0-9]/);
+    },
+  );
+
+  // Two tables decide in-place editing together: one says which commands do it,
+  // the other how to read their bundles. A command in the first without a line in
+  // the second reaches `-i` through an empty set, so a bare `-i` still counts and
+  // a bundle never does. Adding `awk` to the first alone passed every other test.
+  it("every in-place command has a line of valueless switches", () => {
+    expect([...IN_PLACE_EDIT_COMMANDS].sort()).toEqual(
+      Object.keys(VALUELESS_SHORT_SWITCHES).sort(),
+    );
+  });
+});
+
+// The two ways a value becomes a path candidate are independent, and a test that
+// uses an absolute path exercises only the second. Removing `path` from the name
+// list passed every hook-level case, because every fixture path contains a `/`
+// and the shape rule collected it anyway.
+describe("path fields are found by name, not only by shape", () => {
+  it.each([...PATH_FIELD_NAMES])("%s collects a bare filename", (field) => {
+    expect(collectPathFields({ [field]: "secrets.txt" })).toContain(
+      "secrets.txt",
+    );
+  });
+
+  it("a name outside the list does not collect a bare filename", () => {
+    for (const field of ["target", "document", "uri", "query", "pattern"]) {
+      expect(collectPathFields({ [field]: "secrets.txt" })).toEqual([]);
+    }
+  });
+});
+
+// Names the list must contain, written out rather than derived.
+//
+// The generated cases above walk `PATH_FIELD_NAMES`, so deleting an entry deletes
+// its case and nothing fails — measured: removing `path` passed every test in the
+// repository. A generated case catches a wrong entry once an invariant pins the
+// shape; it can never catch a missing one. So this duplicates the list on
+// purpose, and the duplication is the point: two copies that must agree.
+describe("path field names that must not be dropped", () => {
+  it.each([
+    "path",
+    "paths",
+    "file",
+    "files",
+    "filepath",
+    "filename",
+    "absolutepath",
+    "notebookpath",
+  ])("%s is still a path field name", (name) => {
+    expect(PATH_FIELD_NAMES.has(name)).toBe(true);
   });
 });
