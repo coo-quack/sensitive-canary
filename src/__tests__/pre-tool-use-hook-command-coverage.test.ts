@@ -93,7 +93,7 @@ describe("pre-tool-use-hook — command classification", () => {
 
     // The five inputs a previous version of the in-place check changed without
     // meaning to. The letters themselves are covered per command in
-    // pre-tool-use-hook-flag-coverage.test.ts; these are here because that is
+    // src/lib/__tests__/flag-and-verb-tables.test.ts; these are here because that is
     // where the mistake showed up — as an exit code, on commands people type.
     it.each([
       ["sed -Ei 's/a/b/'", "sed_Ei.txt"],
@@ -117,8 +117,7 @@ describe("pre-tool-use-hook — command classification", () => {
       expect(result.blocked).toBe(true);
     });
 
-    // `-e` introduces a script and a sed script uses `i` to insert, so reading
-    // past it would find an `i` in the program text.
+    // See IN_PLACE_EDITORS for why `-e` stops the bundle being read.
     it("sed -e with an insert command should block", () => {
       const file = writeFixture("sed_e_insert.txt", `secret=${TOKEN_VALUE}`);
       const result = runBashHook(`sed -e 'i\\hello' ${file}`);

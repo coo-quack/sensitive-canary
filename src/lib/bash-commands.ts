@@ -107,18 +107,16 @@ const PATTERN_SUPPLYING_FLAGS = new Set([
 // (`-eaws`, `sed -e's/a/b/'`). Only the first two were recognised, so an attached
 // short value left `patternSkipped` unset and the file that followed was eaten as
 // the pattern — `grep -eaws secrets` and `sed -e's/a/b/' secrets` scanned nothing.
-function patternSupplyingFlag(
-  token: string,
-): { valueAttached: boolean } | null {
-  const [beforeEquals] = token.split("=", 1) as [string];
+function patternSupplyingFlag(token: string): "attached" | "separate" | null {
+  const equals = token.indexOf("=");
+  const beforeEquals = equals === -1 ? token : token.slice(0, equals);
   if (PATTERN_SUPPLYING_FLAGS.has(beforeEquals)) {
-    return { valueAttached: token.includes("=") };
+    return equals === -1 ? "separate" : "attached";
   }
   // A short flag with its value written against it. Long flags are excluded:
   // `--file-name` is not `--file` with `-name` attached.
   if (!token.startsWith("--") && token.length > 2) {
-    const short = token.slice(0, 2);
-    if (PATTERN_SUPPLYING_FLAGS.has(short)) return { valueAttached: true };
+    if (PATTERN_SUPPLYING_FLAGS.has(token.slice(0, 2))) return "attached";
   }
   return null;
 }
@@ -231,13 +229,17 @@ function gitSubcommandPrintsFiles(
   return GIT_READ_SUBCOMMANDS.has(subcommand);
 }
 
-// Commands whose `-i` rewrites the files it is handed instead of printing them.
-// Not every `-i` means that: `grep -i` matches case-insensitively and still
-// prints, which is why this is a list rather than a check on the flag alone.
-export const IN_PLACE_EDIT_COMMANDS = new Set(["sed", "perl", "ruby"]);
-
-// Short switches each of these commands accepts without a value, so a bundle of
-// them can be read one letter at a time in search of the `i`.
+// Commands whose `-i` rewrites the files it is handed instead of printing them,
+// each with the short switches it accepts without a value.
+//
+// Being on this list at all is what makes `-i` mean in-place: `grep -i` matches
+// case-insensitively and still prints. The letters are what let a bundle be read
+// one at a time in search of the `i`.
+//
+// One table rather than two. A separate set of command names said the same thing
+// as these keys, and the two could disagree — adding `awk` to the set alone made
+// `awk -i` an in-place edit, which a test had to be written to catch. Nothing can
+// disagree with itself.
 //
 // Per command, because the letters differ and sharing one set got it wrong in
 // both directions: `E`, `r` and `z` are valueless for `sed` but absent from a
@@ -252,20 +254,25 @@ export const IN_PLACE_EDIT_COMMANDS = new Set(["sed", "perl", "ruby"]);
 // `e` is absent from every line on purpose: it introduces a script for all three,
 // and a sed script contains `i` as its insert command, so reading past `-e` would
 // find an `i` in the program text and call the command an in-place edit.
-export const VALUELESS_SHORT_SWITCHES: Record<string, string> = {
+export const IN_PLACE_EDITORS: Record<string, string> = {
   sed: "anszEru",
   perl: "aclnpsStTuUvwWX",
   ruby: "acdlnpsSTUvwWy",
 };
 
-// True when a token is the in-place flag for `cmd`: `-i`, `-i.bak`, a bundle
-// reaching `i` past that command's valueless switches (`-pi`, `-lpi`, `-Ei`), or
-// the long form with or without a backup suffix.
+// True when `cmd` edits in place given `value` as one of its flags: `-i`,
+// `-i.bak`, a bundle reaching `i` past that command's valueless switches
+// (`-pi`, `-lpi`, `-Ei`), or the long form with or without a backup suffix.
+//
+// A command absent from the table is not an in-place editor at all, so no flag of
+// it counts — `grep -i` and `grep --in-place` alike.
 export function isInPlaceFlag(cmd: string, value: string): boolean {
+  const valueless = IN_PLACE_EDITORS[cmd];
+  if (valueless === undefined) return false;
+
   if (value === "--in-place" || value.startsWith("--in-place=")) return true;
   if (!value.startsWith("-") || value.startsWith("--")) return false;
 
-  const valueless = VALUELESS_SHORT_SWITCHES[cmd] ?? "";
   for (const ch of value.slice(1)) {
     if (ch === "i") return true;
     if (!valueless.includes(ch)) return false;
@@ -274,7 +281,6 @@ export function isInPlaceFlag(cmd: string, value: string): boolean {
 }
 
 function editsInPlace(cmd: string, operands: ShellToken[]): boolean {
-  if (!IN_PLACE_EDIT_COMMANDS.has(cmd)) return false;
   return operands.some(({ value }) => isInPlaceFlag(cmd, value));
 }
 
@@ -684,7 +690,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
           // Only a flag still waiting for its value consumes the next token. A
           // value already attached — `--regexp=aws`, or `-eaws` — is part of
           // this one.
-          if (!supply.valueAttached) skipNext = true;
+          if (supply === "separate") skipNext = true;
         }
       }
       continue;
