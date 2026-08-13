@@ -91,6 +91,41 @@ describe("pre-tool-use-hook — command classification", () => {
       expect(result.blocked).toBe(true);
     });
 
+    // The five inputs a previous version of the in-place check changed without
+    // meaning to. The letters themselves are covered per command in
+    // pre-tool-use-hook-flag-coverage.test.ts; these are here because that is
+    // where the mistake showed up — as an exit code, on commands people type.
+    it.each([
+      ["sed -Ei 's/a/b/'", "sed_Ei.txt"],
+      ["sed -ri 's/a/b/'", "sed_ri.txt"],
+      ["sed -zi 's/a/b/'", "sed_zi.txt"],
+      ["sed --in-place=.bak 's/a/b/'", "sed_bak.txt"],
+      ["perl -Ti -pe 'x'", "perl_Ti.txt"],
+    ])("%s should allow", (prefix, fixture) => {
+      const file = writeFixture(fixture, `key=${AWS_KEY}`);
+      const result = runBashHook(`${prefix} ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // `-0` is not a sed flag, so the bundle cannot be read past it and the file
+    // is scanned. Treating it as in-place is how a scanned file stopped being
+    // scanned.
+    it("sed -0i should block", () => {
+      const file = writeFixture("sed_0i.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`sed -0i 's/a/b/' ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // `-e` introduces a script and a sed script uses `i` to insert, so reading
+    // past it would find an `i` in the program text.
+    it("sed -e with an insert command should block", () => {
+      const file = writeFixture("sed_e_insert.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`sed -e 'i\\hello' ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
     // Not every `-i` is an in-place edit: grep's is case-insensitive matching,
     // and it still prints the file.
     it("grep -i should block on file with secret", () => {
