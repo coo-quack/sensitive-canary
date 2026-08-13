@@ -85,6 +85,12 @@
 
 ### Fixes
 
+- Scan the file operand of a pattern-first command when the pattern flag carries
+  its value written against it. `grep -eaws secrets`, `grep -faws secrets` and
+  `sed -e's/a/b/' secrets` scanned nothing: the attached spelling was not
+  recognised, so nothing marked the pattern as supplied and the file that
+  followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
+  (`--regexp=aws`) spellings were already handled
 - `.claude-plugin/plugin.json` declared `0.5.1` while `package.json` declared
   `0.7.0`: the release checklist asks for both, and the bump was missed for
   0.6.0 and 0.7.0. The plugin manifest now matches the released version
