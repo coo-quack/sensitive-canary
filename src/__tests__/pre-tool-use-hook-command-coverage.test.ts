@@ -1,28 +1,12 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runBashHook } from "./hook-harness.ts";
+import { describe, expect, it } from "vitest";
+import {
+  AWS_KEY,
+  runBashHook,
+  TOKEN_VALUE,
+  useFixtureDir,
+} from "./hook-harness.ts";
 
-let tmpDir: string;
-beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "sensitive-canary-commands-"));
-});
-afterAll(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
-function writeFixture(name: string, content: string) {
-  const p = join(tmpDir, name);
-  writeFileSync(p, content, "utf8");
-  return p;
-}
-
-// Assembled so the full strings never appear in this file's source.
-const AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
-const TOKEN_VALUE = ["ghp_", "1234567890abcdefghij", "klmnopqrstuvwxyz"].join(
-  "",
-);
+const writeFixture = useFixtureDir("commands");
 
 describe("pre-tool-use-hook — command classification", () => {
   describe("expanded read commands", () => {
@@ -57,6 +41,47 @@ describe("pre-tool-use-hook — command classification", () => {
       const file = writeFixture("ruby_i.txt", `key=${AWS_KEY}`);
       const result = runBashHook(`ruby -i -pe 'x' ${file}`);
       expect(result.exitCode).toBe(0);
+    });
+
+    it("perl -pi.bak -e should allow", () => {
+      const file = writeFixture("perl_pi_bak.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`perl -pi.bak -e 's/a/b/' ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("perl -lpi -e should allow", () => {
+      const file = writeFixture("perl_lpi.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`perl -lpi -e 's/a/b/' ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // A flag whose value is attached ends the bundle: the letters after it are
+    // the value, not more switches. Reading the whole token for an `i` found one
+    // inside `-MList::Util`, `-Mstrict` and `-Ilib`, and took an ordinary
+    // `perl -pe` for an in-place edit — a missed read.
+    it.each([
+      ["-MList::Util", "perl_m_list.txt"],
+      ["-Mstrict", "perl_m_strict.txt"],
+      ["-Ilib", "perl_i_lib.txt"],
+    ])("perl %s -pe should block", (flag, fixture) => {
+      const file = writeFixture(fixture, `key=${AWS_KEY}`);
+      const result = runBashHook(`perl ${flag} -pe 'print' ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("ruby -Ilib -pe should block", () => {
+      const file = writeFixture("ruby_i_lib.txt", `secret=${TOKEN_VALUE}`);
+      const result = runBashHook(`ruby -Ilib -pe 'print' ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("perl -e with an i in the program should block", () => {
+      const file = writeFixture("perl_e_if.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`perl -e 'print if 1' ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
     });
 
     it("perl -pe without -i should block", () => {

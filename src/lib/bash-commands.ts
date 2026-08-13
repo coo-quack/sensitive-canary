@@ -10,7 +10,6 @@ import {
   extractQuotedLiterals,
   extractSubstitutions,
   isNonCommandToken,
-  isRedirectionOperator,
   type ShellToken,
   stripHeredocBodies,
   tokenizeCommand,
@@ -211,15 +210,34 @@ function gitSubcommandPrintsFiles(
 // Commands whose `-i` rewrites the files it is handed instead of printing them.
 // Not every `-i` means that: `grep -i` matches case-insensitively and still
 // prints, which is why this is a list rather than a check on the flag alone.
-// `perl` and `ruby` bundle their short flags, so the in-place flag arrives as
-// `-pi` as often as `-i`, and `perl -i.bak` carries its backup suffix attached.
 const IN_PLACE_EDIT_COMMANDS = new Set(["sed", "perl", "ruby"]);
+
+// Short switches that carry no value, so a bundle of them can be read letter by
+// letter. `perl` and `ruby` bundle: the in-place flag arrives as `-pi` as often
+// as `-i`. Anything outside this set ends the reading, because the letters after
+// it are its value rather than more switches — which is the whole point of the
+// set. `-[A-Za-z]*i` looked like it covered the bundles, and did, but it also
+// matched the `i` inside `-MList::Util`, `-Mstrict` and `-Ilib`, so an ordinary
+// `perl -Ilib -pe 'print' secrets` was taken for an in-place edit and the file
+// went unscanned. That is a missed read, the direction that costs something.
+const VALUELESS_SHORT_SWITCHES = new Set("0aclnpsStuvwCVWX");
+
+// True when a token is the in-place flag: `-i`, `-i.bak`, a bundle reaching `i`
+// through valueless switches only (`-pi`, `-lpi`, `-pie`), or the long form.
+function isInPlaceFlag(value: string): boolean {
+  if (value === "--in-place" || value.startsWith("--in-place=")) return true;
+  if (!value.startsWith("-") || value.startsWith("--")) return false;
+
+  for (const ch of value.slice(1)) {
+    if (ch === "i") return true;
+    if (!VALUELESS_SHORT_SWITCHES.has(ch)) return false;
+  }
+  return false;
+}
 
 function editsInPlace(cmd: string, operands: ShellToken[]): boolean {
   if (!IN_PLACE_EDIT_COMMANDS.has(cmd)) return false;
-  return operands.some(
-    ({ value }) => value === "--in-place" || /^-[A-Za-z]*i/.test(value),
-  );
+  return operands.some(({ value }) => isInPlaceFlag(value));
 }
 
 // Global git flags that carry a separate value before the subcommand
@@ -252,6 +270,16 @@ export interface CommandRefs {
   dumpsEnvironment: boolean;
 }
 
+// Fold one set of refs into another. A command line yields refs from several
+// places — its substitutions, each of its segments, the inline code it carries,
+// an `env -S` string — and combining them is the same three lines each time,
+// which is how it came to be written out three times with a closure alongside.
+function mergeRefs(into: CommandRefs, refs: CommandRefs): void {
+  into.paths.push(...refs.paths);
+  into.envVars.push(...refs.envVars);
+  into.dumpsEnvironment = into.dumpsEnvironment || refs.dumpsEnvironment;
+}
+
 // What this hook knows about how a command treats its operands.
 interface CommandBehaviour {
   // Every non-flag operand is a file written to stdout.
@@ -272,6 +300,21 @@ interface CommandBehaviour {
 
 // Single place where a command name becomes a behaviour, so a name added to one
 // list cannot silently disagree with another.
+//
+// Not every per-command decision belongs here, and two deliberately stay out.
+// isClassifiableCommand below reads this record generically — any truthy field
+// means "operands understood" — which is what lets a new field be added without
+// updating it, and also what a field has to respect to live here:
+//
+//   - `WRITE_TARGET_FLAGS[cmd]` would arrive as a Set, truthy even when empty,
+//     making every command classifiable and stopping the wrapper search at the
+//     first operand it meets.
+//   - `cmd === "env"` for the `-S` string would make `env` classifiable, and
+//     `env` is left out on purpose: it is a wrapper as often as a command.
+//
+// Both are therefore read from their tables at the point of use rather than
+// folded in here. Anything added to this record must be a boolean that means
+// "this hook understands what the command does with its operands".
 function classifyCommand(cmd: string): CommandBehaviour {
   return {
     printsOperands: FILE_READ_COMMANDS.has(cmd),
@@ -407,7 +450,7 @@ function inspectEnvironmentCommand(tokens: ShellToken[]): {
     for (let j = 0; j < rest.length; j++) {
       const t = rest[j];
       if (t === undefined) continue;
-      if (isRedirectionOperator(t)) {
+      if (t.redirect) {
         j++; // its target, or a heredoc delimiter
         continue;
       }
@@ -438,7 +481,7 @@ function inspectEnvironmentCommand(tokens: ShellToken[]): {
       ignoreEnvironment = true;
       continue;
     }
-    if (isRedirectionOperator(t)) {
+    if (t.redirect) {
       j++; // redirection operator: its target is env's own argument here
       continue;
     }
@@ -475,51 +518,41 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
 // Everything a Bash command reveals that the hook can inspect before it runs:
 // the files whose contents it may print, and the environment it may expose.
 export function extractCommandRefs(command: string, depth = 0): CommandRefs {
-  const paths: string[] = [];
-  const envVars: string[] = [];
-  let dumpsEnvironment = false;
+  const refs: CommandRefs = { paths: [], envVars: [], dumpsEnvironment: false };
 
-  if (depth > MAX_NESTING_DEPTH) return { paths, envVars, dumpsEnvironment };
-
-  const merge = (refs: CommandRefs): void => {
-    paths.push(...refs.paths);
-    envVars.push(...refs.envVars);
-    dumpsEnvironment = dumpsEnvironment || refs.dumpsEnvironment;
-  };
+  if (depth > MAX_NESTING_DEPTH) return refs;
 
   // Heredoc bodies are text, not commands; strip them before any other pass.
   const text = stripHeredocBodies(command);
 
   // `echo $(cat secrets)` reads secrets just as `cat secrets` does.
   for (const inner of extractSubstitutions(text)) {
-    merge(extractCommandRefs(inner, depth + 1));
+    mergeRefs(refs, extractCommandRefs(inner, depth + 1));
   }
 
   for (const tokens of tokenizeCommand(text)) {
     const environment = inspectEnvironmentCommand(tokens);
-    if (environment.dumps) dumpsEnvironment = true;
-    envVars.push(...environment.named);
+    if (environment.dumps) refs.dumpsEnvironment = true;
+    refs.envVars.push(...environment.named);
 
-    merge(collectSegmentRefs(tokens, depth));
+    mergeRefs(refs, collectSegmentRefs(tokens, depth));
   }
 
   return {
-    paths: [...new Set(paths)],
-    envVars: [...new Set(envVars)],
-    dumpsEnvironment,
+    paths: [...new Set(refs.paths)],
+    envVars: [...new Set(refs.envVars)],
+    dumpsEnvironment: refs.dumpsEnvironment,
   };
 }
 
 // File paths one segment of a command line may print, plus anything found inside
 // inline program text it carries.
 function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
-  const paths: string[] = [];
-  const envVars: string[] = [];
-  let dumpsEnvironment = false;
+  const refs: CommandRefs = { paths: [], envVars: [], dumpsEnvironment: false };
 
   const start = findCommandIndex(tokens);
   const cmdToken = tokens[start];
-  if (cmdToken === undefined) return { paths, envVars, dumpsEnvironment };
+  if (cmdToken === undefined) return refs;
 
   const cmd = path.basename(cmdToken.value);
   const operands = tokens.slice(start + 1);
@@ -527,7 +560,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
   // In-place editing sends the result back to the file, so nothing reaches
   // stdout and nothing is read into the conversation.
   if (editsInPlace(cmd, operands)) {
-    return { paths, envVars, dumpsEnvironment };
+    return refs;
   }
 
   // `env -S "cmd args"` splits the string into the command it runs, so scan
@@ -538,10 +571,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       if (t !== "-S" && t !== "--split-string") continue;
       const script = operands[k + 1]?.value;
       if (script === undefined) continue;
-      const inner = extractCommandRefs(script, depth + 1);
-      paths.push(...inner.paths);
-      envVars.push(...inner.envVars);
-      dumpsEnvironment = dumpsEnvironment || inner.dumpsEnvironment;
+      mergeRefs(refs, extractCommandRefs(script, depth + 1));
       k++;
     }
   }
@@ -563,7 +593,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     }
     if (collectNext) {
       collectNext = false;
-      paths.push(tok.value);
+      refs.paths.push(tok.value);
       continue;
     }
     if (codeNext) {
@@ -572,10 +602,8 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       // script `perl file` would have run.
       patternSkipped = true;
       if (behaviour.inlineCodeReadsOperands) inlineCodeSeen = true;
-      const inner = extractCommandRefs(tok.value, depth + 1);
-      paths.push(...inner.paths, ...extractQuotedLiterals(tok.value));
-      envVars.push(...inner.envVars);
-      dumpsEnvironment = dumpsEnvironment || inner.dumpsEnvironment;
+      mergeRefs(refs, extractCommandRefs(tok.value, depth + 1));
+      refs.paths.push(...extractQuotedLiterals(tok.value));
       continue;
     }
 
@@ -629,7 +657,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
         gitReadsFiles = gitSubcommandPrintsFiles(tok.value, operands);
         continue;
       }
-      if (gitReadsFiles) paths.push(tok.value);
+      if (gitReadsFiles) refs.paths.push(tok.value);
       continue;
     }
 
@@ -638,7 +666,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     if (behaviour.isDd) {
       const ddInput = /^if=(.+)$/.exec(tok.value);
       if (ddInput?.[1]) {
-        paths.push(ddInput[1]);
+        refs.paths.push(ddInput[1]);
         continue;
       }
     }
@@ -653,9 +681,9 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       behaviour.firstOperandIsPatternOrScript ||
       inlineCodeSeen
     ) {
-      paths.push(tok.value);
+      refs.paths.push(tok.value);
     }
   }
 
-  return { paths, envVars, dumpsEnvironment };
+  return refs;
 }
