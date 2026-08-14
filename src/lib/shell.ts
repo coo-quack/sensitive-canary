@@ -33,14 +33,19 @@ interface QuoteStep {
   consumed: boolean;
 }
 
-// The one place the quoting rule is written down: a quote character opens a run
-// and its twin closes it, and a backslash escapes the next character everywhere
-// except inside single quotes, where it is literal.
+// The quoting rule, for the scanners that only need to step over it: a quote
+// character opens a run and its twin closes it, and a backslash escapes the next
+// character everywhere except inside single quotes, where it is literal.
 //
-// Three scanners each spelled that rule out for themselves — as
-// `quote === '"' && ch === "\\"`, as `ch === "\\" && quote !== "'"`, and as
-// `i += quote === "'" ? 1 : 2`. They agreed, which is the point: three spellings
-// of one rule agree until someone corrects one of them.
+// Three of them spelled that out for themselves — as `quote === '"' && ch ===
+// "\\"`, as `ch === "\\" && quote !== "'"`, and as `i += quote === "'" ? 1 : 2`.
+// They agreed, which is the point: three spellings of one rule agree until
+// someone corrects one of them.
+//
+// `tokenizeCommand` is not one of the three and keeps its own reading, because
+// it does not step over a quoted run — it builds the token's text out of it,
+// dropping the quotes, decoding `$'…'` escapes and keeping a backslash literal
+// inside single quotes. Returning a position cannot say what the text became.
 function stepQuote(s: string, i: number, quote: string | null): QuoteStep {
   const ch = s[i] as string;
 

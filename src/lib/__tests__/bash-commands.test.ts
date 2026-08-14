@@ -66,6 +66,18 @@ describe("wrappers", () => {
       expect(paths(`${wrapper} cat secrets.txt`)).toContain("secrets.txt");
     },
   );
+
+  // `timeout` and `flock` take an operand of their own before the wrapped
+  // command. The case above never writes one, so it says nothing about the form
+  // people actually type — and these two are why the search steps forward to the
+  // first name it can classify rather than assuming the next token.
+  it.each([
+    "timeout 5 cat secrets.txt",
+    "timeout --preserve-status 5 cat secrets.txt",
+    "flock /tmp/lock cat secrets.txt",
+  ])("%s reaches the wrapped command", (command) => {
+    expect(paths(command)).toContain("secrets.txt");
+  });
 });
 
 describe("commands that print their arguments rather than open them", () => {
@@ -253,12 +265,14 @@ describe("the tables", () => {
       "doas",
       "env",
       "exec",
+      "flock",
       "ionice",
       "nice",
       "nohup",
       "stdbuf",
       "sudo",
       "time",
+      "timeout",
       "xargs",
     ]);
   });

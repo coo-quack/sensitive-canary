@@ -154,6 +154,15 @@
   not, because only four of the family were listed. `sha224sum`, `sha384sum`,
   `sha512sum`, `b2sum`, `shasum`, `md5` and `sum` join them
 
+### Documentation
+
+- The file structure in `README.md` listed two files under `src/lib/`, from
+  before this release added three more and moved the rules into JSON
+- The development commands in `README.md` were `npm`, while `CONTRIBUTING.md`
+  and every CI job are `pnpm`. The lockfile is pnpm's, so following the README
+  ignored it, wrote a second lockfile, and resolved a different tree from the one
+  that is tested
+
 ### CI
 
 - Add a `versions` job that fails when `package.json` and

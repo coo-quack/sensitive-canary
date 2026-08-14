@@ -571,6 +571,10 @@ src/
   lib/
     inspector.ts               allow tag parsing, message scanning
     rules.ts                   secret and PII detection rule definitions
+    default-config.json        the rules themselves, as data
+    shell.ts                   shell syntax: tokens, quoting, heredocs, substitutions
+    bash-commands.ts           what each command does with the files it is given
+    tool-inputs.ts             which input fields of a tool name a file
 ```
 
 ---
@@ -578,12 +582,16 @@ src/
 ## Development
 
 ```bash
-npm install        # install dependencies
+pnpm install        # install dependencies
 
-npm test           # run tests
-npm run test:watch # run tests in watch mode
-npm run typecheck  # type check (tsc)
-npm run lint       # lint with Biome (no changes)
-npm run fix        # lint + auto-fix with Biome
-npm run ci         # typecheck + lint + tests (for CI)
+pnpm test           # run tests
+pnpm run test:watch # run tests in watch mode
+pnpm run typecheck  # type check (tsc)
+pnpm run lint       # lint with Biome (no changes)
+pnpm run fix        # lint + auto-fix with Biome
+pnpm run ci         # typecheck + lint + tests (for CI)
 ```
+
+The lockfile is pnpm's, and every CI job installs with pnpm, so `npm install`
+here ignores it, writes a second lockfile, and resolves a different tree from the
+one that is tested. `CONTRIBUTING.md` has the rest of the workflow.
