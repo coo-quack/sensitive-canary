@@ -91,6 +91,20 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `linear-key` | Linear API Key (`lin_api_` prefix) |
 | `postman-key` | Postman API Key (`PMAK-` prefix) |
 
+### Platforms and Infrastructure
+
+| Rule ID | Description |
+|---------|-------------|
+| `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
+| `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
+| `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
+| `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
+| `vault-token` | HashiCorp Vault Token (`hvs.` / `hvb.` prefix) |
+| `shopify-token` | Shopify Access Token (`shpat_`, `shpss_`, `shpca_`, `shppa_` prefix) |
+| `doppler-token` | Doppler Token (`dp.pt.`, `dp.st.`, … prefix) |
+| `grafana-token` | Grafana Cloud / Service Account Token (`glc_`, `glsa_` prefix) |
+| `notion-token` | Notion Integration Token (`ntn_` prefix) |
+
 ### Generic / Env-based
 
 | Rule ID | Description | Entropy threshold |

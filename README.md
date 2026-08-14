@@ -26,9 +26,10 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **73 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
-- **Context gating** — the noisiest rules (French, Italian, German, Spanish, Korean and Chinese phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6) only fire when a label such as `phone` or `ZIP` is nearby. US and Japanese phone numbers, Japanese postal codes and private IPv4 are matched without one, since their shapes are specific enough
+- **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6, and private IPv4 (which needs a *person* nearby — `client`, `user`, `visitor` — because `ping 10.0.0.1` names a machine). US and Japanese phone numbers and Japanese postal codes are matched without one, since their shapes are specific enough
+- **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
@@ -347,10 +348,19 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 
 ## Detection rules
 
-### Secrets (39 rules)
+### Secrets (48 rules)
 
 | Rule ID | Description |
 |---|---|
+| `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
+| `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
+| `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
+| `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
+| `vault-token` | HashiCorp Vault Token (`hvs.` / `hvb.` prefix) |
+| `shopify-token` | Shopify Access Token (`shpat_`, `shpss_`, `shpca_`, `shppa_` prefix) |
+| `doppler-token` | Doppler Token (`dp.pt.`, `dp.st.`, … prefix) |
+| `grafana-token` | Grafana Cloud / Service Account Token (`glc_`, `glsa_` prefix) |
+| `notion-token` | Notion Integration Token (`ntn_` prefix) |
 | `aws-access-key` | AWS Access Key ID |
 | `gcp-api-key` | Google Cloud API Key |
 | `private-key` | PEM Private Key (RSA / EC / DSA / PGP / OpenSSH) |
@@ -500,6 +510,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 ### Known Limitations
 
 - **Heredoc bodies** — a heredoc body is treated as text, not as commands, so `cat > deploy.sh <<'EOF'` writing a script that mentions `.env` is not itself a read. The trade-off is that a heredoc which *feeds* commands to another shell (`ssh host <<'EOF'` with a `cat /etc/secrets` in the body) is not inspected either.
+- **A tool that runs a command is read for the command, by field name** — `command`, `cmd`, `script`, `code` and their spellings. A shell-running MCP server that names the field something else hands its command past unread.
 - **Only the first 1 MiB of a file is scanned** — a file is read up to a 1 MiB cut rather than to its end, because a hook that does not return is killed by the PreToolUse timeout, and a killed hook does not block the call. The cut is in bytes, so a file of multi-byte characters gives up sooner in characters. A secret past it is missed, and so is one that straddles it, since the cut lands mid-match; the 64 KB transcript tail read makes the same trade. What the cut does *not* bound is the work done on what it read: that is a property of each rule's pattern, and `docs/rules.md` covers why three of them carry length bounds.
 - **A write-named tool that also returns contents** — the exemption reads a tool's name, and assumes a name led by a write verb means the tool surfaces no file contents. `update` and `copy` are where those two things come apart: `mcp__*__update_file` and `mcp__*__copy_file` open a file to do their work, and one that returned the result would not be scanned. Scanning them instead would block writing to a file that already holds a secret, which is not a leak, so the exemption stays as it is.
 - **A bare filename under an unlisted field name** — a value is treated as a path when its field name says so or when it contains a `/`. A tool passing `{ "target": "secrets.txt" }` satisfies neither, so it is not scanned. Requiring the `/` is deliberate: without it, a search for the text `.env` would be blocked as though the file had been read.
@@ -511,8 +522,8 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **`~user/…` is not expanded** — `~` and `~/…` are resolved to the home directory, but the form naming another user needs the password database, and guessing would name the wrong file.
 - **A file whose text is not bytes the scanner reads as text** — scanning stops at the first NUL byte, so a UTF-16 file is read as far as its first character and no further. That is the same rule that keeps a binary from being ground through every pattern.
 - **A shell construct that names the file only at run time** — `for f in secrets; do cat "$f"; done` and `find . -name secrets -exec cat {} +` both name the file in the command line, but the hook classifies the command it can see, and in these the reading command is `cat` reached through a loop or through `find`'s own argument list.
-- **At most 8 MiB is read across one tool call** — the per-file cut bounds one file; this bounds the call. A glob naming three hundred large files took half a minute, which is long enough for the PreToolUse timeout to kill the hook, and a killed hook does not block. Files past the budget are not scanned.
-- **A relative path is resolved against the directory Claude Code reports** — and against the last literal `cd` in the same command. A `cd` whose argument is a variable, or a directory change made some other way, leaves the hook resolving against the wrong place.
+- **At most 64 MiB is read across one tool call** — the per-file cut bounds one file; this bounds the call. A glob naming three hundred large files took half a minute, which is long enough for the PreToolUse timeout to kill the hook, and a killed hook does not block. Files past the budget are not scanned, so naming enough large files before the one that matters is a way past the scan.
+- **A relative path is resolved against the directory Claude Code reports** — and against a literal `cd` at the start of the same command. A `cd` later in the line, one inside a subshell, and one whose argument is a variable, a glob or `-` are all left alone, because where they land cannot be worked out here. A directory changed some other way is the same case.
 - **A glob is expanded by the hook, not by the shell** — `cat *.env` is expanded here to decide what to scan, a moment before the shell expands it and against the hook's own working directory. A file created in between is missed, and at most 256 matches of one pattern are scanned.
 - **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
 - **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.

@@ -27,7 +27,10 @@ process.stdin.on("end", () => {
     process.exit(0);
   }
 
-  const prompt = data.prompt ?? "";
+  // Whatever the runtime sends. A prompt that is not a string used to throw, and
+  // an exception exits 1, which does not block — so `{"prompt":{"text":"…"}}` went
+  // through unscanned.
+  const prompt = typeof data.prompt === "string" ? data.prompt : "";
 
   const allFindings = scan(prompt, ENABLED_CATEGORIES);
 

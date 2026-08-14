@@ -24,6 +24,11 @@ interface Rule {
   category: Category;
   contextWords?: string[];
   requireContext?: boolean;
+  // Words that, found near a match, say it is not what the rule is looking for.
+  // The mirror of contextWords: `ssh deploy@host` and `git clone git@github.com`
+  // are addresses by shape and hostnames by use, and the command in front of
+  // them is the only thing that says which.
+  excludeContext?: string[];
   contextWindow?: number;
 }
 
@@ -41,6 +46,11 @@ export interface RuleConfig {
   category: Category;
   contextWords?: string[];
   requireContext?: boolean;
+  // Words that, found near a match, say it is not what the rule is looking for.
+  // The mirror of contextWords: `ssh deploy@host` and `git clone git@github.com`
+  // are addresses by shape and hostnames by use, and the command in front of
+  // them is the only thing that says which.
+  excludeContext?: string[];
   contextWindow?: number;
 }
 
@@ -75,8 +85,29 @@ export function enabledCategoriesFromEnv(): Set<Category> {
 }
 
 // Luhn algorithm checksum validation. Returns true if the number (digits only) passes.
+// Card numbers every payment gateway publishes as test data. They pass Luhn by
+// design, and a developer pasting one into a prompt or a fixture is not leaking
+// anything — but the block reads the same as a real one, and that is the kind of
+// block that gets the tool turned off.
+const TEST_CARD_NUMBERS = new Set([
+  "4242424242424242",
+  "4111111111111111",
+  "4012888888881881",
+  "4000056655665556",
+  "5555555555554444",
+  "5105105105105100",
+  "5200828282828210",
+  "378282246310005",
+  "371449635398431",
+  "6011111111111117",
+  "6011000990139424",
+  "3056930009020004",
+  "3566002020360505",
+]);
+
 export function luhn(str: string): boolean {
   const digits = str.replace(/\D/g, "");
+  if (TEST_CARD_NUMBERS.has(digits)) return false;
   if (digits.length === 0) return false;
   let sum = 0;
   let double = false;
@@ -485,6 +516,7 @@ function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
     entropyThreshold,
     validate: validateName,
     contextWords,
+    excludeContext,
     requireContext,
     contextWindow,
   } = rc as Record<string, unknown>;
@@ -522,6 +554,14 @@ function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
   }
   if (validateName != null && typeof validateName !== "string") {
     throw new Error('"validate" must be a string');
+  }
+  if (excludeContext != null) {
+    if (
+      !Array.isArray(excludeContext) ||
+      excludeContext.some((w) => typeof w !== "string" || w.length === 0)
+    ) {
+      throw new Error('"excludeContext" must be an array of non-empty strings');
+    }
   }
   if (contextWords != null) {
     if (
@@ -713,6 +753,24 @@ export function scan(
       // Rules that require context (e.g. bare postal codes) are dropped when
       // no context label is nearby, to avoid flagging every 5-digit number.
       if (rule.requireContext && !hasContext) continue;
+
+      // And the other way: a word nearby that says this is not what the rule is
+      // for. `git clone git@github.com:…` and `ssh deploy@host` are addresses by
+      // shape, and the command in front of them is what says they are not
+      // anyone's mail.
+      if (
+        rule.excludeContext &&
+        rule.excludeContext.length > 0 &&
+        hasNearbyContextWord(
+          text,
+          matchStart,
+          matchEnd,
+          rule.excludeContext,
+          rule.contextWindow ?? effectiveContextWindow,
+        )
+      ) {
+        continue;
+      }
 
       findings.push({
         ruleId: rule.id,

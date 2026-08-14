@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { extractCommandRefs } from "./lib/bash-commands.ts";
 import {
   applyAllowTags,
@@ -13,7 +14,11 @@ import {
   randomBird,
 } from "./lib/inspector.ts";
 import { enabledCategoriesFromEnv, type Finding, scan } from "./lib/rules.ts";
-import { extractEnvVarNames, tokenizeCommand } from "./lib/shell.ts";
+import {
+  extractEnvVarNames,
+  extractQuotedLiterals,
+  tokenizeCommand,
+} from "./lib/shell.ts";
 import {
   collectPathFields,
   isWritingTool,
@@ -52,9 +57,26 @@ const MAX_FILE_SCAN_BYTES = 1_048_576; // 1 MiB
 // Total bytes one hook invocation will read across every file it scans. The
 // per-file cap bounds one file; nothing bounded the number of files, and a glob
 // naming three hundred of them took half a minute — long enough for the
-// PreToolUse timeout to kill the hook, which does not block the call. Files past
-// the budget are not scanned, which is the same trade the per-file cap makes.
-const MAX_TOTAL_SCAN_BYTES = 8 * 1_048_576; // 8 MiB
+// PreToolUse timeout to kill the hook, which does not block the call.
+//
+// Files past the budget are not scanned, so the budget is also a way through:
+// eight files of a megabyte each, named before the one that matters, used to
+// spend it. Sixty-four megabytes is about two seconds of scanning here, which
+// keeps the hook well inside the timeout while making that trick need sixty-four
+// files rather than eight. It does not remove it — written up as a limitation.
+const MAX_TOTAL_SCAN_BYTES = 64 * 1_048_576; // 64 MiB
+
+// Input field names that carry something to run rather than something to read.
+// Compared with separators and case removed, the way path field names are.
+const COMMAND_FIELD_NAMES = new Set([
+  "command",
+  "commands",
+  "cmd",
+  "script",
+  "code",
+  "shellcommand",
+  "commandline",
+]);
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
@@ -138,10 +160,24 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
 // .env and .env.* (e.g. .env.local, .env.production) match the env filename pattern.
 // The block only applies while the "secret" category is enabled (see shouldBlockEnvFile).
 // Files that merely end in .env (e.g. production.env) are handled by content scanning.
+// Suffixes that say a file is the template rather than the filled-in thing.
+// These are committed on purpose, carry placeholders, and a tool that refuses to
+// read `.env.example` is refusing the file people write in order to explain the
+// other one. Their contents are still scanned like any file's, so a template
+// with a real key in it is still caught — by what is in it, not by its name.
+const ENV_TEMPLATE_SUFFIXES = [
+  ".example",
+  ".sample",
+  ".template",
+  ".dist",
+  ".defaults",
+];
+
 function isBlockedEnvFile(filePath: string): boolean {
   if (!filePath) return false;
   const base = path.basename(filePath);
-  return base === ".env" || base.startsWith(".env.");
+  if (base !== ".env" && !base.startsWith(".env.")) return false;
+  return !ENV_TEMPLATE_SUFFIXES.some((suffix) => base.endsWith(suffix));
 }
 
 // The .env name-based block is a secret guard: it only applies while the
@@ -260,13 +296,16 @@ const MAX_GLOB_MATCHES = 256;
 // Expanded here rather than in the tokenizer because it needs the filesystem,
 // which is also why it can differ from what the shell will do a moment later.
 function expandCandidate(candidate: string): string[] {
-  const literal = path.resolve(baseDirectory, expandTilde(candidate));
+  const literal = path.resolve(
+    baseDirectory,
+    expandTilde(fromFileUrl(candidate)),
+  );
   if (!GLOB_METACHARACTERS.test(literal)) return [literal];
-  // Only the last segment may be a pattern, so the expansion costs one directory
-  // listing. `globSync` builds its whole result before anything can trim it, and
-  // `cat ~/**/*` walked the home directory until the hook was killed — which is
-  // the failure this file spends a `stat` per path to avoid.
-  if (GLOB_METACHARACTERS.test(path.dirname(literal))) return [literal];
+  // `**` is what walked a whole tree: `cat ~/**/*` ran until the hook was killed,
+  // which is the failure this file spends a `stat` per path to avoid. A single
+  // `*` in a directory component costs one listing per matching directory, which
+  // is what `cat services/*/config.yml` in a monorepo needs.
+  if (literal.includes("**")) return [literal];
   let matches: string[] = [];
   try {
     matches = fs.globSync(literal).slice(0, MAX_GLOB_MATCHES);
@@ -280,6 +319,18 @@ function expandCandidate(candidate: string): string[] {
   // really named `report[2].txt` was lost the same way, since glob reads `[2]`
   // as a character class and expands it to `report2.txt`.
   return [literal, ...matches];
+}
+
+// A `file://` URI names a path, and MCP tools pass one under `uri` where another
+// would pass `path`. Resolved as a relative path it named nothing, so it fell to
+// the not-a-file check before the `.env` name guard could read it.
+function fromFileUrl(candidate: string): string {
+  if (!candidate.startsWith("file://")) return candidate;
+  try {
+    return fileURLToPath(candidate);
+  } catch {
+    return candidate;
+  }
 }
 
 // `~` and `~/…` stand for the home directory, and nothing here expanded them, so
@@ -416,7 +467,7 @@ process.stdin.on("end", () => {
   const tool = data.tool_name ?? "";
   // Before anything resolves a path: a relative path in a command is relative to
   // where Claude Code will run it, not to where this hook was started.
-  if (data.cwd) baseDirectory = data.cwd;
+  if (typeof data.cwd === "string" && data.cwd) baseDirectory = data.cwd;
 
   const input = data.tool_input ?? {};
 
@@ -425,21 +476,43 @@ process.stdin.on("end", () => {
     : new Set<string>();
 
   if (tool === "Read") {
-    scanFile(input.file_path ?? "", allowTags);
+    const target = typeof input.file_path === "string" ? input.file_path : "";
+    // Through the same expansion as everything else: this branch resolved
+    // nothing, so a relative `file_path`, a `~`, a `file://` URI and a pattern
+    // all named something that is not on disk.
+    for (const candidate of expandCandidate(target)) {
+      scanFile(candidate, allowTags);
+    }
     process.exit(0);
   }
 
   if (tool === "Bash") {
-    const command = input.command ?? "";
+    // A tool input is whatever the tool declares, so a `command` that is not a
+    // string is a shape this really receives. It used to throw, and an exception
+    // exits 1, which does not block: the call went through unscanned.
+    const command = typeof input.command === "string" ? input.command : "";
     // `cd build && cat secrets` runs the read somewhere else, and the payload's
-    // cwd is where the command starts rather than where it ends up. The last
-    // `cd` wins, which is what the shell does; a `cd` whose argument is not a
-    // literal path leaves the base alone rather than guessing.
-    for (const segment of tokenizeCommand(command)) {
-      const [head, target] = segment;
-      if (head?.value !== "cd" || head.redirect) continue;
-      if (target === undefined || target.redirect) continue;
-      baseDirectory = path.resolve(baseDirectory, target.value);
+    // cwd is where the command starts rather than where it ends up.
+    //
+    // Only a `cd` before the first other command counts. Folding every `cd` in
+    // the line moved the base for reads that happen earlier — `cat secrets && cd
+    // /tmp` resolved against `/tmp` and found nothing — and for a `cd` inside a
+    // subshell, which the shell undoes on the way out. The tokenizer ends a
+    // segment at a paren, so a subshell's `cd` is not distinguishable once split;
+    // a command that opens with one is left resolving against the payload's cwd.
+    if (!command.trimStart().startsWith("(")) {
+      for (const segment of tokenizeCommand(command)) {
+        const [head, target] = segment;
+        if (head?.value !== "cd" || head.redirect) break;
+        if (target === undefined || target.redirect) break;
+        // `cd -`, `cd b*ld` and a `cd` into a variable name a directory this
+        // cannot work out, and resolving them anyway pointed the scan at some
+        // other directory entirely.
+        if (target.value === "-" || GLOB_METACHARACTERS.test(target.value)) {
+          break;
+        }
+        baseDirectory = path.resolve(baseDirectory, expandTilde(target.value));
+      }
     }
     const refs = extractCommandRefs(command);
 
@@ -457,7 +530,7 @@ process.stdin.on("end", () => {
       );
       if (findings.length === 0) continue;
       block(
-        `bash command: ${command.slice(0, 80)}`,
+        "bash command",
         [
           `🚫 Blocked: environment variable $${varName} contains sensitive data`,
           "",
@@ -473,7 +546,7 @@ process.stdin.on("end", () => {
     );
     if (cmdFindings.length > 0) {
       block(
-        `bash command: ${command.slice(0, 80)}`,
+        "bash command",
         [
           "🚫 Blocked: bash command contains sensitive data",
           "",
@@ -495,6 +568,28 @@ process.stdin.on("end", () => {
   // scanned before the call. Grep needs no branch of its own — its `path` is one
   // of the fields collected here, and it is neither exempt nor named as a writer.
   if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool) && !isWritingTool(tool)) {
+    // An MCP server that runs a shell takes the command as an input field, and
+    // an IDE bridge takes code the same way. Only `Bash` was read as a command,
+    // so `mcp__desktop-commander__start_process` with `{"command":"cat .env"}`
+    // was looked at as a path, found not to be a file, and let through — with
+    // the default matcher sending every `mcp__*` tool here.
+    for (const [key, value] of Object.entries(input)) {
+      if (typeof value !== "string") continue;
+      if (!COMMAND_FIELD_NAMES.has(key.toLowerCase().replace(/[-_]/g, ""))) {
+        continue;
+      }
+      const refs = extractCommandRefs(value);
+      // Code is not a command line: `print(open("secrets").read())` has no
+      // command in it this can classify, and the path is a quoted literal — the
+      // same shape inline `-c` text is read for.
+      refs.paths.push(...extractQuotedLiterals(value));
+      for (const fp of refs.paths) {
+        for (const candidate of expandCandidate(fp)) {
+          scanIfRegularFile(candidate, allowTags);
+        }
+      }
+    }
+
     for (const candidate of collectPathFields(input)) {
       scanIfRegularFile(candidate, allowTags);
     }

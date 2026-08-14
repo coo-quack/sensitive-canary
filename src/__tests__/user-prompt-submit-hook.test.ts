@@ -41,6 +41,28 @@ describe("user-prompt-submit-hook — how much of the prompt is scanned", () => 
   });
 });
 
+// A prompt that is not a string used to throw, and exit 1 does not block, so
+// `{"prompt":{"text":"<a key>"}}` went through unscanned.
+describe("user-prompt-submit-hook — a prompt of the wrong type", () => {
+  const raw = (payload: string) => {
+    const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
+      input: payload,
+      encoding: "utf8",
+    });
+    return result.status ?? -1;
+  };
+
+  it.each([
+    '{"prompt":12345}',
+    '{"prompt":{"text":"AKIAIOSFODNN7EXAMPLE"}}',
+    '{"prompt":["AKIAIOSFODNN7EXAMPLE"]}',
+    '{"prompt":true}',
+    "{}",
+  ])("%s does not crash", (payload) => {
+    expect(raw(payload)).toBe(0);
+  });
+});
+
 describe("user-prompt-submit-hook — allow (exit 0)", () => {
   it("passes a clean prompt", () => {
     const { exitCode } = runHook("hello, can you help me?");
@@ -65,7 +87,9 @@ describe("user-prompt-submit-hook — allow (exit 0)", () => {
   });
 
   it("passes with [allow-pii] tag when only PII is present", () => {
-    const { exitCode } = runHook("[allow-pii] please email user@example.com");
+    const { exitCode } = runHook(
+      "[allow-pii] please email ada@analytical-engines.org",
+    );
     expect(exitCode).toBe(0);
   });
 });
@@ -87,13 +111,15 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
   });
 
   it("blocks a prompt with an email address", () => {
-    const { exitCode, stderr } = runHook("please email user@example.com");
+    const { exitCode, stderr } = runHook(
+      "please email ada@analytical-engines.org",
+    );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("pii-email");
   });
 
   it("blocks a prompt with a credit card number", () => {
-    const { exitCode, stderr } = runHook("card: 4111111111111111");
+    const { exitCode, stderr } = runHook("card: 4532015112830366");
     expect(exitCode).toBe(2);
     expect(stderr).toContain("pii-credit-card");
   });
@@ -105,14 +131,14 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
   });
 
   it("shows [allow-pii] and [allow-all] hints for PII", () => {
-    const { stderr } = runHook("email: user@example.com");
+    const { stderr } = runHook("email: ada@analytical-engines.org");
     expect(stderr).toContain("[allow-pii]");
     expect(stderr).toContain("[allow-all]");
   });
 
   it("shows both [allow-secret] and [allow-pii] hints when both are detected", () => {
     const { stderr } = runHook(
-      "key=AKIAIOSFODNN7EXAMPLE and email user@example.com",
+      "key=AKIAIOSFODNN7EXAMPLE and email ada@analytical-engines.org",
     );
     expect(stderr).toContain("[allow-secret]");
     expect(stderr).toContain("[allow-pii]");
@@ -133,14 +159,14 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
 
   it("[allow-secret] does not bypass a PII block", () => {
     const { exitCode } = runHook(
-      "[allow-secret] please email user@example.com",
+      "[allow-secret] please email ada@analytical-engines.org",
     );
     expect(exitCode).toBe(2);
   });
 
   it("[allow-secret] with mixed content still blocks PII", () => {
     const { exitCode } = runHook(
-      "[allow-secret] key=AKIAIOSFODNN7EXAMPLE and email user@example.com",
+      "[allow-secret] key=AKIAIOSFODNN7EXAMPLE and email ada@analytical-engines.org",
     );
     expect(exitCode).toBe(2);
   });
@@ -159,7 +185,7 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
 
   it("[mask-pii] with PII shows the actual tag in message", () => {
     const { exitCode, stderr } = runHook(
-      "[mask-pii] please email user@example.com",
+      "[mask-pii] please email ada@analytical-engines.org",
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
@@ -178,7 +204,7 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
 
   it("[mask-secret] with only PII falls through to normal block", () => {
     const { exitCode, stderr } = runHook(
-      "[mask-secret] please email user@example.com",
+      "[mask-secret] please email ada@analytical-engines.org",
     );
     expect(exitCode).toBe(2);
     expect(stderr).not.toContain("prompt masking is not supported");
@@ -242,7 +268,7 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 
   it("[allow-secret] [mask-pii] → secret allowed, pii masked → masking not supported (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[allow-secret] [mask-pii] key AKIAIOSFODNN7EXAMPLE email user@example.com",
+      "[allow-secret] [mask-pii] key AKIAIOSFODNN7EXAMPLE email ada@analytical-engines.org",
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
@@ -252,7 +278,7 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 
   it("[mask-pii] [allow-secret] → secret: allow, pii: mask → masking not supported for email (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[mask-pii] [allow-secret] key AKIAIOSFODNN7EXAMPLE email user@example.com",
+      "[mask-pii] [allow-secret] key AKIAIOSFODNN7EXAMPLE email ada@analytical-engines.org",
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
@@ -261,7 +287,7 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 
   it("[allow-pii] before [mask-pii] → pii allowed, secret still blocked (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[allow-pii] [mask-pii] key AKIAIOSFODNN7EXAMPLE email user@example.com",
+      "[allow-pii] [mask-pii] key AKIAIOSFODNN7EXAMPLE email ada@analytical-engines.org",
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("sensitive data detected");
@@ -288,7 +314,7 @@ describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("pii-only: still blocks a prompt containing PII", () => {
-    const { exitCode, stderr } = runHook("my card is 4111111111111111", {
+    const { exitCode, stderr } = runHook("my card is 4532015112830366", {
       env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
     });
     expect(exitCode).toBe(2);
@@ -296,7 +322,7 @@ describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("secret-only: passes a prompt containing only PII", () => {
-    const { exitCode } = runHook("my card is 4111111111111111", {
+    const { exitCode } = runHook("my card is 4532015112830366", {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
     expect(exitCode).toBe(0);
@@ -312,7 +338,7 @@ describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
 
   it("unset: blocks both secrets and PII (default behavior)", () => {
     const { exitCode, stderr } = runHook(
-      "key AKIAIOSFODNN7EXAMPLE card 4111111111111111",
+      "key AKIAIOSFODNN7EXAMPLE card 4532015112830366",
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("aws-access-key");

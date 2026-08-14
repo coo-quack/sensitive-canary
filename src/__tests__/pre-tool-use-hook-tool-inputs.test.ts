@@ -290,6 +290,38 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       },
     );
 
+    // A tool that runs a shell takes the command as an input field, and only
+    // `Bash` was ever read as one. With the default matcher sending every
+    // `mcp__*` tool here, an MCP shell server handed its command straight past.
+    it.each(["command", "cmd", "script", "shell_command", "commandLine"])(
+      "a %s field is read as a command line",
+      (field) => {
+        const file = writeFixture(`cmdfield_${field}.txt`, `key=${AWS_KEY}`);
+        const result = runToolHook("mcp__shell__run", {
+          [field]: `cat ${file}`,
+        });
+        expect(result.exitCode).toBe(2);
+      },
+    );
+
+    // Code is not a command line: the path is a quoted literal in it.
+    it("a code field is read for the paths quoted inside it", () => {
+      const file = writeFixture("codefield.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__ide__executeCode", {
+        code: `print(open("${file}").read())`,
+      });
+      expect(result.exitCode).toBe(2);
+    });
+
+    // A field that is not one of those names is not run through the parser.
+    it("a query field is not read as a command", () => {
+      const file = writeFixture("queryfield.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__search__find", {
+        query: `cat ${file}`,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
     // The same input under a tool that is on neither list is scanned, which is
     // what says the cases above are measuring the exemption rather than
     // something about the payload.
