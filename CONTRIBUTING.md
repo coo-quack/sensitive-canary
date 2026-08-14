@@ -60,8 +60,9 @@ If the backport PR has conflicts, resolve them manually before merging.
 
 ## Adding a New Detection Rule
 
-1. Add the rule to `src/lib/rules.ts` — define `id`, `description`, `regex`, `category`, and optionally `entropyThreshold`
+1. Add the rule to `src/lib/default-config.json` — define `id`, `description`, `regex`, `category`, and optionally `entropyThreshold` and `flags`. `src/lib/rules.ts` reads that file; it holds the checksum validators, not the rules
 2. Add tests to `src/lib/__tests__/rules.test.ts` — cover true positives, false negatives, and entropy filtering
+   - If the pattern carries a `*`, `+` or `{n,}` on a character class, work out what input makes it backtrack and add that shape to `no rule is quadratic` in the same file. A pattern that does not return is a way past the hook, not a slow scan — see the note in `docs/rules.md`
 3. Update `README.md` — add to the detection rules table
 4. Update `docs/rules.md` — add full reference entry
 5. Update `CHANGELOG.md` — add the rule under `## Unreleased` (see [Changelog](#changelog))
@@ -69,7 +70,8 @@ If the backport PR has conflicts, resolve them manually before merging.
 ## Changelog
 
 Changes land under a `## Unreleased` heading at the top of `CHANGELOG.md`, in the
-same `### Features` / `### Fixes` / `### CI` sections a released version uses. The
+same `### Features` / `### Fixes` / `### CI` / `### Documentation` sections a
+released version uses. The
 release turns that heading into `## vX.Y.Z (YYYY-MM-DD)` rather than writing the
 notes from scratch, so an entry is written by the PR that makes the change, while
 the reason for it is still at hand.

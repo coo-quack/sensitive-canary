@@ -217,6 +217,32 @@ function block(
 
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
+// Characters that make a token a pattern rather than a filename.
+const GLOB_METACHARACTERS = /[*?[]/;
+
+// How many matches of one pattern are scanned. `cat *` in a large tree would
+// otherwise read the whole tree before the tool call it is guarding.
+const MAX_GLOB_MATCHES = 256;
+
+// The paths a candidate stands for.
+//
+// A token carrying glob metacharacters names whatever the shell will expand it
+// to, and the file is in the expansion, not in the token: `cat sec*` collected
+// `sec*`, found no file by that name, and allowed the read. `cat .env*` did the
+// same, one character away from `cat .env`, which is blocked on its name — so
+// the guard this hook is most sure of was a wildcard away from being skipped.
+//
+// Expanded here rather than in the tokenizer because it needs the filesystem,
+// which is also why it can differ from what the shell will do a moment later.
+function expandCandidate(candidate: string): string[] {
+  if (!GLOB_METACHARACTERS.test(candidate)) return [candidate];
+  try {
+    return fs.globSync(candidate).slice(0, MAX_GLOB_MATCHES);
+  } catch {
+    return [];
+  }
+}
+
 // Whether a path names something whose bytes can be read to the end.
 //
 // A character device or a FIFO can be opened and read from forever: `cat
@@ -240,8 +266,10 @@ function scanIfRegularFile(
   candidate: string | undefined,
   allowTags: Set<string>,
 ): void {
-  if (!candidate || !isRegularFile(candidate)) return;
-  scanFile(candidate, allowTags);
+  if (!candidate) return;
+  for (const p of expandCandidate(candidate)) {
+    if (isRegularFile(p)) scanFile(p, allowTags);
+  }
 }
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
@@ -264,10 +292,13 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   try {
     // The buffer is the cap, not the reported size. Sizing it from `stat` made
     // the read believe the file: procfs and sysfs entries are regular files that
-    // report a size of zero and produce content anyway, so `/proc/self/environ`
-    // — the whole environment, on the path this hook exists to guard — would
-    // have been read as empty and passed. `readFileSync` handled that case by
-    // reading to EOF, and replacing it took the handling with it.
+    // report a size of zero and produce content anyway, so their content was
+    // read as empty and passed. `readFileSync` handled that case by reading to
+    // EOF, and replacing it took the handling with it.
+    //
+    // What this does not do is scan such a file whole. The NUL rule below stops
+    // at the first separator, so `/proc/self/environ` is read but only its first
+    // variable is looked at. Written up under Known Limitations.
     const buf = Buffer.alloc(MAX_FILE_SCAN_BYTES);
     const fd = fs.openSync(filePath, "r");
     let raw: Buffer;
@@ -374,7 +405,7 @@ process.stdin.on("end", () => {
     }
 
     for (const fp of refs.paths) {
-      scanFile(fp, allowTags);
+      for (const p of expandCandidate(fp)) scanFile(p, allowTags);
     }
 
     process.exit(0);

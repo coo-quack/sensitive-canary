@@ -96,7 +96,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | Rule ID | Description | Entropy threshold |
 |---------|-------------|-------------------|
 | `generic-secret` | `api_key`, `secret_key`, `access_token`, `api_secret` assignments | 3.5 |
-| `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY`, with up to 64 capitals either side of the keyword | 3.0 |
+| `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `PASSWD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY`, with up to 64 capitals either side of the keyword | 3.0 |
 
 The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`) that are unlikely to be real secrets. Entropy is calculated using the Shannon entropy formula.
 
@@ -134,13 +134,13 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 
 `pii-email`, `env-assignment` and `connection-string` each bound a repeated character class, and the bounds are not cosmetic. Each put an unbounded quantifier on a class that also matches the separator around it, so on a long run with no match in it — a log full of IP addresses, a file of capitals with no `=`, a line of `mongodb://` with no `@` — every position started a greedy consume of the rest of the text and then backtracked a character at a time. That is quadratic: measured on `env-assignment` alone, 59 KB took 381 ms, 234 KB took 6.9 s and 1 MiB took 125 s; `connection-string` took 2.3 s on 188 KB and 98 s on 1 MiB through the hook.
 
-This matters more than a slow scan. A hook that does not return is killed by Claude Code's PreToolUse timeout, and **a killed hook does not block the tool call** — so a slow pattern is a way through, not an inconvenience. `src/lib/__tests__/rules.test.ts` runs every rule in this file against a list of adversarial shapes and fails any that takes more than two seconds. That list is not a proof: `connection-string` was quadratic through six of the shapes without any of them reaching it, and it took a seventh, written for its own syntax, to fail. Adding a rule means asking what input makes its own quantifiers run, and adding that shape there if the list has nothing like it.
+This matters more than a slow scan. A hook that does not return is killed by Claude Code's PreToolUse timeout, and **a killed hook does not block the tool call** — so a slow pattern is a way through, not an inconvenience. `src/lib/__tests__/rules.test.ts` runs every rule in this file against a list of adversarial shapes and fails any that takes more than two seconds. That list is not a proof: `connection-string` was quadratic and every shape then in the list walked past it, so one written for its own syntax had to be added before it failed. Adding a rule means asking what input makes its own quantifiers run, and adding that shape there if the list has nothing like it.
 
 A rule that needs an unbounded repeat should say why in its `description`, and should come with a case in that file.
 
 What the bounds cost, stated rather than implied:
 
-- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_%+-]` characters in an unbroken run before the `@`. A dot restarts the word boundary, so a long address with dots in it is still found; 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
+- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_]` characters in an unbroken run before the `@`. Every other character the local part allows — `.`, `%`, `+`, `-` — is a non-word character, so the word boundary restarts at it and a long address containing one is still found (measured: 65 letters is missed, 65 with a `%` in the middle is not); 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
 - **`env-assignment`**: a name with 65 or more capitals in a run on either side of the keyword — `AAA…SECRET=` and `SECRET…AAA=` alike. `_` is a word character, so `A×65_SECRET=` is lost too, since the boundary does not restart at the underscore.
 - **`connection-string`**: a user or a password longer than 256 characters.
 
