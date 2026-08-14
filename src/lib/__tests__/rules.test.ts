@@ -845,7 +845,7 @@ describe("scan — adversarial inputs", () => {
   describe("no rule is quadratic", () => {
     // Runs with no match in them, each built so a quantifier that can also
     // match its own separator has somewhere to backtrack.
-    const SHAPES: Record<string, string> = {
+    const SHAPES = {
       "digits and dots": "1.".repeat(128_000),
       "digits and hyphens": "123-".repeat(64_000),
       "capitals and underscores": "SECRET_".repeat(36_571),
@@ -855,29 +855,35 @@ describe("scan — adversarial inputs", () => {
       "assignments with no value": "key = ".repeat(42_666),
     };
 
-    // Every rule is linear or better on these, so the slowest is a few
-    // milliseconds. A budget three orders of magnitude above that does not
-    // flake on a loaded runner, and still fails on quadratic: the rule above
-    // took seven seconds at a quarter of this size.
+    // Every rule is linear or better on these, so the slowest is 56ms
+    // (`pii-email` on digits and dots). A budget well above that does not flake
+    // on a loaded runner and still fails on quadratic: the rule this was written
+    // for took seven seconds at a quarter of this size.
     const BUDGET_MS = 2_000;
 
-    const cases = Object.keys(SHAPES).flatMap((shape) =>
-      DEFAULT_RULES.map((rule) => [rule.id, shape] as const),
+    // Through `compileRule`, so each rule is timed with the flags it ships with.
+    // Built here rather than looked up in the body: `generic-secret` and
+    // `pii-nir-fr` declare `"flags": "gi"`, and a bare `new RegExp(regex, "g")`
+    // would have timed a pattern the product never runs — `i` changes what a
+    // character class matches, so it changes what backtracks.
+    const cases = Object.entries(SHAPES).flatMap(([shape, input]) =>
+      DEFAULT_RULES.map((rule) => ({
+        id: rule.id,
+        shape,
+        input,
+        regex: compileRule(rule).regex,
+      })),
     );
 
     it.each(cases)(
-      "%s: %s",
-      (ruleId, shape) => {
-        const rule = DEFAULT_RULES.find((r) => r.id === ruleId);
-        if (!rule) throw new Error(`no rule ${ruleId}`);
-        const input = SHAPES[shape] as string;
-        const re = new RegExp(rule.regex, "g");
+      "$id: $shape",
+      ({ id, shape, input, regex }) => {
         const start = performance.now();
-        input.match(re);
+        input.match(regex);
         const elapsed = performance.now() - start;
         expect(
           elapsed,
-          `${ruleId} took ${elapsed.toFixed(0)}ms on ${(input.length / 1024).toFixed(0)}KB of ${shape}`,
+          `${id} took ${elapsed.toFixed(0)}ms on ${(input.length / 1024).toFixed(0)}KB of ${shape}`,
         ).toBeLessThan(BUDGET_MS);
       },
       30_000,
