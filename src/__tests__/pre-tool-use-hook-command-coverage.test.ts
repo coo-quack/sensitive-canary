@@ -424,11 +424,11 @@ describe("pre-tool-use-hook — command classification", () => {
     // expansion whole meant the suffix was skipped over to reach the closing
     // brace, and the name in it went unread.
     it.each([
-      "echo ${A:-$SECRET}",
-      'echo ${A:-"$SECRET"}',
-      "echo ${A:-${B:-$SECRET}}",
-      "echo ${A:+$SECRET}",
-      "echo ${A#$SECRET}",
+      `echo $\{A:-$SECRET}`,
+      `echo $\{A:-"$SECRET"}`,
+      `echo $\{A:-$\{B:-$SECRET}}`,
+      `echo $\{A:+$SECRET}`,
+      `echo $\{A#$SECRET}`,
     ])("%s should block on the name inside the expansion", (command) => {
       const pathVal = process.env["PATH"] ?? "";
       const result = runBashHook(command, {
@@ -443,7 +443,7 @@ describe("pre-tool-use-hook — command classification", () => {
     // around a secret-free suffix stays allowed.
     it("an expansion naming no secret-bearing variable is allowed", () => {
       const pathVal = process.env["PATH"] ?? "";
-      const result = runBashHook("echo ${A:-${B:-fallback}}", {
+      const result = runBashHook(`echo $\{A:-$\{B:-fallback}}`, {
         env: { PATH: pathVal, SECRET: TOKEN_VALUE },
         replaceEnv: true,
       });
@@ -463,9 +463,9 @@ describe("pre-tool-use-hook — command classification", () => {
     });
 
     it("a fifo is not read", () => {
-      const fifo = writeFixture("fifo_placeholder.txt", "");
-      execFileSync("mkfifo", [`${fifo}.pipe`]);
-      const result = runBashHook(`cat ${fifo}.pipe`);
+      const fifo = writeFixture.path("fifo.pipe");
+      execFileSync("mkfifo", [fifo]);
+      const result = runBashHook(`cat ${fifo}`);
       expect(result.exitCode).toBe(0);
     });
 

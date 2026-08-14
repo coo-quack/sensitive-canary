@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TOOLS_WITHOUT_FILE_OUTPUT } from "../lib/tool-inputs.ts";
 import {
   AWS_KEY,
   runGrepHook,
@@ -273,6 +274,28 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       const file = writeFixture("todo_write.txt", `key=${AWS_KEY}`);
       const result = runToolHook("TodoWrite", { path: file });
       expect(result.exitCode).toBe(0);
+    });
+
+    // One case per entry, generated, so an entry added here brings its own and
+    // an entry removed takes its own away. Six of the ten appeared in no test:
+    // `MultiEdit`, `NotebookEdit`, `WebFetch`, `WebSearch`, `ExitPlanMode` and
+    // `AskUserQuestion`. Four of them — the last three and `Glob` — begin with
+    // no write verb, so this list is the only thing exempting them, and their
+    // removal would start scanning a tool that returns no file contents.
+    it.each([...TOOLS_WITHOUT_FILE_OUTPUT])(
+      "%s is not scanned even when its input names a secret-bearing file",
+      (tool) => {
+        const file = writeFixture(`exempt_${tool}.txt`, `key=${AWS_KEY}`);
+        expect(runToolHook(tool, { path: file }).exitCode).toBe(0);
+      },
+    );
+
+    // The same input under a tool that is on neither list is scanned, which is
+    // what says the cases above are measuring the exemption rather than
+    // something about the payload.
+    it("a tool on neither list is scanned for the same input", () => {
+      const file = writeFixture("not_exempt.txt", `key=${AWS_KEY}`);
+      expect(runToolHook("SomeOtherTool", { path: file }).exitCode).toBe(2);
     });
   });
 });

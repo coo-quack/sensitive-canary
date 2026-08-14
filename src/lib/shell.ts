@@ -473,7 +473,8 @@ export function isNonCommandToken(token: ShellToken): boolean {
 }
 
 // Longest quoted literal inside inline code still treated as a path candidate.
-const MAX_QUOTED_LITERAL_LENGTH = 4096;
+// Exported so its test reads the cap instead of copying the number.
+export const MAX_QUOTED_LITERAL_LENGTH = 4096;
 
 // Quoted literals inside inline program text — the ".env" in
 // `python3 -c "print(open('.env').read())"`. Literals containing line breaks or

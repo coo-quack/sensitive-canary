@@ -19,6 +19,7 @@ import {
   collectPathFields,
   isWritingTool,
   PATH_FIELD_NAMES,
+  TOOLS_WITHOUT_FILE_OUTPUT,
   WRITING_TOOL_VERBS,
 } from "../tool-inputs.ts";
 
@@ -207,6 +208,65 @@ describe("path fields are found by name, not only by shape", () => {
   it("a name outside the list does not collect a bare filename", () => {
     for (const field of ["target", "document", "uri", "query", "pattern"]) {
       expect(collectPathFields({ [field]: "secrets.txt" })).toEqual([]);
+    }
+  });
+});
+
+// The verbs, written out. Deleting one deletes its generated cases above and
+// nothing fails — measured: removing `mkdir` passed all 636 tests and only the
+// count moved, from 636 to 634. `copy` survived deletion by accident, because a
+// hand-written `copyFile` case happened to exist elsewhere.
+//
+// Deletion is the fail-closed direction here (the tool stops being exempt and
+// its inputs get scanned), so this guards the annoyance rather than the leak.
+// The reverse — a verb added carelessly — exempts a tool that does return file
+// contents, and an equality covers both.
+describe("the write verbs", () => {
+  it("are exactly these eleven", () => {
+    expect([...WRITING_TOOL_VERBS].sort()).toEqual([
+      "append",
+      "copy",
+      "create",
+      "delete",
+      "edit",
+      "mkdir",
+      "move",
+      "remove",
+      "rename",
+      "update",
+      "write",
+    ]);
+  });
+});
+
+// The tools named as returning no file contents. Nothing generated a case per
+// entry, and six of the ten — `MultiEdit`, `NotebookEdit`, `WebFetch`,
+// `WebSearch`, `ExitPlanMode`, `AskUserQuestion` — appeared in no test at all.
+describe("the tools exempt by name", () => {
+  it("are exactly these ten", () => {
+    expect([...TOOLS_WITHOUT_FILE_OUTPUT].sort()).toEqual([
+      "AskUserQuestion",
+      "Edit",
+      "ExitPlanMode",
+      "Glob",
+      "MultiEdit",
+      "NotebookEdit",
+      "TodoWrite",
+      "WebFetch",
+      "WebSearch",
+      "Write",
+    ]);
+  });
+
+  // Four of them are exempt by this list alone — `Glob`, `WebFetch`,
+  // `WebSearch` and `AskUserQuestion` do not begin with a write verb, so
+  // removing an entry really would start scanning them. That they are not
+  // scanned is asserted where it can be observed, against the running hook, in
+  // pre-tool-use-hook-tool-inputs.test.ts.
+  it("the four that no write verb would cover are in it", () => {
+    for (const tool of ["Glob", "WebFetch", "WebSearch", "AskUserQuestion"]) {
+      expect(isWritingTool(tool), tool).toBe(false);
+      expect(TOOLS_WITHOUT_FILE_OUTPUT.has(tool), tool).toBe(true);
     }
   });
 });
