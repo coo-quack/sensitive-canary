@@ -78,7 +78,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `jwt` | JSON Web Token (three Base64URL segments separated by `.`) |
 | `private-key` | PEM Private Key header (`-----BEGIN … PRIVATE KEY-----`) |
-| `connection-string` | Database connection string with embedded credentials |
+| `connection-string` | Database connection string with embedded credentials; each half of the credentials is bounded at 256 characters — see the note below the tables |
 
 ### SaaS / Developer Tools
 
@@ -96,7 +96,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | Rule ID | Description | Entropy threshold |
 |---------|-------------|-------------------|
 | `generic-secret` | `api_key`, `secret_key`, `access_token`, `api_secret` assignments | 3.5 |
-| `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY` | 3.0 |
+| `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY`, with up to 64 capitals either side of the keyword | 3.0 |
 
 The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`) that are unlikely to be real secrets. Entropy is calculated using the Shannon entropy formula.
 
@@ -104,7 +104,7 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 
 | Rule ID | Description | Notes |
 |---------|-------------|-------|
-| `pii-email` | Email Address | Standard RFC 5322-like pattern |
+| `pii-email` | Email Address | Local part up to 64 characters per unbroken run (RFC 5321's limit); domain matched as dot-separated labels, so a domain with no dot (`user@localhost`) is not one. Both bounds are there to keep the pattern from backtracking — see the note below the table |
 | `pii-credit-card` | Credit Card Number | Visa, Mastercard, Amex, Discover; validated with Luhn algorithm |
 | `pii-ipv4` | Private IPv4 Address | RFC 1918 ranges only: `10.x`, `172.16–31.x`, `192.168.x` |
 | `pii-ssn` | US Social Security Number | Excludes invalid area (000, 666, 9xx), group (00), and serial (0000) numbers |
@@ -129,6 +129,22 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 | `pii-postal-cn` | Chinese Postal Code (6-digit) | Context-gated |
 | `pii-ipv4-public` | Public IPv4 Address | Context-gated; reserved/private ranges excluded |
 | `pii-ipv6` | IPv6 Address | Context-gated; loopback, link-local, ULA, multicast excluded |
+
+### Why three patterns carry length bounds
+
+`pii-email`, `env-assignment` and `connection-string` each bound a repeated character class, and the bounds are not cosmetic. Each put an unbounded quantifier on a class that also matches the separator around it, so on a long run with no match in it — a log full of IP addresses, a file of capitals with no `=`, a line of `mongodb://` with no `@` — every position started a greedy consume of the rest of the text and then backtracked a character at a time. That is quadratic: measured on `env-assignment` alone, 59 KB took 381 ms, 234 KB took 6.9 s and 1 MiB took 125 s; `connection-string` took 2.3 s on 188 KB and 98 s on 1 MiB through the hook.
+
+This matters more than a slow scan. A hook that does not return is killed by Claude Code's PreToolUse timeout, and **a killed hook does not block the tool call** — so a slow pattern is a way through, not an inconvenience. `src/lib/__tests__/rules.test.ts` runs every rule in this file against a list of adversarial shapes and fails any that takes more than two seconds. That list is not a proof: `connection-string` was quadratic through six of the shapes without any of them reaching it, and it took a seventh, written for its own syntax, to fail. Adding a rule means asking what input makes its own quantifiers run, and adding that shape there if the list has nothing like it.
+
+A rule that needs an unbounded repeat should say why in its `description`, and should come with a case in that file.
+
+What the bounds cost, stated rather than implied:
+
+- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_%+-]` characters in an unbroken run before the `@`. A dot restarts the word boundary, so a long address with dots in it is still found; 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
+- **`env-assignment`**: a name with 65 or more capitals in a run on either side of the keyword — `AAA…SECRET=` and `SECRET…AAA=` alike. `_` is a word character, so `A×65_SECRET=` is lost too, since the boundary does not restart at the underscore.
+- **`connection-string`**: a user or a password longer than 256 characters.
+
+None of these is a spelling anyone writes. All of them are a way to write one this tool will not see, which is the honest way to hold both facts.
 
 ### National ID Validation
 

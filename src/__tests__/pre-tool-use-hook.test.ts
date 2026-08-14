@@ -307,6 +307,34 @@ describe("pre-tool-use-hook — large file head read (1 MiB)", () => {
     const { exitCode } = runHook("Read", p);
     expect(exitCode).toBe(0);
   });
+
+  // Sizing the buffer from `stat` rather than from the cap made the read believe
+  // the file. procfs entries are regular files that report zero bytes and give
+  // content anyway, so the read came back empty and the call was allowed.
+  // `readFileSync`, which the cap replaced, read to EOF instead.
+  //
+  // There is no procfs on macOS, so this is the case CI runs and a developer's
+  // machine skips — and CI is what corrected it. The first version read
+  // `/proc/self/environ` with the key somewhere in the middle and expected a
+  // block; it got an allow, because the content is NUL-separated and everything
+  // past the first NUL is dropped as binary. So the key goes in the first
+  // variable, which is what makes this a test of the read rather than of the
+  // truncation. What the truncation costs is a limitation of its own, written up
+  // in the README.
+  it.skipIf(process.platform !== "linux")(
+    "reads a regular file that reports a size of zero",
+    () => {
+      const { exitCode } = runBashHook("cat /proc/self/environ", {
+        // First, so it lands before the first NUL. `replaceEnv` keeps the order.
+        env: {
+          LEAKED_KEY: "AKIAIOSFODNN7EXAMPLE",
+          PATH: process.env["PATH"] ?? "",
+        },
+        replaceEnv: true,
+      });
+      expect(exitCode).toBe(2);
+    },
+  );
 });
 
 // ── Bash tool — env var expansion ────────────────────────────────────────────

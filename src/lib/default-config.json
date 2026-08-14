@@ -230,7 +230,7 @@
     {
       "id": "env-assignment",
       "description": ".env style secret assignment",
-      "regex": "\\b[A-Z_]*(SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|PRIVATE_KEY)[A-Z_0-9]*\\s*=\\s*(\\S{8,})",
+      "regex": "\\b[A-Z_]{0,64}(SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|PRIVATE_KEY)[A-Z_0-9]{0,64}\\s*=\\s*(\\S{8,})",
       "category": "secret",
       "secretGroup": 2,
       "entropyThreshold": 3
@@ -238,7 +238,7 @@
     {
       "id": "connection-string",
       "description": "Database Connection String with credentials",
-      "regex": "(mongodb|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]+:[^@\\s]+@",
+      "regex": "(mongodb|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]{1,256}:[^@\\s]{1,256}@",
       "category": "secret"
     },
     {
