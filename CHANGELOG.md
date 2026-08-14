@@ -94,6 +94,19 @@
   file. The local part is now bounded at 64 characters (RFC 5321's limit, so
   no deliverable address is lost) and the domain is matched as dot-separated
   labels, which leaves nothing to backtrack over
+- Bound the `env-assignment` pattern's name the same way. It read `[A-Z_]*`
+  before its keyword and `[A-Z_0-9]*` after, so a run of capitals with no `=`
+  backtracked from every position: 59 KB took 381ms, 234 KB 6.9s, 1 MiB 125s.
+  1 MiB is what the file cap allows through, so capping the read did not stop
+  the hook being killed — measured, a 1 MiB file of repeated `SECRET` was still
+  killed at 40 seconds with the cap in place. Every rule in the config is now
+  run against seven adversarial shapes in the tests, so this shape fails before
+  a release rather than after one
+- Read a file into a buffer of the cap's size rather than of the size `stat`
+  reports. procfs and sysfs entries are regular files that report zero bytes and
+  produce content anyway, so `/proc/self/environ` — the whole environment, on
+  the path this hook exists to guard — would have been read as empty and passed.
+  `readFileSync`, which this replaced, read to EOF and did not have the problem
 - Scan only the first 1 MiB of a file rather than reading it whole.
   `readFileSync` has no size limit, so a large enough file kept the hook from
   ever returning — and a hook killed by Claude Code's PreToolUse timeout does

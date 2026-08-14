@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   compileRule,
@@ -7,6 +10,7 @@ import {
   isReservedIpv6,
   luhn,
   parseCategories,
+  type RuleConfig,
   redact,
   scan,
   validateChineseID,
@@ -18,6 +22,21 @@ import {
   validateMyNumber,
   validateSpanishNIF,
 } from "../rules.ts";
+
+// The shipped rules, read from disk the way rules.ts reads them, so the cases
+// generated below walk what is released rather than a list kept in step by hand.
+const DEFAULT_RULES: RuleConfig[] = (
+  JSON.parse(
+    readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "default-config.json",
+      ),
+      "utf-8",
+    ),
+  ) as { rules: RuleConfig[] }
+).rules;
 
 // ── luhn ──────────────────────────────────────────────────────────────────────
 
@@ -810,6 +829,137 @@ describe("scan — adversarial inputs", () => {
     scan(input);
     expect(performance.now() - start).toBeLessThan(10_000);
   }, 30_000);
+
+  // The two cases above name the input that was reported. They say nothing
+  // about the other sixty-three rules, and the same shape was in one of them:
+  // `env-assignment` read `[A-Z_]*` before its alternation and `[A-Z_0-9]*`
+  // after, so a long run of capitals with no `=` backtracked from every
+  // position. Measured on the rule alone: 59 KB 381ms, 117 KB 1878ms, 234 KB
+  // 6871ms, 1 MiB 124574ms — and 1 MiB is what the file cap allows through, so
+  // the cap bounded the read and not the work.
+  //
+  // So this runs every rule in the config against every shape, which is what
+  // makes it a property of the rule set rather than a note about two inputs. A
+  // rule added with a greedy quantifier either side of a literal fails here
+  // before it reaches a release.
+  describe("no rule is quadratic", () => {
+    // Runs with no match in them, each built so a quantifier that can also
+    // match its own separator has somewhere to backtrack.
+    const SHAPES: Record<string, string> = {
+      "digits and dots": "1.".repeat(128_000),
+      "digits and hyphens": "123-".repeat(64_000),
+      "capitals and underscores": "SECRET_".repeat(36_571),
+      alphanumeric: "aA0".repeat(85_333),
+      hex: "deadbeef".repeat(32_000),
+      "base64 alphabet": "aA0+/".repeat(51_200),
+      "assignments with no value": "key = ".repeat(42_666),
+    };
+
+    // Every rule is linear or better on these, so the slowest is a few
+    // milliseconds. A budget three orders of magnitude above that does not
+    // flake on a loaded runner, and still fails on quadratic: the rule above
+    // took seven seconds at a quarter of this size.
+    const BUDGET_MS = 2_000;
+
+    const cases = Object.keys(SHAPES).flatMap((shape) =>
+      DEFAULT_RULES.map((rule) => [rule.id, shape] as const),
+    );
+
+    it.each(cases)(
+      "%s: %s",
+      (ruleId, shape) => {
+        const rule = DEFAULT_RULES.find((r) => r.id === ruleId);
+        if (!rule) throw new Error(`no rule ${ruleId}`);
+        const input = SHAPES[shape] as string;
+        const re = new RegExp(rule.regex, "g");
+        const start = performance.now();
+        input.match(re);
+        const elapsed = performance.now() - start;
+        expect(
+          elapsed,
+          `${ruleId} took ${elapsed.toFixed(0)}ms on ${(input.length / 1024).toFixed(0)}KB of ${shape}`,
+        ).toBeLessThan(BUDGET_MS);
+      },
+      30_000,
+    );
+  });
+});
+
+// ── the two rules whose patterns were rewritten for speed ────────────────────
+
+// Both were changed by bounding a quantifier, which is a change to what they
+// match as much as to how long they take. The performance cases above would
+// pass just as well if the patterns had stopped matching anything at all.
+describe("pii-email after bounding the local part", () => {
+  const email = (text: string): boolean =>
+    scan(text).some((f) => f.ruleId === "pii-email");
+
+  it.each([
+    ["user@example.com", "the plain form"],
+    ["Alice.Smith@Example.COM", "mixed case"],
+    ["user+tag@example.com", "plus addressing"],
+    ["user.name@sub.example.co.uk", "several domain labels"],
+    ["a@b.co", "the shortest real shape"],
+    ["user_name%foo-bar@example.com", "every character of the local part"],
+    ["see<user@example.com>now", "embedded in surrounding text"],
+    [`${"a".repeat(64)}@example.com`, "a local part at RFC 5321's limit"],
+  ])("%s is detected (%s)", (text) => {
+    expect(email(text)).toBe(true);
+  });
+
+  // What bounding the local part costs. 65 characters before the `@` with no
+  // dot to restart the boundary is not a deliverable address, and it is also a
+  // way to write one this rule will not see.
+  it("a local part past the limit is not detected", () => {
+    expect(email(`${"a".repeat(65)}@example.com`)).toBe(false);
+  });
+
+  // A dot restarts the word boundary, so a long address with dots in it is
+  // still found — the limit applies to one unbroken run, not to the whole
+  // local part.
+  it("a long local part broken by dots is still detected", () => {
+    const local = Array.from({ length: 10 }, () => "a".repeat(20)).join(".");
+    expect(email(`${local}@example.com`)).toBe(true);
+  });
+
+  // Domains without a dot were never matched, before this change or after it.
+  it.each(["user@localhost", "user@example", "user@[192.168.0.1]"])(
+    "%s is not detected, as before",
+    (text) => {
+      expect(email(text)).toBe(false);
+    },
+  );
+});
+
+describe("env-assignment after bounding the name", () => {
+  const assigned = (text: string): boolean =>
+    scan(text).some((f) => f.ruleId === "env-assignment");
+
+  it.each([
+    "API_KEY=abcdefgh12345",
+    "SECRET=abcdefgh12345",
+    "MY_SECRET_TOKEN = supersecretvalue",
+    "DB_PASSWORD=hunter2xyz",
+    "PRIVATE_KEY=Xk9mP2qR7vL4nW1s",
+    "AWS_SECRET_ACCESS_KEY_2=abcdefghijkl",
+  ])("%s is detected", (text) => {
+    expect(assigned(text)).toBe(true);
+  });
+
+  it.each([
+    ["NOTASECRET=short", "a value under eight characters"],
+    ["SECRET=", "no value at all"],
+  ])("%s is not detected (%s)", (text) => {
+    expect(assigned(text)).toBe(false);
+  });
+
+  // The bound is on the run of capitals either side of the keyword. A name
+  // longer than that is not an environment variable anyone writes, and saying
+  // so here is what stops the bound being loosened to "fix" a case nobody has.
+  it("a name with more than 64 capitals before the keyword is not detected", () => {
+    expect(assigned(`${"A".repeat(65)}SECRET=abcdefgh12345`)).toBe(false);
+    expect(assigned(`${"A".repeat(64)}SECRET=abcdefgh12345`)).toBe(true);
+  });
 });
 
 // ── Korean / Chinese ID validators ────────────────────────────────────────────

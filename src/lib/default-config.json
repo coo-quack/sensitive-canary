@@ -230,7 +230,7 @@
     {
       "id": "env-assignment",
       "description": ".env style secret assignment",
-      "regex": "\\b[A-Z_]*(SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|PRIVATE_KEY)[A-Z_0-9]*\\s*=\\s*(\\S{8,})",
+      "regex": "\\b[A-Z_]{0,64}(SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|PRIVATE_KEY)[A-Z_0-9]{0,64}\\s*=\\s*(\\S{8,})",
       "category": "secret",
       "secretGroup": 2,
       "entropyThreshold": 3

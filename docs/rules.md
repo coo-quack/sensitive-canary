@@ -96,7 +96,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | Rule ID | Description | Entropy threshold |
 |---------|-------------|-------------------|
 | `generic-secret` | `api_key`, `secret_key`, `access_token`, `api_secret` assignments | 3.5 |
-| `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY` | 3.0 |
+| `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY`, with up to 64 capitals either side of the keyword | 3.0 |
 
 The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`) that are unlikely to be real secrets. Entropy is calculated using the Shannon entropy formula.
 
@@ -104,7 +104,7 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 
 | Rule ID | Description | Notes |
 |---------|-------------|-------|
-| `pii-email` | Email Address | Standard RFC 5322-like pattern |
+| `pii-email` | Email Address | Local part up to 64 characters per unbroken run (RFC 5321's limit); domain matched as dot-separated labels, so a domain with no dot (`user@localhost`) is not one. Both bounds are there to keep the pattern from backtracking — see the note below the table |
 | `pii-credit-card` | Credit Card Number | Visa, Mastercard, Amex, Discover; validated with Luhn algorithm |
 | `pii-ipv4` | Private IPv4 Address | RFC 1918 ranges only: `10.x`, `172.16–31.x`, `192.168.x` |
 | `pii-ssn` | US Social Security Number | Excludes invalid area (000, 666, 9xx), group (00), and serial (0000) numbers |
@@ -129,6 +129,14 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 | `pii-postal-cn` | Chinese Postal Code (6-digit) | Context-gated |
 | `pii-ipv4-public` | Public IPv4 Address | Context-gated; reserved/private ranges excluded |
 | `pii-ipv6` | IPv6 Address | Context-gated; loopback, link-local, ULA, multicast excluded |
+
+### Why two patterns carry length bounds
+
+`pii-email` and `env-assignment` each bound a repeated character class, and the bounds are not cosmetic. Both patterns put a `*` on a class that also matches the separator around it, so on a long run with no match in it — a log full of IP addresses, a file of capitals with no `=` — every position started a greedy consume of the rest of the text and then backtracked a character at a time. That is quadratic: measured on `env-assignment` alone, 59 KB took 381 ms, 234 KB took 6.9 s and 1 MiB took 125 s.
+
+This matters more than a slow scan. A hook that does not return is killed by Claude Code's PreToolUse timeout, and **a killed hook does not block the tool call** — so a slow pattern is a way through, not an inconvenience. `src/lib/__tests__/rules.test.ts` runs every rule in this file against seven adversarial shapes and fails any that takes more than two seconds, so a new rule written this way is caught before release.
+
+A rule that needs an unbounded repeat should say why in its `description`, and should come with a case in that file.
 
 ### National ID Validation
 

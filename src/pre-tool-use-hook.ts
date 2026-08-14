@@ -262,8 +262,13 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   let content: string;
   try {
-    const { size } = fs.statSync(filePath);
-    const buf = Buffer.alloc(Math.min(size, MAX_FILE_SCAN_BYTES));
+    // The buffer is the cap, not the reported size. Sizing it from `stat` made
+    // the read believe the file: procfs and sysfs entries are regular files that
+    // report a size of zero and produce content anyway, so `/proc/self/environ`
+    // — the whole environment, on the path this hook exists to guard — would
+    // have been read as empty and passed. `readFileSync` handled that case by
+    // reading to EOF, and replacing it took the handling with it.
+    const buf = Buffer.alloc(MAX_FILE_SCAN_BYTES);
     const fd = fs.openSync(filePath, "r");
     let raw: Buffer;
     try {
