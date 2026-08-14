@@ -192,6 +192,44 @@ describe("a redirection before the command", () => {
   });
 });
 
+describe("holes an adversarial pass found", () => {
+  // A shell bundles its switches: `bash -lc '…'` runs the string `bash -c`
+  // would, and only the exact spelling was recognised.
+  it.each(["bash -lc", "sh -ec", "zsh -lc", "dash -xc", "ksh -ic"])(
+    "%s carries inline code",
+    (prefix) => {
+      expect(paths(`${prefix} 'cat secrets.txt'`)).toContain("secrets.txt");
+    },
+  );
+
+  // The letters before the `c` have to be valueless switches, or the `c` belongs
+  // to something else.
+  it("a shell flag that is not a bundle ending in -c is not inline code", () => {
+    expect(paths("bash -e script.sh")).not.toContain("script.sh");
+    expect(paths("bash --rcfile script.sh")).not.toContain("script.sh");
+  });
+
+  // `eval` runs its arguments as a command line.
+  it("eval is stepped past to the command it runs", () => {
+    expect(paths("eval cat secrets.txt")).toContain("secrets.txt");
+  });
+
+  // `$(<f)` has no command at all: bash reads the file and substitutes it.
+  it.each(["echo $(<secrets.txt)", "x=$(< secrets.txt)"])(
+    "%s reads the file",
+    (command) => {
+      expect(paths(command)).toContain("secrets.txt");
+    },
+  );
+
+  // An awk or sed program can name a file inside itself.
+  it("a quoted literal inside an awk program is a path candidate", () => {
+    expect(
+      paths(`awk 'BEGIN{while((getline l < "secrets.txt")>0) print l}'`),
+    ).toContain("secrets.txt");
+  });
+});
+
 describe("git log -L", () => {
   // `-L` prints the lines themselves, and the file is written inside the range
   // spec after the last `:`, where neither the flag branch nor the operand
@@ -308,6 +346,7 @@ describe("the tables", () => {
       "command",
       "doas",
       "env",
+      "eval",
       "exec",
       "flock",
       "ionice",
@@ -384,6 +423,16 @@ describe("the tables", () => {
       shuf: new Set(["-o", "--output"]),
       iconv: new Set(["-o", "--output"]),
     });
+  });
+
+  // The inline-code branch does not mark a pattern as supplied, because there is
+  // no command where both would apply. If that stops being true, the branch
+  // needs the mark back and this is where it says so.
+  it("no command takes inline code and a leading pattern", () => {
+    const both = [...INLINE_CODE_COMMANDS].filter((c) =>
+      PATTERN_OR_SCRIPT_FIRST_COMMANDS.has(c),
+    );
+    expect(both).toEqual([]);
   });
 
   it("the shells are exactly these", () => {

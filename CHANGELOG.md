@@ -126,6 +126,28 @@
   recognised, so nothing marked the pattern as supplied and the file that
   followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
   (`--regexp=aws`) spellings were already handled
+- Expand `~` and `~/…` to the home directory. `cat ~/.aws/credentials` named a
+  path that exists on no disk, so it was dropped as a file that is not there —
+  and `~/.ssh/id_rsa`, `~/.npmrc` and `~/.netrc` went the same way
+- Expand `{a,b}` as well as `*`, `?` and `[`. `cat .env{,.bak}` reached the name
+  guard as the single name `.env{`, which is not an `.env` file, so the guard
+  that reads names rather than disks did not fire
+- Keep the literal candidate beside a glob's matches. Returning only the matches
+  was a way through this hook did not have before the expansion existed:
+  `cat /nonexistent/.env.*` matches nothing, so nothing was scanned and the
+  `.env` name guard never ran, and a file really named `report[2].txt` was read
+  as a character class and expanded to `report2.txt`
+- Read a shell's bundled `-c`. `bash -lc 'cat secrets'` runs what `bash -c`
+  runs, and only the exact spelling was recognised, so the inline code went
+  unparsed. The letters before the `c` have to be valueless switches
+- Step past `eval` the way the other wrappers are stepped past
+- Read `$(<secrets)`, which has no command in it at all: bash reads the file and
+  substitutes its contents, so the redirection is the only thing there
+- Scan the quoted literals inside an awk or sed program.
+  `awk 'BEGIN{while((getline l < "secrets")>0) print l}'` names a file without
+  ever passing it as an operand
+- Detect `-----BEGIN ENCRYPTED PRIVATE KEY-----` and the SSH2 spelling, which
+  `openssl genpkey -aes256` writes and the rule did not list
 - Expand a glob before deciding whether it names a file. `cat sec*` collected
   `sec*`, found nothing on disk by that name, and allowed the read; `cat .env*`
   did the same, one character away from `cat .env`, which is blocked on its name.
