@@ -94,6 +94,12 @@
   file. The local part is now bounded at 64 characters (RFC 5321's limit, so
   no deliverable address is lost) and the domain is matched as dot-separated
   labels, which leaves nothing to backtrack over
+- Bound the `connection-string` credentials too. `[^@\s]+` crosses both `:` and
+  `/`, so a line of `mongodb://` with no `@` in it ran to the end of the text
+  from every occurrence: 188 KB took 2.3s, and 1 MiB through the hook took 98s
+  and returned exit 0. Six adversarial shapes in the tests never reached it,
+  which is the shape list being caught short rather than the guard working — the
+  seventh was written for this syntax
 - Bound the `env-assignment` pattern's name the same way. It read `[A-Z_]*`
   before its keyword and `[A-Z_0-9]*` after, so a run of capitals with no `=`
   backtracked from every position: 59 KB took 381ms, 234 KB 6.9s, 1 MiB 125s.

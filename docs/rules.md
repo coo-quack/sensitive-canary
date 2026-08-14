@@ -78,7 +78,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `jwt` | JSON Web Token (three Base64URL segments separated by `.`) |
 | `private-key` | PEM Private Key header (`-----BEGIN … PRIVATE KEY-----`) |
-| `connection-string` | Database connection string with embedded credentials |
+| `connection-string` | Database connection string with embedded credentials; each half of the credentials is bounded at 256 characters — see the note below the tables |
 
 ### SaaS / Developer Tools
 
@@ -130,11 +130,11 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 | `pii-ipv4-public` | Public IPv4 Address | Context-gated; reserved/private ranges excluded |
 | `pii-ipv6` | IPv6 Address | Context-gated; loopback, link-local, ULA, multicast excluded |
 
-### Why two patterns carry length bounds
+### Why three patterns carry length bounds
 
-`pii-email` and `env-assignment` each bound a repeated character class, and the bounds are not cosmetic. Both patterns put a `*` on a class that also matches the separator around it, so on a long run with no match in it — a log full of IP addresses, a file of capitals with no `=` — every position started a greedy consume of the rest of the text and then backtracked a character at a time. That is quadratic: measured on `env-assignment` alone, 59 KB took 381 ms, 234 KB took 6.9 s and 1 MiB took 125 s.
+`pii-email`, `env-assignment` and `connection-string` each bound a repeated character class, and the bounds are not cosmetic. Each put an unbounded quantifier on a class that also matches the separator around it, so on a long run with no match in it — a log full of IP addresses, a file of capitals with no `=`, a line of `mongodb://` with no `@` — every position started a greedy consume of the rest of the text and then backtracked a character at a time. That is quadratic: measured on `env-assignment` alone, 59 KB took 381 ms, 234 KB took 6.9 s and 1 MiB took 125 s; `connection-string` took 2.3 s on 188 KB and 98 s on 1 MiB through the hook.
 
-This matters more than a slow scan. A hook that does not return is killed by Claude Code's PreToolUse timeout, and **a killed hook does not block the tool call** — so a slow pattern is a way through, not an inconvenience. `src/lib/__tests__/rules.test.ts` runs every rule in this file against seven adversarial shapes and fails any that takes more than two seconds, so a new rule written this way is caught before release.
+This matters more than a slow scan. A hook that does not return is killed by Claude Code's PreToolUse timeout, and **a killed hook does not block the tool call** — so a slow pattern is a way through, not an inconvenience. `src/lib/__tests__/rules.test.ts` runs every rule in this file against a list of adversarial shapes and fails any that takes more than two seconds. That list is not a proof: `connection-string` was quadratic through six of the shapes without any of them reaching it, and it took a seventh, written for its own syntax, to fail. Adding a rule means asking what input makes its own quantifiers run, and adding that shape there if the list has nothing like it.
 
 A rule that needs an unbounded repeat should say why in its `description`, and should come with a case in that file.
 

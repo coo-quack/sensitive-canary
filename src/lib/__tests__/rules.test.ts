@@ -842,6 +842,14 @@ describe("scan — adversarial inputs", () => {
   // makes it a property of the rule set rather than a note about two inputs. A
   // rule added with a greedy quantifier either side of a literal fails here
   // before it reaches a release.
+  //
+  // A shape list is not a proof of completeness, and this one was caught short
+  // already: with the first six shapes, `connection-string` was quadratic and
+  // none of them reached it — `[^@\s]+` crosses both `:` and `/`, so every
+  // `mongodb://` ran to the end of the text looking for an `@`. 188 KB took 2.3s
+  // and 1 MiB through the hook took 98s. Adding a rule means asking what input
+  // makes its own quantifiers run, and adding that shape here when the list has
+  // nothing like it.
   describe("no rule is quadratic", () => {
     // Runs with no match in them, each built so a quantifier that can also
     // match its own separator has somewhere to backtrack.
@@ -853,12 +861,15 @@ describe("scan — adversarial inputs", () => {
       hex: "deadbeef".repeat(32_000),
       "base64 alphabet": "aA0+/".repeat(51_200),
       "assignments with no value": "key = ".repeat(42_666),
+      "url credentials with no host": "mongodb://a:".repeat(21_333),
     };
 
-    // Every rule is linear or better on these, so the slowest is 56ms
-    // (`pii-email` on digits and dots). A budget well above that does not flake
-    // on a loaded runner and still fails on quadratic: the rule this was written
-    // for took seven seconds at a quarter of this size.
+    // Every rule is linear or better on these. The slowest pair measured is
+    // `pii-email` on digits and dots: 56ms warm, a little over 200ms on a cold
+    // run of the whole matrix. So the margin is about an order of magnitude, not
+    // the three orders I first wrote here. What the budget has to separate is
+    // quadratic from linear, and it does that with room: the rule this was
+    // written for took seven seconds at a quarter of this size.
     const BUDGET_MS = 2_000;
 
     // Through `compileRule`, so each rule is timed with the flags it ships with.
@@ -935,6 +946,38 @@ describe("pii-email after bounding the local part", () => {
       expect(email(text)).toBe(false);
     },
   );
+});
+
+describe("connection-string after bounding the credentials", () => {
+  const conn = (text: string): boolean =>
+    scan(text).some((f) => f.ruleId === "connection-string");
+
+  it.each([
+    "mongodb://user:pass@host/db",
+    "postgres://u:p@h:5432/d",
+    "postgresql://u:p@h/d",
+    "mysql://root:secret@localhost",
+    "redis://default:abc123@127.0.0.1:6379",
+    "see mongodb://user:pass@host in the log",
+  ])("%s is detected", (text) => {
+    expect(conn(text)).toBe(true);
+  });
+
+  it.each([
+    ["mongodb://host/db", "no credentials"],
+    ["https://user:pass@host", "a scheme the rule does not cover"],
+    ["mongodb://user@host", "no password"],
+  ])("%s is not detected (%s)", (text) => {
+    expect(conn(text)).toBe(false);
+  });
+
+  // What the bound costs: a userinfo field longer than 256 characters. A
+  // password that long is not what a connection string carries, and the
+  // alternative is the quantifier running to the end of the file.
+  it("credentials longer than the bound are not detected", () => {
+    expect(conn(`mongodb://user:${"p".repeat(257)}@host`)).toBe(false);
+    expect(conn(`mongodb://user:${"p".repeat(256)}@host`)).toBe(true);
+  });
 });
 
 describe("env-assignment after bounding the name", () => {

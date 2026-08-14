@@ -238,7 +238,7 @@
     {
       "id": "connection-string",
       "description": "Database Connection String with credentials",
-      "regex": "(mongodb|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]+:[^@\\s]+@",
+      "regex": "(mongodb|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]{1,256}:[^@\\s]{1,256}@",
       "category": "secret"
     },
     {
