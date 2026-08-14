@@ -44,12 +44,20 @@ export interface HookResult {
   reason: string | null;
 }
 
+// A hook that never returns is a fail-open in production, where Claude Code's
+// PreToolUse timeout kills it and lets the call through. `spawnSync` blocks the
+// worker, so without a limit here the same hang stops the test run rather than
+// failing it, and vitest's per-test timeout cannot interrupt it. A killed run
+// reports no status, which becomes -1 and fails whatever the test expected.
+const HOOK_TIMEOUT_MS = 15_000;
+
 // Spawn the hook with a raw stdin payload and assemble its verdict.
 function spawnHook(input: string, opts?: RunOptions): HookResult {
   const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
     input,
     encoding: "utf8",
     env: opts?.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts?.env },
+    timeout: HOOK_TIMEOUT_MS,
   });
   const exitCode = result.status ?? -1;
   return {

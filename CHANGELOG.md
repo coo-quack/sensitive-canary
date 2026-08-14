@@ -91,6 +91,20 @@
   recognised, so nothing marked the pattern as supplied and the file that
   followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
   (`--regexp=aws`) spellings were already handled
+- Stop reading a path that names something other than a regular file. Reading
+  `/dev/zero` never reaches the end of the file, so the hook did not return and
+  Claude Code's PreToolUse timeout killed it — and a killed hook does not block
+  the call, which made the hang a way through. The tool-input side already
+  stat'd first; the Bash side now does too. `.env` and `.env.*` are still
+  blocked on the name alone, before anything is opened
+- Read `--` as the end of option parsing. `grep -- -aws secrets` searches for
+  `-aws` in `secrets`, but `-aws` was taken for a flag, so nothing marked the
+  pattern as supplied and `secrets` was consumed in its place rather than
+  scanned. Without the `--` the same tokens mean what they did before: the file
+  is the pattern and the command reads stdin
+- Scan a variable named inside another expansion's suffix. `${A:-$TOKEN}` prints
+  `$TOKEN` whenever `A` is unset, but each expansion was matched whole, so the
+  skip to the closing brace swallowed the suffix and the name in it
 - `.claude-plugin/plugin.json` declared `0.5.1` while `package.json` declared
   `0.7.0`: the release checklist asks for both, and the bump was missed for
   0.6.0 and 0.7.0. The plugin manifest now matches the released version

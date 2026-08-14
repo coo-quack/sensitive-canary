@@ -634,6 +634,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
   let patternSkipped = false;
   let gitSubcommandSeen = false;
   let gitReadsFiles = false;
+  let optionsEnded = false;
 
   for (const tok of operands) {
     if (skipNext) {
@@ -668,12 +669,25 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       continue;
     }
 
-    if (behaviour.takesInlineCode && isInlineCodeFlag(cmd, tok.value)) {
+    // `--` ends option parsing: every token after it is an operand, whatever it
+    // is spelled like. `grep -- -aws secrets` searches for `-aws` in `secrets`,
+    // so the file is a file — read as a flag, `-aws` left the pattern
+    // unaccounted for and `secrets` was consumed in its place.
+    if (!optionsEnded && tok.value === "--") {
+      optionsEnded = true;
+      continue;
+    }
+
+    if (
+      !optionsEnded &&
+      behaviour.takesInlineCode &&
+      isInlineCodeFlag(cmd, tok.value)
+    ) {
       codeNext = true;
       continue;
     }
 
-    if (tok.value.startsWith("-")) {
+    if (!optionsEnded && tok.value.startsWith("-")) {
       // A global git flag with a separate value consumes the next token too:
       // in `git -C repo show f`, `repo` is not the subcommand.
       if (

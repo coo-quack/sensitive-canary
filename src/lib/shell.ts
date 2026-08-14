@@ -60,11 +60,16 @@ function stepQuote(s: string, i: number, quote: string | null): QuoteStep {
 
 // Variable names referenced by the command, including expansion forms that carry
 // a suffix such as `${TOKEN:-fallback}` or `${TOKEN#prefix}`.
+//
+// Every `$` that a name follows counts, rather than each expansion being matched
+// whole. Matching `${NAME…}` as a unit meant the suffix was consumed by the
+// pattern that skipped to the closing brace, and a name inside the suffix went
+// with it: `${A:-$TOKEN}` prints `$TOKEN` when `A` is unset, and named only `A`.
+// An unclosed `${NAME` now yields its name too, which errs towards scanning.
 export function extractEnvVarNames(command: string): string[] {
   const names = new Set<string>();
-  const re = /\$\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
-  for (const match of command.matchAll(re)) {
-    const name = match[1] ?? match[2];
+  for (const match of command.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    const name = match[1];
     if (name) names.add(name);
   }
   return [...names];
