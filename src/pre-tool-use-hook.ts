@@ -37,6 +37,13 @@ interface TranscriptLine {
 // Maximum bytes to read from the tail of a transcript file.
 const MAX_TRANSCRIPT_TAIL_BYTES = 65_536; // 64 KB
 
+// Maximum bytes scanned from the head of a file. readFileSync has no size
+// limit, so a file of any size was read whole and every rule run over all of
+// it — on a multi-GB log that is the hang this hook cannot afford, because a
+// killed hook does not block the call (see isRegularFile). A secret past the
+// cut is missed; the transcript read above makes the same trade for its tail.
+const MAX_FILE_SCAN_BYTES = 1_048_576; // 1 MiB
+
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
 // ── Transcript ────────────────────────────────────────────────────────────────
@@ -255,7 +262,16 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   let content: string;
   try {
-    const raw = fs.readFileSync(filePath);
+    const { size } = fs.statSync(filePath);
+    const buf = Buffer.alloc(Math.min(size, MAX_FILE_SCAN_BYTES));
+    const fd = fs.openSync(filePath, "r");
+    let raw: Buffer;
+    try {
+      const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+      raw = buf.subarray(0, bytesRead);
+    } finally {
+      fs.closeSync(fd);
+    }
     // Binary files: scan only the text prefix before the first NUL byte
     const nulIndex = raw.indexOf(0);
     content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(

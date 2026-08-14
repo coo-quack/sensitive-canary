@@ -283,6 +283,32 @@ describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {
   });
 });
 
+// ── large file head read (1 MiB) ─────────────────────────────────────────────
+
+describe("pre-tool-use-hook — large file head read (1 MiB)", () => {
+  // readFileSync has no size limit, so a file of arbitrary size was read whole
+  // and ground through every rule — a hang on a multi-GB log, and a hang is a
+  // fail-open. Only the first 1 MiB is scanned now; a secret past the cut is
+  // missed, the same trade the transcript tail read above already makes.
+  it("blocks a secret within the first 1 MiB", () => {
+    const p = writeFixture(
+      "large-within-head.txt",
+      `${"x".repeat(512 * 1024)}\nkey=AKIAIOSFODNN7EXAMPLE\n`,
+    );
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(2);
+  });
+
+  it("does not see a secret past the 1 MiB cut", () => {
+    const p = writeFixture(
+      "large-beyond-head.txt",
+      `${"x".repeat(1100 * 1024)}\nkey=AKIAIOSFODNN7EXAMPLE\n`,
+    );
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // ── Bash tool — env var expansion ────────────────────────────────────────────
 
 describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {

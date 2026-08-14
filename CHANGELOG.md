@@ -85,6 +85,20 @@
 
 ### Fixes
 
+- Make the email rule near-linear on its worst input. The local part
+  (`[A-Za-z0-9._%+-]+`) spans the word boundary at every dot, so on a long run
+  of digits and separators with no `@` — a log full of IP addresses or version
+  numbers is exactly that — every boundary cost a greedy consume of the rest
+  of the text plus a character-at-a-time backtrack in search of the `@`:
+  O(n²), half a minute for 200 KB, and effectively forever for a multi-MB
+  file. The local part is now bounded at 64 characters (RFC 5321's limit, so
+  no deliverable address is lost) and the domain is matched as dot-separated
+  labels, which leaves nothing to backtrack over
+- Scan only the first 1 MiB of a file rather than reading it whole.
+  `readFileSync` has no size limit, so a large enough file kept the hook from
+  ever returning — and a hook killed by Claude Code's PreToolUse timeout does
+  not block the call, which made the hang a way through. A secret past the cut
+  is missed, the same trade the transcript's 64 KB tail read already makes
 - Scan the file operand of a pattern-first command when the pattern flag carries
   its value written against it. `grep -eaws secrets`, `grep -faws secrets` and
   `sed -e's/a/b/' secrets` scanned nothing: the attached spelling was not
