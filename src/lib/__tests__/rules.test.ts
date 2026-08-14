@@ -948,6 +948,28 @@ describe("pii-email after bounding the local part", () => {
   );
 });
 
+// `openssl genpkey -aes256` writes this header, and it was not one of the forms
+// the rule listed.
+describe("encrypted private key headers", () => {
+  it.each([
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+    "-----BEGIN SSH2 ENCRYPTED PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "-----BEGIN PRIVATE KEY-----",
+  ])("%s is detected", (header) => {
+    expect(scan(header).some((f) => f.ruleId === "private-key")).toBe(true);
+  });
+
+  it("a header that is not a private key is not detected", () => {
+    expect(
+      scan("-----BEGIN CERTIFICATE-----").some(
+        (f) => f.ruleId === "private-key",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("connection-string after bounding the credentials", () => {
   const conn = (text: string): boolean =>
     scan(text).some((f) => f.ruleId === "connection-string");

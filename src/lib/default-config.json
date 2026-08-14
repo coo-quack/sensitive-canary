@@ -16,7 +16,7 @@
     {
       "id": "private-key",
       "description": "PEM Private Key",
-      "regex": "-----BEGIN (RSA |EC |DSA |PGP |OPENSSH )?PRIVATE KEY",
+      "regex": "-----BEGIN ((RSA|EC|DSA|PGP|OPENSSH|ENCRYPTED|SSH2 ENCRYPTED) )?PRIVATE KEY",
       "category": "secret"
     },
     {

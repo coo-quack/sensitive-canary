@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runBashHook, runHook, runHookWithRawInput } from "./hook-harness.ts";
+import {
+  AWS_KEY,
+  runBashHook,
+  runHook,
+  runHookWithRawInput,
+  useFixtureDir,
+} from "./hook-harness.ts";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -335,6 +341,44 @@ describe("pre-tool-use-hook — large file head read (1 MiB)", () => {
       expect(exitCode).toBe(2);
     },
   );
+});
+
+// ── path shapes the shell expands ────────────────────────────────────────────
+
+// Each of these names a real file once the shell is done with it, and each was
+// allowed: the candidate was collected and then dropped, because nothing on disk
+// is called `~/secrets.txt` or `.env{,.bak}`.
+describe("pre-tool-use-hook — shell expansion of a path", () => {
+  const writeFixture = useFixtureDir("expansion");
+
+  it("~ is the home directory", () => {
+    const dir = writeFixture.path();
+    writeFixture("secrets.txt", `key=${AWS_KEY}`);
+    const result = runBashHook("cat ~/secrets.txt", { env: { HOME: dir } });
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("a brace expansion names both files", () => {
+    writeFixture(".env", "TOKEN=whatever");
+    const result = runBashHook(`cat ${writeFixture.path()}/.env{,.bak}`);
+    expect(result.exitCode).toBe(2);
+    expect(result.blocked).toBe(true);
+  });
+
+  // The literal is kept beside the expansion. Returning only the matches lost
+  // two things the hook had before expansion existed.
+  it("a pattern matching nothing is still blocked on its name", () => {
+    const result = runBashHook(
+      `cat ${writeFixture.path()}/nothing-here/.env.*`,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.blocked).toBe(true);
+  });
+
+  it("a file whose name contains glob characters is scanned", () => {
+    const file = writeFixture("report[2].txt", `key=${AWS_KEY}`);
+    expect(runBashHook(`cat ${file}`).exitCode).toBe(2);
+  });
 });
 
 // ── Bash tool — env var expansion ────────────────────────────────────────────

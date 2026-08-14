@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { extractCommandRefs } from "./lib/bash-commands.ts";
 import {
@@ -217,11 +218,14 @@ function block(
 
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
-// Characters that make a token a pattern rather than a filename.
-const GLOB_METACHARACTERS = /[*?[]/;
+// Characters that make a token a pattern rather than a filename. `{` is here
+// because the shell expands `{a,b}` too, and `cat .env{,.bak}` reached the name
+// guard as the single name `.env{`.
+const GLOB_METACHARACTERS = /[*?[{]/;
 
-// How many matches of one pattern are scanned. `cat *` in a large tree would
-// otherwise read the whole tree before the tool call it is guarding.
+// How many matches of one pattern are scanned. This bounds the reading, not the
+// walk: `globSync` builds the whole expansion before this takes a slice of it, so
+// a pattern over a large tree still costs the walk.
 const MAX_GLOB_MATCHES = 256;
 
 // The paths a candidate stands for.
@@ -235,12 +239,31 @@ const MAX_GLOB_MATCHES = 256;
 // Expanded here rather than in the tokenizer because it needs the filesystem,
 // which is also why it can differ from what the shell will do a moment later.
 function expandCandidate(candidate: string): string[] {
-  if (!GLOB_METACHARACTERS.test(candidate)) return [candidate];
+  const literal = expandTilde(candidate);
+  if (!GLOB_METACHARACTERS.test(literal)) return [literal];
+  let matches: string[] = [];
   try {
-    return fs.globSync(candidate).slice(0, MAX_GLOB_MATCHES);
+    matches = fs.globSync(literal).slice(0, MAX_GLOB_MATCHES);
   } catch {
-    return [];
+    matches = [];
   }
+  // The literal is kept as well as the expansion, and returning only the matches
+  // was a way through that this hook did not have before the expansion existed:
+  // `cat /nonexistent/.env.*` matches nothing, so nothing was scanned and the
+  // `.env` name guard — which reads the name, not the disk — never ran. A file
+  // really named `report[2].txt` was lost the same way, since glob reads `[2]`
+  // as a character class and expands it to `report2.txt`.
+  return [literal, ...matches];
+}
+
+// `~` and `~/…` stand for the home directory, and nothing here expanded them, so
+// `cat ~/.aws/credentials` named a path that exists on no disk and was dropped
+// as a file that is not there. `~user/…` is left alone: resolving it needs the
+// password database, and guessing at it would name the wrong file.
+function expandTilde(candidate: string): string {
+  if (candidate === "~") return os.homedir();
+  if (!candidate.startsWith("~/")) return candidate;
+  return path.join(os.homedir(), candidate.slice(2));
 }
 
 // Whether a path names something whose bytes can be read to the end.
@@ -258,10 +281,11 @@ function isRegularFile(candidate: string): boolean {
   }
 }
 
-// Scan a candidate only when it names an existing regular file. Tools whose
-// "path" means something else (a URL route, an object key) are left alone —
-// including from the `.env` name guard, which a tool input has no business
-// tripping over a value that names no file at all.
+// Scan a candidate only when it names an existing regular file. A tool input
+// whose "path" means something else (a URL route, an object key) names nothing on
+// disk, so it is dropped here and never reaches the `.env` name guard — which is
+// the difference from the Bash path, where a name that exists on no disk is still
+// blocked. Existing files go on to `scanFile` and are name-guarded there.
 function scanIfRegularFile(
   candidate: string | undefined,
   allowTags: Set<string>,

@@ -177,6 +177,9 @@ export const WRAPPER_COMMANDS = new Set([
   "env",
   "timeout",
   "flock",
+  // `eval cat secrets` runs its arguments as a command line, so the command to
+  // classify is the one after it, exactly as with the wrappers above.
+  "eval",
 ]);
 
 // Interpreters that accept inline program text, which is scanned both as a
@@ -608,7 +611,13 @@ function inspectEnvironmentCommand(tokens: ShellToken[]): {
 function isInlineCodeFlag(cmd: string, token: string): boolean {
   if (token === "-c" || token === "--command" || token === "--eval")
     return true;
-  if (POSIX_SHELLS.has(cmd)) return false;
+  if (POSIX_SHELLS.has(cmd)) {
+    // A shell bundles its switches too: `bash -lc 'cat secrets'` runs the same
+    // string `bash -c` would, and only the exact spelling was recognised. The
+    // letters before the `c` have to be switches that take no value of their
+    // own, or the `c` is part of something else's value.
+    return /^-[abefhilmnpuvxCPT]*c$/.test(token);
+  }
   if (token === "-r") return true; // php -r
   return /^-[A-Za-z]*[eE]$/.test(token);
 }
@@ -654,17 +663,23 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
 
   const cmd = path.basename(cmdToken.value);
   const operands = tokens.slice(start + 1);
-  const behaviourForLead = classifyCommand(cmd);
 
   // `< secrets cat` puts the redirection before the command, so its target is
   // not among the operands and the loop below never sees it. The command still
   // reads it.
-  for (let i = 0; i < start; i++) {
+  //
+  // `$(<secrets)` has no command at all: bash reads the file and substitutes its
+  // contents. There the whole token list is in front of the "command", which is
+  // the redirection operator itself.
+  const beforeCommand = cmdToken.redirect ? tokens.length : start;
+  for (let i = 0; i < beforeCommand; i++) {
     if (tokens[i]?.redirect !== true) continue;
     if (tokens[i]?.value !== "<") continue;
     const target = tokens[i + 1];
     if (target === undefined || target.redirect) continue;
-    if (!behaviourForLead.printsNoFileContents) refs.paths.push(target.value);
+    if (!classifyCommand(cmd).printsNoFileContents) {
+      refs.paths.push(target.value);
+    }
   }
 
   // In-place editing sends the result back to the file, so nothing reaches
@@ -711,7 +726,9 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     if (codeNext) {
       codeNext = false;
       // The expression came from -e/-c, so a later operand is a file, not the
-      // script `perl file` would have run.
+      // script `perl file` would have run. `patternSkipped` is set for the same
+      // reason, though no command is in both tables today, so it is
+      // `inlineCodeSeen` below that carries this case.
       patternSkipped = true;
       if (behaviour.inlineCodeReadsOperands) inlineCodeSeen = true;
       mergeRefs(refs, extractCommandRefs(tok.value, depth + 1));
@@ -819,6 +836,10 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
 
     if (behaviour.firstOperandIsPatternOrScript && !patternSkipped) {
       patternSkipped = true; // the pattern, expression or script name
+      // An awk or sed program can name a file inside itself, the way inline code
+      // does: `awk 'BEGIN{ while ((getline l < "secrets") > 0) print l }'` reads
+      // one without ever naming it as an operand.
+      refs.paths.push(...extractQuotedLiterals(tok.value));
       continue;
     }
 
