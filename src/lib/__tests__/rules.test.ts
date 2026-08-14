@@ -1029,6 +1029,59 @@ describe("detections that quieting the rules had removed", () => {
   });
 });
 
+// Shapes a review found wrong after the last round of rule changes: a keyword
+// that is a substring of an ordinary word, a command with flags between it and
+// its host, and a token boundary written in a different alphabet from the token.
+describe("keywords and boundaries are read as words, not substrings", () => {
+  const flags = (t: string): string[] => scan(t).map((f) => f.ruleId);
+  const V = "Xk9mP2qR7vL4nW1s";
+
+  it.each([`COMPASS=${V}`, `BYPASS=${V}`, `PASSENGER_NAME=${V}`])(
+    "%s is not a password",
+    (text) => {
+      expect(flags(text)).not.toContain("env-assignment");
+    },
+  );
+
+  it.each([`DB_PASS=${V}`, `DB_PASSWORD=${V}`, `MYSQL_PASSWD=${V}`])(
+    "%s is",
+    (text) => {
+      expect(flags(text)).toContain("env-assignment");
+    },
+  );
+
+  // The lookbehind used to allow exactly one space.
+  it.each([
+    "ssh deploy@prod.acme-corp.net",
+    "ssh  deploy@prod.acme-corp.net",
+    "ssh -p 22 deploy@prod.acme-corp.net",
+    "scp -r build ops@files.acme-corp.net:/srv/",
+    "rsync -avz ops@files.acme-corp.net:/srv/ .",
+  ])("%s is a host, not a person", (text) => {
+    expect(flags(text)).not.toContain("pii-email");
+  });
+
+  it("an address further from the command is still a person", () => {
+    const text = `ssh into the box, then write to ${"x".repeat(45)} ada@analytical-engines.org`;
+    expect(flags(text)).toContain("pii-email");
+  });
+
+  // The token is base64url and the boundary was standard base64, so a token
+  // followed by `_` matched its first sixty characters.
+  it("a Square token running into more base64url is not one", () => {
+    expect(flags(`EAAA${"b".repeat(60)}_more`)).not.toContain(
+      "square-access-token",
+    );
+  });
+
+  it.each([
+    `key_EAAA${"b".repeat(60)}`,
+    `https://x.io/a?token=EAAA${"b".repeat(60)}`,
+  ])("%s is one", (text) => {
+    expect(flags(text)).toContain("square-access-token");
+  });
+});
+
 // The other direction, in the same file, so quieting a rule cannot pass unnoticed.
 describe("what must still be a finding", () => {
   it.each([

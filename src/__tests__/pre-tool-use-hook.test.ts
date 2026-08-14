@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -460,6 +461,25 @@ describe("pre-tool-use-hook — .env templates", () => {
       `${"x".repeat(1_100_000)}\nAWS=${AWS_KEY}\n`,
     );
     expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  // Every way of not reading a template falls back on its name. Filling the byte
+  // budget first was a way past the guard, and so was a FIFO with a template
+  // name — the contents are what the exemption relies on.
+  it("a template reached after the byte budget is blocked", () => {
+    const dir = writeFixture.path();
+    const pad = "the quick brown fox ".repeat(55_000);
+    for (let i = 0; i < 70; i++) writeFixture(`pad${i}.log`, pad);
+    writeFixture(".env.late.example", "TOKEN=changeme\n");
+    expect(
+      runBashHook(`cat ${dir}/pad*.log ${dir}/.env.late.example`).exitCode,
+    ).toBe(2);
+  });
+
+  it("a fifo with a template name is blocked", () => {
+    const fifo = writeFixture.path(".env.fifo.example");
+    execFileSync("mkfifo", [fifo]);
+    expect(runHook("Read", fifo).exitCode).toBe(2);
   });
 
   // `endsWith`, not `includes`: `.env.distributed` ends in neither template

@@ -148,6 +148,8 @@
     how they are stored. Context keeps a timestamp out instead
   - a postal code next to the word `max`, and a connection string whose password
     runs past 256 characters
+- Read a command that arrives as an argv array on the `Bash` tool too, not only
+  on an MCP one. The same command was scanned or not depending on who sent it
 - Block a `.env` template whose contents cannot be read whole. The exemption
   assumed the contents would be scanned instead, and a NUL byte or a file past
   the per-file cut stopped that — so `.env.nul.example` and `.env.big.example`

@@ -68,12 +68,20 @@ jobs:
             echo "::error::version mismatch — package.json is $pkg, .claude-plugin/plugin.json is $plugin."
             exit 1
           fi
-      - name: the published hooks run without a type stripper
+      - name: the published hooks run, and still block
         run: |
+          # Exit 0 alone would pass for a hook that starts and checks nothing,
+          # which is the failure this exists to catch. So both directions.
+          key="AKIA""IOSFODNN7EXAMPLE"
           printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
-            | node dist/pre-tool-use-hook.js; test $? -eq 0
-          printf '%s' '{"prompt":"hello"}' \
-            | node dist/user-prompt-submit-hook.js; test $? -eq 0
+            | node dist/pre-tool-use-hook.js
+          test $? -eq 0 || { echo "::error::the published PreToolUse hook did not allow a clean command"; exit 1; }
+          printf '{"prompt":"key=%s"}' "$key" | node dist/user-prompt-submit-hook.js
+          test $? -eq 2 || { echo "::error::the published UserPromptSubmit hook did not block a secret"; exit 1; }
+          printf 'key=%s\n' "$key" > /tmp/smoke-secret.txt
+          printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-secret.txt"}}' \
+            | node dist/pre-tool-use-hook.js
+          test $? -eq 2 || { echo "::error::the published PreToolUse hook did not block a secret"; exit 1; }
 
       - name: Publish to npm
         run: pnpm publish --provenance --access public

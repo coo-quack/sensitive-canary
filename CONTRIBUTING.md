@@ -62,6 +62,7 @@ If the backport PR has conflicts, resolve them manually before merging.
 
 1. Add the rule to `src/lib/default-config.json` — define `id`, `description`, `regex`, `category`, and optionally `entropyThreshold` and `flags`. `src/lib/rules.ts` reads that file; it holds the checksum validators, not the rules
 2. Add tests to `src/lib/__tests__/rules.test.ts` — cover true positives, false negatives, and entropy filtering
+   - Add the rule to the `EXAMPLES` table in the same file. Every rule needs one value it must find, or the id list proves only that a name is present: four rules shipped with patterns that could be disabled in silence because nothing asked them to match anything
    - If the pattern carries a `*`, `+` or `{n,}` on a character class, work out what input makes it backtrack and add that shape to `no rule is quadratic` in the same file. A pattern that does not return is a way past the hook, not a slow scan — see the note in `docs/rules.md`
 3. Update `README.md` — add to the detection rules table
 4. Update `docs/rules.md` — add full reference entry

@@ -167,7 +167,7 @@
     {
       "id": "square-access-token",
       "description": "Square Access Token",
-      "regex": "(?<![A-Za-z0-9+/])EAAA[a-zA-Z0-9\\-_+=]{60}(?![A-Za-z0-9+/])",
+      "regex": "(?<![A-Za-z0-9+/])EAAA[a-zA-Z0-9\\-_+=]{60}(?![A-Za-z0-9+/=_-])",
       "category": "secret"
     },
     {
@@ -230,7 +230,7 @@
     {
       "id": "env-assignment",
       "description": ".env style secret assignment",
-      "regex": "(?:(?:^|\\n)[ \\t-]{0,64}[\"']?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|PASS|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[\"']?[ \\t]*:|\\b[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|PASS|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[ \\t]*=)[ \\t]*[\"']?(?!\\$)([^\\s\"'\\[\\]{}();,<>]{8,})(?=$|[\\s\"';,)\\]}])",
+      "regex": "(?:(?:^|\\n)[ \\t-]{0,64}[\"']?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|(?<![A-Za-z])PASS(?![A-Za-z])|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[\"']?[ \\t]*:|\\b[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|(?<![A-Za-z])PASS(?![A-Za-z])|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[ \\t]*=)[ \\t]*[\"']?(?!\\$)([^\\s\"'\\[\\]{}();,<>]{8,})(?=$|[\\s\"';,)\\]}])",
       "flags": "gi",
       "category": "secret",
       "secretGroup": 1,
@@ -245,7 +245,7 @@
     {
       "id": "pii-email",
       "description": "Email Address",
-      "regex": "(?<!\\bssh )(?<!\\bscp )(?<!\\brsync )(?<!\\bsftp )\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
+      "regex": "(?<!\\b(?:ssh|scp|rsync|sftp)\\b[^@\\n]{0,40})\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
       "category": "pii"
     },
     {
@@ -284,21 +284,6 @@
       "description": "IPv4 Address (private range)",
       "regex": "\\b(10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b(?!:\\d)",
       "category": "pii",
-      "contextWords": [
-        "client",
-        "user",
-        "visitor",
-        "customer",
-        "subscriber",
-        "household",
-        "resident",
-        "ip",
-        "addr",
-        "address",
-        "forwarded",
-        "src",
-        "remote"
-      ],
       "excludeContext": [
         "ping",
         "curl",

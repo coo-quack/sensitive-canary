@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AWS_KEY,
   runBashHook,
+  runToolHook,
   TOKEN_VALUE,
   useFixtureDir,
 } from "./hook-harness.ts";
@@ -496,6 +497,14 @@ describe("pre-tool-use-hook — command classification", () => {
       const result = runBashHook(`echo ${writeFixture.path()}/*`);
       expect(result.exitCode).toBe(0);
     });
+  });
+
+  // A tool input is whatever the tool declares. The Bash tool sends a string
+  // today; an argv array is the shape an MCP shell server sends, and reading one
+  // and not the other left the same command unscanned depending on who sent it.
+  it("a command sent as an argv array is read", () => {
+    const file = writeFixture("argv.txt", `key=${AWS_KEY}`);
+    expect(runToolHook("Bash", { command: ["cat", file] }).exitCode).toBe(2);
   });
 
   // A redirection may stand before the command. The operator is skipped as a

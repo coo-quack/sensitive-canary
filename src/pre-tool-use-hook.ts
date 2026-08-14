@@ -94,9 +94,11 @@ let bytesScanned = 0;
 // A byte budget bounds the reading and not the walking, and a pattern reaching
 // one level under a home directory took ten seconds — close enough to the
 // PreToolUse timeout to matter, and a hook killed by that timeout does not
-// block. A deadline bounds both, because it is checked between files rather than
-// counted in them. Files after it are not scanned, so this is a way through as
-// much as the byte budget is; it is the smaller of the two costs.
+// block. This is checked between files, so it bounds the reading of many files
+// where a byte count would not. It does not bound a single `globSync` call,
+// which cannot be interrupted: a pattern several directories deep still costs
+// what the walk costs. Files after the deadline are not scanned, and a `.env`
+// name reached after it falls back on the name.
 const DEADLINE = Date.now() + 5_000;
 
 // The directory a relative path is relative to. Set from the payload before any
@@ -174,6 +176,11 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
 // .env and .env.* (e.g. .env.local, .env.production) match the env filename pattern.
 // The block only applies while the "secret" category is enabled (see shouldBlockEnvFile).
 // Files that merely end in .env (e.g. production.env) are handled by content scanning.
+// Said in two places — the name guard and the partial-read guard — and a
+// difference between them would read as two different rules.
+const ENV_BLOCK_REASON =
+  "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.";
+
 // Suffixes that say a file is the template rather than the filled-in thing.
 // These are committed on purpose, carry placeholders, and a tool that refuses to
 // read `.env.example` is refusing the file people write in order to explain the
@@ -429,6 +436,25 @@ function scanIfRegularFile(
   }
 }
 
+// A `.env` file that will not be read is judged on its name, template or not.
+function blockUnreadEnvFile(filePath: string, allowTags: Set<string>): void {
+  if (!isEnvName(filePath) || !ENABLED_CATEGORIES.has("secret")) return;
+  // A path that names nothing has nothing to leak. `cat .env.example` in a
+  // checkout without one is an ordinary command, and the plain `.env` guard
+  // above already decides the names that are blocked whether they exist or not.
+  if (!fs.existsSync(filePath)) return;
+  if (allowTags.has("secret") || allowTags.has("all")) return;
+  block(
+    filePath,
+    [
+      ENV_BLOCK_REASON,
+      "",
+      "Its contents were not read — it is not a regular file, or the scan for this call had already stopped — so the name is what decides.",
+    ],
+    buildAllowHints(`please read ${filePath}`, [], true),
+  );
+}
+
 function scanFile(filePath: string, allowTags: Set<string>): void {
   if (shouldBlockEnvFile(filePath)) {
     // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
@@ -444,9 +470,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     if (!allowTags.has("secret") && !allowTags.has("all")) {
       block(
         filePath,
-        [
-          "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
-        ],
+        [ENV_BLOCK_REASON],
         buildAllowHints(`please read ${filePath}`, [], true),
       );
     }
@@ -454,13 +478,29 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   // The name guard above runs first and on the name alone, so `cat .env.missing`
   // is still blocked. Everything past here opens the file.
-  if (!isRegularFile(filePath)) return;
+  //
+  // Each of these is a way of not reading it: something that is not a regular
+  // file, a budget already spent, a deadline already passed. For a `.env` name
+  // the contents were what the template exemption relied on, so when they are
+  // not going to be read the name decides — otherwise naming enough large files
+  // first was a way past the guard, and so was a FIFO called `.env.x.example`.
+  if (!isRegularFile(filePath)) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
   if (scanned.has(filePath)) return;
   scanned.add(filePath);
-  if (bytesScanned >= MAX_TOTAL_SCAN_BYTES) return;
-  if (Date.now() > DEADLINE) return;
+  if (bytesScanned >= MAX_TOTAL_SCAN_BYTES) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
+  if (Date.now() > DEADLINE) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
 
   let content: string;
+  let readWasPartial = false;
   try {
     // The buffer is the cap, not the reported size. Sizing it from `stat` made
     // the read believe the file: procfs and sysfs entries are regular files that
@@ -482,33 +522,42 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     }
     // Binary files: scan only the text prefix before the first NUL byte
     bytesScanned += raw.length;
-    // Exempting a template name from the guard assumed the contents would be
-    // read instead. Two things stop them being read whole — a NUL byte, and the
-    // per-file cut — and a file named `.env.something.example` carrying either
-    // was passing on its name after all. When the read is partial, the name
-    // guard is what is left, so it runs after all.
     const nulIndex = raw.indexOf(0);
-    const partial = nulIndex !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
-    if (partial && isEnvName(filePath) && ENABLED_CATEGORIES.has("secret")) {
-      if (!allowTags.has("secret") && !allowTags.has("all")) {
-        block(
-          filePath,
-          [
-            "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
-            "",
-            "This one is named as a template, which is normally read. It could not be read whole — it holds a NUL byte or runs past the scan limit — so the name is what decides.",
-          ],
-          buildAllowHints(`please read ${filePath}`, [], true),
-        );
-      }
-    }
+    // Whether the file was read to its end. Recorded here and acted on below,
+    // outside the catch: `block` exits the process, and anything it threw on the
+    // way — a closed stderr, say — would be swallowed by the `catch` and turn a
+    // block into a pass.
+    readWasPartial = nulIndex !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
     content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(
       "utf8",
     );
-    if (content.length === 0) return;
   } catch {
     return;
   }
+
+  // Exempting a template name from the guard assumed the contents would be read
+  // instead. A NUL byte and the per-file cut both stop that, and a file named
+  // `.env.something.example` carrying either was passing on its name after all.
+  // When the read is partial, the name is what is left to decide on.
+  if (
+    readWasPartial &&
+    isEnvName(filePath) &&
+    ENABLED_CATEGORIES.has("secret") &&
+    !allowTags.has("secret") &&
+    !allowTags.has("all")
+  ) {
+    block(
+      filePath,
+      [
+        ENV_BLOCK_REASON,
+        "",
+        "This one is named as a template, which is normally read. It could not be read whole — it holds a NUL byte or runs past the scan limit — so the name is what decides.",
+      ],
+      buildAllowHints(`please read ${filePath}`, [], true),
+    );
+  }
+
+  if (content.length === 0) return;
 
   const findings = applyAllowTags(
     dedupeFindings(scan(content, ENABLED_CATEGORIES)),
@@ -566,7 +615,13 @@ process.stdin.on("end", () => {
     // A tool input is whatever the tool declares, so a `command` that is not a
     // string is a shape this really receives. It used to throw, and an exception
     // exits 1, which does not block: the call went through unscanned.
-    const command = typeof input.command === "string" ? input.command : "";
+    const command = Array.isArray(input.command)
+      ? input.command
+          .filter((v): v is string => typeof v === "string")
+          .join(" ")
+      : typeof input.command === "string"
+        ? input.command
+        : "";
     // `cd build && cat secrets` runs the read somewhere else, and the payload's
     // cwd is where the command starts rather than where it ends up.
     //
