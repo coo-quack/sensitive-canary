@@ -156,6 +156,12 @@ export const INLINE_CODE_READS_OPERANDS = new Set(["perl", "ruby"]);
 
 // Commands that run another command. They are stripped so the wrapped command
 // is classified instead: `sudo cat secrets` is treated as `cat secrets`.
+//
+// `timeout` and `flock` take an operand of their own first (`timeout 5 cat f`,
+// `flock /tmp/lock cat f`) and sat in a set of their own for a while. Nothing
+// ever asked which set a name came from — the one place that read them ORed the
+// two — because the search does not need to know: it walks forward to the first
+// name it can classify, which steps over an operand as readily as over a flag.
 export const WRAPPER_COMMANDS = new Set([
   "sudo",
   "doas",
@@ -169,11 +175,9 @@ export const WRAPPER_COMMANDS = new Set([
   "stdbuf",
   "xargs",
   "env",
+  "timeout",
+  "flock",
 ]);
-
-// Wrappers that take one operand of their own before the wrapped command
-// (`timeout 5 cat f`, `flock /tmp/lock cat f`).
-const WRAPPER_COMMANDS_WITH_OPERAND = new Set(["timeout", "flock"]);
 
 // Interpreters that accept inline program text, which is scanned both as a
 // nested command line and for quoted path literals.
@@ -469,12 +473,7 @@ function findCommandIndex(tokens: ShellToken[]): number {
   if (lead === -1) return 0;
 
   const leadName = path.basename(tokens[lead]?.value ?? "");
-  if (
-    !WRAPPER_COMMANDS.has(leadName) &&
-    !WRAPPER_COMMANDS_WITH_OPERAND.has(leadName)
-  ) {
-    return lead;
-  }
+  if (!WRAPPER_COMMANDS.has(leadName)) return lead;
 
   for (let i = lead + 1; i < tokens.length; i++) {
     const tok = tokens[i];
