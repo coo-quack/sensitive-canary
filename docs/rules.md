@@ -97,6 +97,8 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
 | `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
+| `azure-sas-key` | Azure Shared Access Key for Service Bus, Event Hubs and IoT Hub (`SharedAccessKey=` + 44-char base64). Separate from the storage account key, which is 88 characters |
+| `google-oauth-secret` | Google OAuth Client Secret (`GOCSPX-` prefix) |
 | `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
 | `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
 | `vault-token` | HashiCorp Vault Token (`hvs.` / `hvb.` prefix) |

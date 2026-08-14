@@ -575,6 +575,18 @@
       "description": "Notion Integration Token",
       "regex": "\\bntn_[A-Za-z0-9]{40,}",
       "category": "secret"
+    },
+    {
+      "id": "azure-sas-key",
+      "description": "Azure Shared Access Key (Service Bus, Event Hubs, IoT Hub)",
+      "regex": "SharedAccessKey=[A-Za-z0-9+/]{43}=",
+      "category": "secret"
+    },
+    {
+      "id": "google-oauth-secret",
+      "description": "Google OAuth Client Secret",
+      "regex": "\\bGOCSPX-[A-Za-z0-9_-]{20,}",
+      "category": "secret"
     }
   ]
 }

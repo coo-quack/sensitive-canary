@@ -1151,6 +1151,8 @@ describe("every rule catches something", () => {
     "linear-key": `lin_api_${"a".repeat(40)}`,
     "postman-key": `PMAK-${"a".repeat(24)}-${"b".repeat(34)}`,
     "azure-storage-key": `AccountKey=${"a".repeat(86)}==`,
+    "azure-sas-key": `SharedAccessKey=${"a".repeat(43)}=`,
+    "google-oauth-secret": "GOCSPX-aBcD1234eFgH5678iJkL",
     "flyio-token": `FlyV1 fm2_${"a".repeat(50)}`,
     "databricks-token": `dapi${"0123456789abcdef".repeat(2)}`,
     "vault-token": `hvs.${"A".repeat(30)}`,
@@ -1229,11 +1231,12 @@ describe("the reserved IPv4 boundary", () => {
 });
 
 describe("the shipped rules", () => {
-  it("are exactly these seventy-three", () => {
+  it("are exactly these seventy-five", () => {
     expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
       "anthropic-key",
       "atlassian-token",
       "aws-access-key",
+      "azure-sas-key",
       "azure-storage-key",
       "connection-string",
       "databricks-token",
@@ -1247,6 +1250,7 @@ describe("the shipped rules", () => {
       "github-fine-grained",
       "github-pat",
       "gitlab-pat",
+      "google-oauth-secret",
       "grafana-token",
       "groq-key",
       "huggingface-token",
@@ -1307,12 +1311,12 @@ describe("the shipped rules", () => {
     ]);
   });
 
-  it("are split as the README says: 48 secret, 25 PII", () => {
+  it("are split as the README says: 50 secret, 25 PII", () => {
     const byCategory = DEFAULT_RULES.reduce<Record<string, number>>(
       (acc, r) => ({ ...acc, [r.category]: (acc[r.category] ?? 0) + 1 }),
       {},
     );
-    expect(byCategory).toEqual({ secret: 48, pii: 25 });
+    expect(byCategory).toEqual({ secret: 50, pii: 25 });
   });
 
   it("each declare the fields the loader needs", () => {

@@ -185,6 +185,13 @@
   - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` and
     `.env.defaults` are not blocked by name. Their contents are still scanned, so
     a template with a real key in it is still caught — by what is in it
+- Add two more from a format survey: an Azure Shared Access Key
+  (`SharedAccessKey=` + 44-char base64, for Service Bus, Event Hubs and IoT Hub,
+  which is a different length from the 88-character storage account key) and a
+  Google OAuth client secret (`GOCSPX-`). Google's `ya29.` access tokens and
+  `1//` refresh tokens are deliberately not matched: Google documents no format
+  for them beyond a size cap and reserves the right to change it, so a pattern
+  would be a guess that reads as a guarantee
 - Add nine rules for credentials that no rule covered: OpenAI service-account and
   admin keys, Azure Storage account keys, Fly.io, Databricks, HashiCorp Vault,
   Shopify, Doppler, Grafana and Notion tokens. 64 rules to 73
