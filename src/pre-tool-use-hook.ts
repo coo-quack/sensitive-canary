@@ -264,10 +264,13 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   try {
     // The buffer is the cap, not the reported size. Sizing it from `stat` made
     // the read believe the file: procfs and sysfs entries are regular files that
-    // report a size of zero and produce content anyway, so `/proc/self/environ`
-    // — the whole environment, on the path this hook exists to guard — would
-    // have been read as empty and passed. `readFileSync` handled that case by
-    // reading to EOF, and replacing it took the handling with it.
+    // report a size of zero and produce content anyway, so their content was
+    // read as empty and passed. `readFileSync` handled that case by reading to
+    // EOF, and replacing it took the handling with it.
+    //
+    // What this does not do is scan such a file whole. The NUL rule below stops
+    // at the first separator, so `/proc/self/environ` is read but only its first
+    // variable is looked at. Written up under Known Limitations.
     const buf = Buffer.alloc(MAX_FILE_SCAN_BYTES);
     const fd = fs.openSync(filePath, "r");
     let raw: Buffer;

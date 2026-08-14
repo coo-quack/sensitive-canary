@@ -342,6 +342,20 @@ describe("the tables", () => {
     });
   });
 
+  it("the shells are exactly these", () => {
+    expect([...POSIX_SHELLS].sort()).toEqual([
+      "bash",
+      "dash",
+      "ksh",
+      "sh",
+      "zsh",
+    ]);
+  });
+
+  it("the interpreters whose inline code reads operands are exactly these", () => {
+    expect([...INLINE_CODE_READS_OPERANDS].sort()).toEqual(["perl", "ruby"]);
+  });
+
   it("git read subcommands are exactly these", () => {
     expect([...GIT_READ_SUBCOMMANDS].sort()).toEqual([
       "annotate",

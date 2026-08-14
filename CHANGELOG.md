@@ -97,22 +97,24 @@
 - Bound the `connection-string` credentials too. `[^@\s]+` crosses both `:` and
   `/`, so a line of `mongodb://` with no `@` in it ran to the end of the text
   from every occurrence: 188 KB took 2.3s, and 1 MiB through the hook took 98s
-  and returned exit 0. Six adversarial shapes in the tests never reached it,
-  which is the shape list being caught short rather than the guard working — the
-  seventh was written for this syntax
+  and returned exit 0. Every adversarial shape then in the tests walked past it,
+  which is the shape list being caught short rather than the guard working, so
+  one written for this syntax was added
 - Bound the `env-assignment` pattern's name the same way. It read `[A-Z_]*`
   before its keyword and `[A-Z_0-9]*` after, so a run of capitals with no `=`
   backtracked from every position: 59 KB took 381ms, 234 KB 6.9s, 1 MiB 125s.
   1 MiB is what the file cap allows through, so capping the read did not stop
   the hook being killed — measured, a 1 MiB file of repeated `SECRET` was still
   killed at 40 seconds with the cap in place. Every rule in the config is now
-  run against seven adversarial shapes in the tests, so this shape fails before
+  run against a list of adversarial shapes in the tests, so this shape fails before
   a release rather than after one
 - Read a file into a buffer of the cap's size rather than of the size `stat`
   reports. procfs and sysfs entries are regular files that report zero bytes and
-  produce content anyway, so `/proc/self/environ` — the whole environment, on
-  the path this hook exists to guard — would have been read as empty and passed.
-  `readFileSync`, which this replaced, read to EOF and did not have the problem
+  produce content anyway, so their content was read as empty and passed.
+  `readFileSync`, which this replaced, read to EOF and did not have the problem.
+  Reading such a file is not the same as scanning it whole: the NUL rule stops at
+  the first separator, so `/proc/self/environ` is read and only its first
+  variable is looked at, which is now listed under Known Limitations
 - Scan only the first 1 MiB of a file rather than reading it whole.
   `readFileSync` has no size limit, so a large enough file kept the hook from
   ever returning — and a hook killed by Claude Code's PreToolUse timeout does
