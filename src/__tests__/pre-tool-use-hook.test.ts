@@ -178,14 +178,17 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
   });
 
   it("blocks a file containing an email address", () => {
-    const p = writeFixture("contacts.txt", "Email: user@example.com\n");
+    const p = writeFixture(
+      "contacts.txt",
+      "Email: ada@analytical-engines.org\n",
+    );
     const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
   });
 
   it("blocks a file containing a private IP", () => {
-    const p = writeFixture("infra.txt", "server: 192.168.1.100\n");
+    const p = writeFixture("infra.txt", "server: client 192.168.1.100\n");
     const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
@@ -205,7 +208,7 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
   });
 
   it("includes [allow-pii] and [allow-all] hints in reason for PII", () => {
-    const p = writeFixture("pii.txt", "Email: user@example.com\n");
+    const p = writeFixture("pii.txt", "Email: ada@analytical-engines.org\n");
     const { reason } = runHook("Read", p);
     expect(reason).toContain("[allow-pii]");
     expect(reason).toContain("[allow-all]");
@@ -555,7 +558,10 @@ describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
   );
 
   it("blocks cat on a file with PII", () => {
-    const p = writeFixture("contacts-bash.txt", "Email: user@example.com\n");
+    const p = writeFixture(
+      "contacts-bash.txt",
+      "Email: ada@analytical-engines.org\n",
+    );
     const { exitCode, blocked } = runBashHook(`cat ${p}`);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
@@ -653,7 +659,10 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
 
   it("[allow-pii] bypasses PII in content scan", () => {
     const transcript = writeTranscript(["[allow-pii] ok"]);
-    const p = writeFixture("pii-allow.txt", "email=user@example.com\n");
+    const p = writeFixture(
+      "pii-allow.txt",
+      "email=ada@analytical-engines.org\n",
+    );
     const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
     expect(exitCode).toBe(0);
   });
@@ -662,7 +671,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
     const transcript = writeTranscript(["[allow-pii] ok"]);
     const p = writeFixture(
       "mixed-allow-pii.txt",
-      "email=user@example.com\nkey=AKIAIOSFODNN7EXAMPLE\n",
+      "email=ada@analytical-engines.org\nkey=AKIAIOSFODNN7EXAMPLE\n",
     );
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
@@ -812,7 +821,10 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { text: "[allow-pii] read the contacts" },
       { toolResult: "previous tool output" },
     ]);
-    const p = writeFixture("pii-consumed.txt", "email=user@example.com\n");
+    const p = writeFixture(
+      "pii-consumed.txt",
+      "email=ada@analytical-engines.org\n",
+    );
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
@@ -893,7 +905,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("pii-only: still blocks a file containing PII", () => {
-    const p = writeFixture("pii-only-pii.txt", "card: 4111111111111111");
+    const p = writeFixture("pii-only-pii.txt", "card: 4532015112830366");
     const { exitCode, blocked } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
     });
@@ -902,7 +914,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("secret-only: allows a file containing only PII", () => {
-    const p = writeFixture("secret-only-pii.txt", "card: 4111111111111111");
+    const p = writeFixture("secret-only-pii.txt", "card: 4532015112830366");
     const { exitCode } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
@@ -922,7 +934,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("secret-only: allows a bash command containing only PII", () => {
-    const { exitCode } = runBashHook("echo 4111111111111111", {
+    const { exitCode } = runBashHook("echo 4532015112830366", {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
     expect(exitCode).toBe(0);
@@ -931,7 +943,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   it("unset: blocks both secrets and PII (default behavior)", () => {
     const p = writeFixture(
       "default-both.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\ncard: 4111111111111111",
+      "key=AKIAIOSFODNN7EXAMPLE\ncard: 4532015112830366",
     );
     const { exitCode, reason } = runHook("Read", p);
     expect(exitCode).toBe(2);

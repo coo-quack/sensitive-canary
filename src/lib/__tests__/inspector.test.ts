@@ -196,7 +196,7 @@ describe("applyAllowTags", () => {
       description: "Email",
       category: "pii",
       matchRedacted: "user****",
-      secretValue: "user@example.com",
+      secretValue: "ada@analytical-engines.org",
       score: 1,
     },
   ];
@@ -306,7 +306,7 @@ describe("findingsToLines", () => {
         description: "Email Address",
         category: "pii",
         matchRedacted: "user****",
-        secretValue: "user@example.com",
+        secretValue: "ada@analytical-engines.org",
         score: 1,
       },
     ];

@@ -160,10 +160,24 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
 // .env and .env.* (e.g. .env.local, .env.production) match the env filename pattern.
 // The block only applies while the "secret" category is enabled (see shouldBlockEnvFile).
 // Files that merely end in .env (e.g. production.env) are handled by content scanning.
+// Suffixes that say a file is the template rather than the filled-in thing.
+// These are committed on purpose, carry placeholders, and a tool that refuses to
+// read `.env.example` is refusing the file people write in order to explain the
+// other one. Their contents are still scanned like any file's, so a template
+// with a real key in it is still caught — by what is in it, not by its name.
+const ENV_TEMPLATE_SUFFIXES = [
+  ".example",
+  ".sample",
+  ".template",
+  ".dist",
+  ".defaults",
+];
+
 function isBlockedEnvFile(filePath: string): boolean {
   if (!filePath) return false;
   const base = path.basename(filePath);
-  return base === ".env" || base.startsWith(".env.");
+  if (base !== ".env" && !base.startsWith(".env.")) return false;
+  return !ENV_TEMPLATE_SUFFIXES.some((suffix) => base.endsWith(suffix));
 }
 
 // The .env name-based block is a secret guard: it only applies while the

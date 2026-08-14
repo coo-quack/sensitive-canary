@@ -167,7 +167,7 @@
     {
       "id": "square-access-token",
       "description": "Square Access Token",
-      "regex": "EAAA[a-zA-Z0-9\\-_+=]{60}",
+      "regex": "(?<![A-Za-z0-9\\-_+=])EAAA[a-zA-Z0-9\\-_+=]{60}(?![A-Za-z0-9\\-_+=])",
       "category": "secret"
     },
     {
@@ -230,7 +230,7 @@
     {
       "id": "env-assignment",
       "description": ".env style secret assignment",
-      "regex": "(?:^|\\n)[ \\t-]{0,16}(?:export[ \\t]+|set[ \\t]+)?\"?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}\"?[ \\t]*[:=][ \\t]*\"?([^\\s\"'\\[\\]{}();,<>]{8,})(?=$|[\\s\"'])",
+      "regex": "(?:^|\\n)[ \\t-]{0,16}(?:export[ \\t]+|set[ \\t]+)?\"?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}\"?[ \\t]*[:=][ \\t]*\"?(?!\\$)([^\\s\"'\\[\\]{}();,<>]{8,})(?=$|[\\s\"'])",
       "flags": "gi",
       "category": "secret",
       "secretGroup": 1,
@@ -245,8 +245,26 @@
     {
       "id": "pii-email",
       "description": "Email Address",
-      "regex": "\\b[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}\\b",
-      "category": "pii"
+      "regex": "\\b[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}\\b",
+      "category": "pii",
+      "excludeContext": [
+        "ssh",
+        "scp",
+        "sftp",
+        "rsync",
+        "clone",
+        "remote",
+        "host",
+        "hostname",
+        "ssh-keygen",
+        "git",
+        "hg",
+        "svn",
+        "example",
+        "invalid",
+        "localhost",
+        "test"
+      ]
     },
     {
       "id": "pii-credit-card",
@@ -276,14 +294,24 @@
     {
       "id": "pii-postal-jp",
       "description": "Japanese Postal Code",
-      "regex": "〒\\d{3}[\\s-]\\d{4}",
+      "regex": "\u3012\\d{3}[\\s-]\\d{4}",
       "category": "pii"
     },
     {
       "id": "pii-ipv4",
       "description": "IPv4 Address (private range)",
       "regex": "\\b(10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b",
-      "category": "pii"
+      "category": "pii",
+      "requireContext": true,
+      "contextWords": [
+        "client",
+        "user",
+        "visitor",
+        "customer",
+        "subscriber",
+        "household",
+        "resident"
+      ]
     },
     {
       "id": "pii-mynumber-jp",
@@ -328,9 +356,9 @@
       "category": "pii",
       "requireContext": true,
       "contextWords": [
-        "tél",
+        "t\u00e9l",
         "tel",
-        "téléphone",
+        "t\u00e9l\u00e9phone",
         "telephone",
         "phone",
         "mobile",
@@ -361,10 +389,10 @@
       "category": "pii",
       "requireContext": true,
       "contextWords": [
-        "teléfono",
+        "tel\u00e9fono",
         "telefono",
         "tel",
-        "móvil",
+        "m\u00f3vil",
         "movil",
         "phone",
         "fax"
@@ -383,21 +411,35 @@
         "postcode",
         "plz",
         "postleitzahl",
-        "cap",
-        "우편번호"
+        "\uc6b0\ud3b8\ubc88\ud638",
+        "cap"
+      ],
+      "excludeContext": [
+        "buffer",
+        "bytes",
+        "byte",
+        "memory",
+        "size",
+        "limit",
+        "cache",
+        "rate",
+        "timeout",
+        "threshold",
+        "max",
+        "min"
       ]
     },
     {
       "id": "pii-rrn-kr",
       "description": "Korean Resident Registration Number",
-      "regex": "\\b\\d{6}[-\\s]?\\d{7}\\b",
+      "regex": "\\b\\d{6}[-\\s]\\d{7}\\b",
       "category": "pii",
       "validate": "rrn-kr"
     },
     {
       "id": "pii-brn-kr",
       "description": "Korean Business Registration Number",
-      "regex": "\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{5}\\b",
+      "regex": "\\b\\d{3}-\\d{2}-\\d{5}\\b",
       "category": "pii",
       "validate": "brn-kr"
     },
@@ -415,9 +457,9 @@
       "category": "pii",
       "requireContext": true,
       "contextWords": [
-        "전화",
-        "핸드폰",
-        "휴대",
+        "\uc804\ud654",
+        "\ud578\ub4dc\ud3f0",
+        "\ud734\ub300",
         "tel",
         "phone",
         "mobile",
@@ -430,7 +472,14 @@
       "regex": "(?:\\+86[-\\s]?)?(?:1[3-9]\\d{9}|0\\d{2,3}[-\\s]?\\d{7,8})",
       "category": "pii",
       "requireContext": true,
-      "contextWords": ["电话", "手机", "tel", "phone", "mobile", "fax"]
+      "contextWords": [
+        "\u7535\u8bdd",
+        "\u624b\u673a",
+        "tel",
+        "phone",
+        "mobile",
+        "fax"
+      ]
     },
     {
       "id": "pii-postal-cn",
@@ -438,7 +487,13 @@
       "regex": "\\b[1-9]\\d{5}\\b",
       "category": "pii",
       "requireContext": true,
-      "contextWords": ["邮编", "邮政编码", "postal", "postcode", "zip"]
+      "contextWords": [
+        "\u90ae\u7f16",
+        "\u90ae\u653f\u7f16\u7801",
+        "postal",
+        "postcode",
+        "zip"
+      ]
     },
     {
       "id": "pii-ipv4-public",
@@ -457,6 +512,60 @@
       "requireContext": true,
       "contextWords": ["ipv6", "ip"],
       "validate": "public-ipv6"
+    },
+    {
+      "id": "openai-service-key",
+      "description": "OpenAI Service Account / Admin Key",
+      "regex": "sk-(?:svcacct|admin|proj)-[A-Za-z0-9_-]{20,}",
+      "category": "secret"
+    },
+    {
+      "id": "azure-storage-key",
+      "description": "Azure Storage Account Key",
+      "regex": "AccountKey=[A-Za-z0-9+/]{86}==",
+      "category": "secret"
+    },
+    {
+      "id": "flyio-token",
+      "description": "Fly.io API Token",
+      "regex": "FlyV1 fm2_[A-Za-z0-9+/=]{40,}",
+      "category": "secret"
+    },
+    {
+      "id": "databricks-token",
+      "description": "Databricks Personal Access Token",
+      "regex": "\\bdapi[0-9a-f]{32}\\b",
+      "category": "secret"
+    },
+    {
+      "id": "vault-token",
+      "description": "HashiCorp Vault Token",
+      "regex": "\\bhv[sb]\\.[A-Za-z0-9_-]{24,}",
+      "category": "secret"
+    },
+    {
+      "id": "shopify-token",
+      "description": "Shopify Access Token",
+      "regex": "\\bshp(?:at|ss|ca|pa)_[0-9a-fA-F]{32}\\b",
+      "category": "secret"
+    },
+    {
+      "id": "doppler-token",
+      "description": "Doppler Token",
+      "regex": "\\bdp\\.(?:pt|st|ct|sa|scim)\\.[A-Za-z0-9]{40,}",
+      "category": "secret"
+    },
+    {
+      "id": "grafana-token",
+      "description": "Grafana Cloud / Service Account Token",
+      "regex": "\\bgl(?:c|sa)_[A-Za-z0-9+/=_-]{32,}",
+      "category": "secret"
+    },
+    {
+      "id": "notion-token",
+      "description": "Notion Integration Token",
+      "regex": "\\bntn_[A-Za-z0-9]{40,}",
+      "category": "secret"
     }
   ]
 }

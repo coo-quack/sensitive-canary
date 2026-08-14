@@ -42,7 +42,7 @@ const DEFAULT_RULES: RuleConfig[] = (
 
 describe("luhn", () => {
   it("passes a valid Visa number", () => {
-    expect(luhn("4111111111111111")).toBe(true);
+    expect(luhn("4532015112830366")).toBe(true);
   });
 
   it("passes a valid Mastercard number", () => {
@@ -54,8 +54,8 @@ describe("luhn", () => {
   });
 
   it("ignores spaces and dashes", () => {
-    expect(luhn("4111 1111 1111 1111")).toBe(true);
-    expect(luhn("4111-1111-1111-1111")).toBe(true);
+    expect(luhn("4532 0151 1283 0366")).toBe(true);
+    expect(luhn("4532-0151-1283-0366")).toBe(true);
   });
 
   it("fails empty or digit-less input", () => {
@@ -346,22 +346,22 @@ describe("scan — expanded secrets (AI, cloud, SaaS)", () => {
 
 describe("scan — PII", () => {
   it("detects an email address", () => {
-    const findings = scan("contact: user@example.com");
+    const findings = scan("contact: ada@analytical-engines.org");
     expect(findings.some((f) => f.ruleId === "pii-email")).toBe(true);
   });
 
   it("detects a valid credit card number — no separators", () => {
-    const findings = scan("card: 4111111111111111");
+    const findings = scan("card: 4532015112830366");
     expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
   });
 
   it("detects a valid credit card number — space separated", () => {
-    const findings = scan("card: 4111 1111 1111 1111");
+    const findings = scan("card: 4532 0151 1283 0366");
     expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
   });
 
   it("detects a valid credit card number — hyphen separated", () => {
-    const findings = scan("card: 4111-1111-1111-1111");
+    const findings = scan("card: 4532-0151-1283-0366");
     expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
   });
 
@@ -426,21 +426,34 @@ describe("scan — PII", () => {
   });
 
   it("detects a 192.168.x.x private IPv4 address", () => {
-    const findings = scan("server: 192.168.1.100");
+    const findings = scan("client 192.168.1.100 connected");
     expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
   });
 
   it("detects a 10.x.x.x private IPv4 address", () => {
-    const findings = scan("server: 10.0.0.1");
+    const findings = scan("client 10.0.0.1 connected");
     expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
   });
 
+  // The rule is context-gated now: `ping 10.0.0.1` and `redis-cli -h 10.0.0.30`
+  // are addresses of machines, and treating every one of them as personal data
+  // blocked most of what infrastructure work looks like.
+  it.each([
+    "ping 10.0.0.1",
+    "curl http://10.0.0.5:8080/health",
+    "redis-cli -h 10.0.0.30",
+    "ECONNREFUSED 10.0.0.5:5432",
+    "CIDR 192.168.0.0/24",
+  ])("%s is not PII", (text) => {
+    expect(scan(text).some((f) => f.ruleId === "pii-ipv4")).toBe(false);
+  });
+
   it("detects a 172.16–31.x.x private IPv4 address", () => {
-    expect(scan("host: 172.16.0.1").some((f) => f.ruleId === "pii-ipv4")).toBe(
-      true,
-    );
     expect(
-      scan("host: 172.31.255.255").some((f) => f.ruleId === "pii-ipv4"),
+      scan("visitor 172.16.0.1 seen").some((f) => f.ruleId === "pii-ipv4"),
+    ).toBe(true);
+    expect(
+      scan("visitor 172.31.255.255 seen").some((f) => f.ruleId === "pii-ipv4"),
     ).toBe(true);
   });
 
@@ -501,7 +514,7 @@ describe("parseCategories", () => {
 // ── scan: category filter ─────────────────────────────────────────────────────
 
 describe("scan — category filter", () => {
-  const text = "key=AKIAIOSFODNN7EXAMPLE card: 4111111111111111";
+  const text = "key=AKIAIOSFODNN7EXAMPLE card: 4532015112830366";
 
   it("scans all categories by default", () => {
     const findings = scan(text);
@@ -797,7 +810,7 @@ describe("scan — context scoring", () => {
   });
 
   it("assigns score 1.0 to rules without context requirements", () => {
-    const findings = scan("contact: user@example.com");
+    const findings = scan("contact: ada@analytical-engines.org");
     const email = findings.find((f) => f.ruleId === "pii-email");
     expect(email?.score).toBe(1.0);
   });
@@ -902,6 +915,71 @@ describe("scan — adversarial inputs", () => {
   });
 });
 
+// What must not be flagged, alongside what must. A rule quieted to stop a false
+// positive can quietly stop detecting, and only the pair says which happened.
+//
+// Measured before this: of these twenty-one, seventeen were blocked. A tool that
+// blocks a quarter of ordinary commands is uninstalled, and then it guards
+// nothing.
+describe("ordinary work is not a finding", () => {
+  const flags = (text: string): string[] => scan(text).map((f) => f.ruleId);
+
+  it.each([
+    ["git clone git@github.com:acme/widgets.git", "git over ssh"],
+    ["ssh deploy@bastion.analytical-engines.org", "an ssh target"],
+    ["scp build.tar ops@files.analytical-engines.org:/srv/", "an scp target"],
+    ["rsync -a ops@files.analytical-engines.org:/srv/ .", "an rsync target"],
+    ["ping 10.0.0.1", "a private address"],
+    ["curl http://10.0.0.5:8080/health", "a private address in a URL"],
+    ["redis-cli -h 10.0.0.30", "a private address as a flag value"],
+    ["ECONNREFUSED 10.0.0.5:5432", "a private address in an error"],
+    ["CIDR 192.168.0.0/24", "a network, not a host"],
+    ["the buffer cap is 65536 bytes", "cap is an English word too"],
+    ["the request took 1234567890123 nanoseconds", "a long number"],
+    ["test card 4242424242424242", "a published test card"],
+    ["use 4111111111111111 in the sandbox", "another published test card"],
+    ["contact test@example.com for details", "an RFC 2606 domain"],
+    ["see user@example.org in the docs", "an RFC 2606 domain"],
+    ["POSTGRES_PASSWORD: ${DB_PASSWORD}", "a variable reference"],
+    ["password: $VAULT_PASSWORD", "a variable reference"],
+    ["function check(token: ShellToken): boolean {", "a type annotation"],
+    ["  tokens: ShellToken[]", "a type annotation"],
+  ])("%s is not a finding (%s)", (text) => {
+    expect(flags(text)).toEqual([]);
+  });
+
+  // An ssh public key is base64, and `EAAA` appears in one often enough that the
+  // Square rule matched a slice of it.
+  it("an ssh public key is not a Square token", () => {
+    const key = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDEAAAJ1${"a".repeat(60)}`;
+    expect(flags(key)).toEqual([]);
+  });
+});
+
+// The other direction, in the same file, so quieting a rule cannot pass unnoticed.
+describe("what must still be a finding", () => {
+  it.each([
+    [
+      "contact alice@analytical-engines.org about the invoice",
+      "a real address",
+    ],
+    ["key=AKIAIOSFODNN7EXAMPLE", "an AWS key"],
+    ["POSTGRES_PASSWORD: Sup3rS3cretDbPassw0rd", "a compose password"],
+    ['  "client_secret": "Xk9mP2qR7vL4nW1sYj3c"', "a JSON secret"],
+    [
+      "aws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
+      "a credentials file",
+    ],
+    ["export GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "a PAT"],
+    ["-----BEGIN ENCRYPTED PRIVATE KEY-----", "a private key header"],
+    ["card 4532015112830366", "a card that is not a published test number"],
+    ["the client IP address is 8.8.8.8", "a public address with a label"],
+    ["client 10.0.0.1 connected", "a private address next to a person"],
+  ])("%s is a finding (%s)", (text) => {
+    expect(scan(text).length).toBeGreaterThan(0);
+  });
+});
+
 // The shipped rules, written out.
 //
 // This is the largest table in the product and had neither an equality nor a
@@ -930,20 +1008,25 @@ describe("the reserved IPv4 boundary", () => {
 });
 
 describe("the shipped rules", () => {
-  it("are exactly these sixty-four", () => {
+  it("are exactly these seventy-three", () => {
     expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
       "anthropic-key",
       "atlassian-token",
       "aws-access-key",
+      "azure-storage-key",
       "connection-string",
+      "databricks-token",
       "digitalocean-pat",
       "discord-webhook",
+      "doppler-token",
       "env-assignment",
+      "flyio-token",
       "gcp-api-key",
       "generic-secret",
       "github-fine-grained",
       "github-pat",
       "gitlab-pat",
+      "grafana-token",
       "groq-key",
       "huggingface-token",
       "jwt",
@@ -951,9 +1034,11 @@ describe("the shipped rules", () => {
       "mailchimp-key",
       "mailgun-key",
       "mapbox-token",
+      "notion-token",
       "npm-token",
       "openai-key",
       "openai-project-key",
+      "openai-service-key",
       "openrouter-key",
       "perplexity-key",
       "pii-brn-kr",
@@ -987,6 +1072,7 @@ describe("the shipped rules", () => {
       "sendgrid-key",
       "sentry-org-token",
       "sentry-user-token",
+      "shopify-token",
       "slack-token",
       "slack-webhook",
       "square-access-token",
@@ -995,16 +1081,17 @@ describe("the shipped rules", () => {
       "supabase-key",
       "telegram-bot-token",
       "twilio-sid",
+      "vault-token",
       "xai-key",
     ]);
   });
 
-  it("are split as the README says: 39 secret, 25 PII", () => {
+  it("are split as the README says: 48 secret, 25 PII", () => {
     const byCategory = DEFAULT_RULES.reduce<Record<string, number>>(
       (acc, r) => ({ ...acc, [r.category]: (acc[r.category] ?? 0) + 1 }),
       {},
     );
-    expect(byCategory).toEqual({ secret: 39, pii: 25 });
+    expect(byCategory).toEqual({ secret: 48, pii: 25 });
   });
 
   it("each declare the fields the loader needs", () => {
@@ -1027,14 +1114,20 @@ describe("pii-email after bounding the local part", () => {
     scan(text).some((f) => f.ruleId === "pii-email");
 
   it.each([
-    ["user@example.com", "the plain form"],
+    ["ada@analytical-engines.org", "the plain form"],
     ["Alice.Smith@Example.COM", "mixed case"],
-    ["user+tag@example.com", "plus addressing"],
-    ["user.name@sub.example.co.uk", "several domain labels"],
+    ["user+tag@analytical-engines.org", "plus addressing"],
+    ["user.name@sub.analytical-engines.co.uk", "several domain labels"],
     ["a@b.co", "the shortest real shape"],
-    ["user_name%foo-bar@example.com", "every character of the local part"],
-    ["see<user@example.com>now", "embedded in surrounding text"],
-    [`${"a".repeat(64)}@example.com`, "a local part at RFC 5321's limit"],
+    [
+      "user_name%foo-bar@analytical-engines.org",
+      "every character of the local part",
+    ],
+    ["see<ada@analytical-engines.org>now", "embedded in surrounding text"],
+    [
+      `${"a".repeat(64)}@analytical-engines.org`,
+      "a local part at RFC 5321's limit",
+    ],
   ])("%s is detected (%s)", (text) => {
     expect(email(text)).toBe(true);
   });
@@ -1043,7 +1136,7 @@ describe("pii-email after bounding the local part", () => {
   // dot to restart the boundary is not a deliverable address, and it is also a
   // way to write one this rule will not see.
   it("a local part past the limit is not detected", () => {
-    expect(email(`${"a".repeat(65)}@example.com`)).toBe(false);
+    expect(email(`${"a".repeat(65)}@analytical-engines.org`)).toBe(false);
   });
 
   // A dot restarts the word boundary, so a long address with dots in it is
@@ -1051,7 +1144,7 @@ describe("pii-email after bounding the local part", () => {
   // local part.
   it("a long local part broken by dots is still detected", () => {
     const local = Array.from({ length: 10 }, () => "a".repeat(20)).join(".");
-    expect(email(`${local}@example.com`)).toBe(true);
+    expect(email(`${local}@analytical-engines.org`)).toBe(true);
   });
 
   // Domains without a dot were never matched, before this change or after it.
@@ -1423,7 +1516,7 @@ describe("scan — public IPs", () => {
   });
 
   it("still flags a private IPv4 via the private-range rule", () => {
-    const findings = scan("server: 192.168.1.1");
+    const findings = scan("client 192.168.1.1 connected");
     expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
   });
 
@@ -1635,7 +1728,7 @@ describe("user config — custom rules", () => {
     expect(emailRules).toHaveLength(1);
     expect(emailRules[0]?.description).toBe("Replaced Email Rule");
 
-    const findings = scan("contact: user@example.com");
+    const findings = scan("contact: ada@analytical-engines.org");
     expect(findings.some((f) => f.ruleId === "pii-email")).toBe(false);
   });
 

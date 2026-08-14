@@ -26,9 +26,10 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **73 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
-- **Context gating** — the noisiest rules (French, Italian, German, Spanish, Korean and Chinese phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6) only fire when a label such as `phone` or `ZIP` is nearby. US and Japanese phone numbers, Japanese postal codes and private IPv4 are matched without one, since their shapes are specific enough
+- **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6, and private IPv4 (which needs a *person* nearby — `client`, `user`, `visitor` — because `ping 10.0.0.1` names a machine). US and Japanese phone numbers and Japanese postal codes are matched without one, since their shapes are specific enough
+- **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
@@ -347,10 +348,19 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 
 ## Detection rules
 
-### Secrets (39 rules)
+### Secrets (48 rules)
 
 | Rule ID | Description |
 |---|---|
+| `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
+| `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
+| `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
+| `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
+| `vault-token` | HashiCorp Vault Token (`hvs.` / `hvb.` prefix) |
+| `shopify-token` | Shopify Access Token (`shpat_`, `shpss_`, `shpca_`, `shppa_` prefix) |
+| `doppler-token` | Doppler Token (`dp.pt.`, `dp.st.`, … prefix) |
+| `grafana-token` | Grafana Cloud / Service Account Token (`glc_`, `glsa_` prefix) |
+| `notion-token` | Notion Integration Token (`ntn_` prefix) |
 | `aws-access-key` | AWS Access Key ID |
 | `gcp-api-key` | Google Cloud API Key |
 | `private-key` | PEM Private Key (RSA / EC / DSA / PGP / OpenSSH) |

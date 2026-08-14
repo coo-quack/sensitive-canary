@@ -126,6 +126,31 @@
   recognised, so nothing marked the pattern as supplied and the file that
   followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
   (`--regexp=aws`) spellings were already handled
+- Stop blocking ordinary work. Measured over sixty-four commands from a working
+  day, the hook blocked sixteen of them; it now blocks five, and four of those
+  five are this repository's own README and changelog, which contain an
+  AWS-shaped key as documentation. What changed:
+  - an address is not a person when an `ssh`, `scp`, `rsync`, `clone` or `git@`
+    is next to it, and `example.com` and the other RFC 2606 domains are nobody's
+    mail
+  - a private IPv4 needs a person nearby (`client`, `user`, `visitor`) rather
+    than the word "address", which made `kubectl port-forward --address 10.0.0.1`
+    a finding
+  - the published test card numbers are not cards
+  - `cap` is an English word as well as an Italian postal one, so sizes and
+    limits nearby say it is not a postal code
+  - the Korean resident and business numbers are written with their separators;
+    without that, a millisecond timestamp in a log was a finding
+  - a Square token inside a longer run of base64 is a slice of something else,
+    which is what made `cat ~/.ssh/known_hosts` a finding
+  - a value that is a variable reference (`PASSWORD: ${VAR}`) names a secret
+    rather than being one
+  - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` and
+    `.env.defaults` are not blocked by name. Their contents are still scanned, so
+    a template with a real key in it is still caught — by what is in it
+- Add nine rules for credentials that no rule covered: OpenAI service-account and
+  admin keys, Azure Storage account keys, Fly.io, Databricks, HashiCorp Vault,
+  Shopify, Doppler, Grafana and Notion tokens. 64 rules to 73
 - Stop repeating the blocked command back to Claude. The reason a block gives
   carried the first eighty characters of the command, so blocking
   `export GITHUB_TOKEN=ghp_…` handed the token to the model inside the sentence
