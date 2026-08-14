@@ -27,6 +27,9 @@ export interface RunOptions {
   replaceEnv?: boolean;
   // Transcript the hook should read allow tags from.
   transcriptPath?: string;
+  // The directory the tool runs in, as the runtime reports it. A relative path
+  // in a command is relative to this.
+  cwd?: string;
 }
 
 export interface HookResult {
@@ -83,6 +86,7 @@ export function runToolHook(
 ): HookResult {
   const input = JSON.stringify({
     transcript_path: opts?.transcriptPath,
+    cwd: opts?.cwd,
     tool_name: toolName,
     tool_input: toolInput,
   });

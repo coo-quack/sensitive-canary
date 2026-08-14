@@ -1053,6 +1053,101 @@ describe("what must still be a finding", () => {
   });
 });
 
+// Every rule needs a value it must catch, or the id list proves only that a name
+// is present. Four of the nine added in this release had their patterns made
+// unmatchable and the suite stayed green, because nothing here asked them to
+// find anything.
+describe("every rule catches something", () => {
+  const EXAMPLES: Record<string, string> = {
+    "aws-access-key": "AKIAIOSFODNN7EXAMPLE",
+    "gcp-api-key": `AIzaSyC${"A".repeat(32)}`,
+    "github-pat": `ghp_${"A".repeat(36)}`,
+    "github-fine-grained": `github_pat_${"A".repeat(82)}`,
+    "gitlab-pat": `glpat-${"A".repeat(20)}`,
+    "npm-token": `npm_${"A".repeat(36)}`,
+    "openai-key": `sk-${"A".repeat(48)}`,
+    "openai-project-key": "sk-proj-Xk9mP2qR7vL4nW1sYj3cBz8dEf5gHiKoNpQuTxMn",
+    "openai-service-key": `sk-svcacct-${"A".repeat(40)}`,
+    "anthropic-key": `sk-ant-${"A".repeat(95)}`,
+    "replicate-token": `r8_${"A".repeat(37)}`,
+    "huggingface-token": `hf_${"A".repeat(34)}`,
+    "groq-key": `gsk_${"A".repeat(52)}`,
+    "openrouter-key": `sk-or-v1-${"a".repeat(64)}`,
+    "xai-key": `xai-${"A".repeat(80)}`,
+    "perplexity-key": `pplx-${"A".repeat(48)}`,
+    "digitalocean-pat": `dop_v1_${"a".repeat(64)}`,
+    "supabase-key": `sbp_${"a".repeat(40)}`,
+    "slack-token": "xoxb-123456789012-ABCDEFGHIJ",
+    "slack-webhook": `https://hooks.slack.com/services/TABCDEFGH/BABCDEFGHIJ/${"A".repeat(24)}`,
+    "discord-webhook": `https://discord.com/api/webhooks/123456789012345678/${"A".repeat(68)}`,
+    "telegram-bot-token": `12345678:AA${"A".repeat(33)}`,
+    "twilio-sid": `AC${"a".repeat(32)}`,
+    "stripe-secret-key": `sk_live_${"A".repeat(24)}`,
+    "stripe-restricted-key": `rk_test_${"A".repeat(24)}`,
+    "square-access-token": `EAAA${"a".repeat(60)}`,
+    "sendgrid-key": `SG.${"A".repeat(22)}.${"B".repeat(43)}`,
+    "mailgun-key": `key-${"a".repeat(32)}`,
+    "mailchimp-key": `${"a".repeat(32)}-us1`,
+    jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+    "private-key": "-----BEGIN RSA PRIVATE KEY-----",
+    "connection-string": "postgres://admin:hunter2xyz@db.internal/app",
+    "mapbox-token": `pk.eyJ${"a".repeat(20)}.${"b".repeat(20)}.${"c".repeat(20)}`,
+    "sentry-user-token": `sntryu_${"a".repeat(64)}`,
+    "sentry-org-token": `sntrys_eyJ${"a".repeat(20)}.${"b".repeat(20)}.${"c".repeat(20)}`,
+    "atlassian-token": `ATATT3${"a".repeat(180)}`,
+    "linear-key": `lin_api_${"a".repeat(40)}`,
+    "postman-key": `PMAK-${"a".repeat(24)}-${"b".repeat(34)}`,
+    "azure-storage-key": `AccountKey=${"a".repeat(86)}==`,
+    "flyio-token": `FlyV1 fm2_${"a".repeat(50)}`,
+    "databricks-token": `dapi${"0123456789abcdef".repeat(2)}`,
+    "vault-token": `hvs.${"A".repeat(30)}`,
+    "shopify-token": `shpat_${"0123456789abcdef".repeat(2)}`,
+    "doppler-token": `dp.pt.${"A".repeat(44)}`,
+    "grafana-token": `glsa_${"A".repeat(40)}`,
+    "notion-token": `ntn_${"A".repeat(44)}`,
+    "generic-secret": "api_key = Xk9mP2qR7vL4nW1sYj3cBz8d",
+    "env-assignment": "DB_PASSWORD=Xk9mP2qR7vL4nW1sYj3cBz8d",
+    "pii-email": "contact alice@analytical-engines.org",
+    "pii-credit-card": "card 4532015112830366",
+    "pii-ipv4": "192.168.1.50",
+    "pii-ipv4-public": "the client IP address is 8.8.8.8",
+    "pii-ipv6": "ipv6: 2001:4860:4860::8888",
+    "pii-ssn": "SSN 123-45-6789",
+    "pii-mynumber-jp": "My Number: 123456789018",
+    "pii-nir-fr": "NIR 188022B12345659",
+    "pii-codice-fiscale-it": "codice fiscale RSSMRA85M01H501Q",
+    "pii-steuer-id-de": "Steuer-IdNr. 12345678903",
+    "pii-dni-nie-es": "DNI 12345678Z",
+    "pii-rrn-kr": "주민등록번호 900101-1234568",
+    "pii-brn-kr": "사업자등록번호 220-81-62517",
+    "pii-resident-id-cn": "身份证 11010519491231002X",
+    "pii-phone-us": "call 415-555-0132",
+    "pii-phone-jp": "03-1234-5678",
+    "pii-phone-fr": "tél: 01 23 45 67 89",
+    "pii-phone-it": "telefono: 0212345678",
+    "pii-phone-de": "Telefon: 0301234567",
+    "pii-phone-es": "teléfono: 612345678",
+    "pii-phone-kr": "phone 010-1234-5678",
+    "pii-phone-cn": "电话 13800138000",
+    "pii-postal-jp": "〒100-0001",
+    "pii-postal-code": "ZIP 94107",
+    "pii-postal-cn": "postal code 100000",
+  };
+
+  it("has an example for every shipped rule", () => {
+    const missing = DEFAULT_RULES.map((r) => r.id).filter(
+      (id) => !(id in EXAMPLES),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it.each(DEFAULT_RULES.map((r) => r.id))("%s finds its example", (id) => {
+    const example = EXAMPLES[id];
+    if (example === undefined) throw new Error(`no example for ${id}`);
+    expect(scan(example).map((f) => f.ruleId)).toContain(id);
+  });
+});
+
 // The shipped rules, written out.
 //
 // This is the largest table in the product and had neither an equality nor a

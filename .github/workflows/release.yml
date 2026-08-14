@@ -48,6 +48,32 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run ci
+      # The gates the pull-request build runs, run again here. `release.yml`
+      # is reached by a push to `main` and is not chained to that build, so
+      # without these a red branch still publishes — and the manifest went
+      # out stale twice for exactly this reason.
+      - run: pnpm audit --audit-level high
+      - run: pnpm run build
+      - name: package.json and plugin.json declare the same version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
+          for value in "$pkg" "$plugin"; do
+            if ! printf '%s' "$value" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "::error::a manifest declares no usable version — package.json is '$pkg', .claude-plugin/plugin.json is '$plugin'."
+              exit 1
+            fi
+          done
+          if [ "$pkg" != "$plugin" ]; then
+            echo "::error::version mismatch — package.json is $pkg, .claude-plugin/plugin.json is $plugin."
+            exit 1
+          fi
+      - name: the published hooks run without a type stripper
+        run: |
+          printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
+            | node dist/pre-tool-use-hook.js; test $? -eq 0
+          printf '%s' '{"prompt":"hello"}' \
+            | node dist/user-prompt-submit-hook.js; test $? -eq 0
 
       - name: Publish to npm
         run: pnpm publish --provenance --access public

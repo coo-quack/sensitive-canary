@@ -87,7 +87,7 @@ Then add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/user-prompt-submit-hook.ts"
+            "command": "node $(npm root -g)/@coo-quack/sensitive-canary/dist/user-prompt-submit-hook.js"
           }
         ]
       }
@@ -98,7 +98,7 @@ Then add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/pre-tool-use-hook.ts"
+            "command": "node $(npm root -g)/@coo-quack/sensitive-canary/dist/pre-tool-use-hook.js"
           }
         ]
       }
@@ -107,7 +107,7 @@ Then add to `~/.claude/settings.json`:
 }
 ```
 
-> **Note:** Node.js does not support `--experimental-strip-types` for files inside `node_modules`, so `npx tsx` is used instead.
+> **Note:** These point at the compiled JavaScript the package ships. Node refuses to strip types from a `.ts` file inside `node_modules`, and a hook that fails to start exits non-zero without blocking — so an installation wired to `src/` looks installed and checks nothing. The plugin install uses the `.ts` sources, which sit outside `node_modules` and work.
 
 </details>
 

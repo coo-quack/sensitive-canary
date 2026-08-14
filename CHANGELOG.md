@@ -305,6 +305,21 @@
 
 ### CI
 
+- Publish compiled JavaScript. Node refuses to strip types from a `.ts` file
+  inside `node_modules`, so an npm install wired to `src/` started the hook,
+  failed with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, exited 1 — and a
+  non-zero exit that is not 2 does not block. The tool looked installed and
+  checked nothing. `dist/` now ships beside `src/`, the npm instructions point at
+  it, and no type stripper or `tsx` download is involved. The plugin install
+  keeps using the sources, which sit outside `node_modules` and work
+- Run the release path's own gates. `release.yml` is reached by a push to `main`
+  and is not chained to the pull-request build, so a red branch could publish. It
+  now runs the audit, the version-agreement check whose absence let the plugin
+  manifest ship stale twice, a build, and a smoke test that starts both published
+  hooks with plain `node`
+- Stop shipping the tests. `files` carried `src/`, which carried `__tests__`:
+  more than half the tarball, and none of it useful to anyone installing
+
 - Add a `versions` job that fails when `package.json` and
   `.claude-plugin/plugin.json` declare different versions, or when either
   declares nothing that looks like one

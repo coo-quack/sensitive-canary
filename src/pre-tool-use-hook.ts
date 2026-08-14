@@ -584,7 +584,14 @@ process.stdin.on("end", () => {
         // `cd -`, `cd b*ld` and a `cd` into a variable name a directory this
         // cannot work out, and resolving them anyway pointed the scan at some
         // other directory entirely.
-        if (target.value === "-" || GLOB_METACHARACTERS.test(target.value)) {
+        // `cd -`, `cd b*ld` and `cd $VAR` name a directory this cannot work
+        // out. Resolving them anyway pointed the scan at a directory that does
+        // not exist, and every relative path after it went unscanned.
+        if (
+          target.value === "-" ||
+          target.value.includes("$") ||
+          GLOB_METACHARACTERS.test(target.value)
+        ) {
           break;
         }
         baseDirectory = path.resolve(baseDirectory, expandTilde(target.value));
