@@ -784,6 +784,34 @@ describe("scan — context scoring", () => {
   });
 });
 
+// ── scan: adversarial inputs ─────────────────────────────────────────────────
+
+describe("scan — adversarial inputs", () => {
+  // A run of digits and dots (a log line full of IPs or versions is this,
+  // megabytes over) has a word boundary at every dot, and the local part of
+  // the old pii-email pattern — [A-Za-z0-9._%+-]+ — spans those boundaries.
+  // Every boundary then cost a greedy consume of the rest of the text plus a
+  // character-at-a-time backtrack in search of the "@": O(n²) overall. 200 KB
+  // of this kept a hook spinning for half a minute; the multi-MB file a
+  // session actually scanned never finished.
+  it("stays near-linear on a long digit-and-dot run with no @", () => {
+    const input = "1.".repeat(100_000); // 200 KB
+    const start = performance.now();
+    scan(input);
+    // Fixed, this is tens of milliseconds; before the fix it was half a
+    // minute. The limit sits far from both so a loaded CI machine does not
+    // flake it.
+    expect(performance.now() - start).toBeLessThan(10_000);
+  }, 30_000);
+
+  it("stays near-linear on a long hyphen-separated digit run with no @", () => {
+    const input = "123-".repeat(50_000); // 200 KB
+    const start = performance.now();
+    scan(input);
+    expect(performance.now() - start).toBeLessThan(10_000);
+  }, 30_000);
+});
+
 // ── Korean / Chinese ID validators ────────────────────────────────────────────
 
 describe("validateKoreanRRN", () => {
