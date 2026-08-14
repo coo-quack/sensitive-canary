@@ -702,6 +702,17 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     return refs;
   }
 
+  // `eval 'cat secrets'` is a command line in a single word, the same shape
+  // `env -S` carries. Stepping past `eval` finds that word as the command name,
+  // which classifies as nothing at all.
+  if (cmd === "eval") {
+    for (const operand of operands) {
+      if (operand.redirect) continue;
+      mergeRefs(refs, extractCommandRefs(operand.value, depth + 1));
+      refs.paths.push(...extractQuotedLiterals(operand.value));
+    }
+  }
+
   // `env -S "cmd args"` splits the string into the command it runs, so scan
   // inside it the way inline code is scanned.
   if (cmd === "env") {

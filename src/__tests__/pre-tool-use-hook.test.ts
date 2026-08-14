@@ -466,14 +466,19 @@ describe("pre-tool-use-hook — .env templates", () => {
   // Every way of not reading a template falls back on its name. Filling the byte
   // budget first was a way past the guard, and so was a FIFO with a template
   // name — the contents are what the exemption relies on.
+  // Named outright, so the ordering that puts literals before patterns does not
+  // rescue it: the padding really is read first and really does spend the
+  // budget, which is the case this guards.
   it("a template reached after the byte budget is blocked", () => {
     const dir = writeFixture.path();
     const pad = "the quick brown fox ".repeat(55_000);
-    for (let i = 0; i < 70; i++) writeFixture(`pad${i}.log`, pad);
-    writeFixture(".env.late.example", "TOKEN=changeme\n");
-    expect(
-      runBashHook(`cat ${dir}/pad*.log ${dir}/.env.late.example`).exitCode,
-    ).toBe(2);
+    const names: string[] = [];
+    for (let i = 0; i < 70; i++) {
+      names.push(writeFixture(`pad${i}.log`, pad));
+    }
+    const template = writeFixture(".env.late.example", "TOKEN=changeme\n");
+    expect(runBashHook(`cat ${names.join(" ")} ${template}`).exitCode).toBe(2);
+    expect(dir.length).toBeGreaterThan(0);
   });
 
   it("a fifo with a template name is blocked", () => {

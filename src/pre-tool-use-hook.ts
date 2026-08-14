@@ -413,6 +413,14 @@ function collectCommandFields(
 // PreToolUse timeout killed it. A killed hook does not block the call, so a hang
 // is a fail-open — the one failure mode worth spending a `stat` on every path to
 // avoid.
+function isDirectory(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function isRegularFile(candidate: string): boolean {
   try {
     return fs.statSync(candidate).isFile();
@@ -453,6 +461,54 @@ function blockUnreadEnvFile(filePath: string, allowTags: Set<string>): void {
     ],
     buildAllowHints(`please read ${filePath}`, [], true),
   );
+}
+
+// The values a command would print, whichever tool is running it.
+function scanEnvironment(names: string[], allowTags: Set<string>): void {
+  for (const varName of names) {
+    const value = process.env[varName];
+    if (!value) continue;
+    const findings = applyAllowTags(
+      dedupeFindings(scan(value, ENABLED_CATEGORIES)),
+      allowTags,
+    );
+    if (findings.length === 0) continue;
+    block(
+      "bash command",
+      [
+        `🚫 Blocked: environment variable $${varName} contains sensitive data`,
+        "",
+        ...findingsToLines(findings),
+      ],
+      buildAllowHints("please run the command", findings),
+    );
+  }
+}
+
+// Files named outright, then the ones a pattern has to be expanded to find.
+//
+// Expanding a pattern costs what the walk costs and cannot be interrupted, so a
+// deep one spent the call's whole deadline — and every file named after it in
+// the same command went unscanned. `cat ~/*/*/*/*/* secrets` read nothing of
+// `secrets`. Ordering does not make the walk cheaper; it stops one token
+// starving the rest.
+function scanPathsLiteralsFirst(
+  paths: string[],
+  allowTags: Set<string>,
+  opts?: { onlyExisting?: boolean },
+): void {
+  const scanOne = (candidate: string): void => {
+    if (opts?.onlyExisting) scanIfRegularFile(candidate, allowTags);
+    else scanFile(candidate, allowTags);
+  };
+  const patterns: string[] = [];
+  for (const candidate of paths) {
+    if (GLOB_METACHARACTERS.test(candidate)) patterns.push(candidate);
+    else for (const p of expandCandidate(candidate)) scanOne(p);
+  }
+  for (const candidate of patterns) {
+    for (const p of expandCandidate(candidate)) scanOne(p);
+  }
 }
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
@@ -589,7 +645,7 @@ process.stdin.on("end", () => {
     process.exit(0);
   }
 
-  const tool = data.tool_name ?? "";
+  const tool = typeof data.tool_name === "string" ? data.tool_name : "";
   // Before anything resolves a path: a relative path in a command is relative to
   // where Claude Code will run it, not to where this hook was started.
   if (typeof data.cwd === "string" && data.cwd) baseDirectory = data.cwd;
@@ -644,12 +700,17 @@ process.stdin.on("end", () => {
         // not exist, and every relative path after it went unscanned.
         if (
           target.value === "-" ||
+          target.value === "--" ||
           target.value.includes("$") ||
           GLOB_METACHARACTERS.test(target.value)
         ) {
           break;
         }
-        baseDirectory = path.resolve(baseDirectory, expandTilde(target.value));
+        // A `cd` the shell will fail is a `cd` that does not happen. Following
+        // it moved the base somewhere neither the command nor this will read.
+        const moved = path.resolve(baseDirectory, expandTilde(target.value));
+        if (!isDirectory(moved)) break;
+        baseDirectory = moved;
       }
     }
     const refs = extractCommandRefs(command);
@@ -659,24 +720,7 @@ process.stdin.on("end", () => {
       ? Object.keys(process.env)
       : [...new Set([...extractEnvVarNames(command), ...refs.envVars])];
 
-    for (const varName of envVarNames) {
-      const value = process.env[varName];
-      if (!value) continue;
-      const findings = applyAllowTags(
-        dedupeFindings(scan(value, ENABLED_CATEGORIES)),
-        allowTags,
-      );
-      if (findings.length === 0) continue;
-      block(
-        "bash command",
-        [
-          `🚫 Blocked: environment variable $${varName} contains sensitive data`,
-          "",
-          ...findingsToLines(findings),
-        ],
-        buildAllowHints("please run the command", findings),
-      );
-    }
+    scanEnvironment(envVarNames, allowTags);
 
     const cmdFindings = applyAllowTags(
       dedupeFindings(scan(command, ENABLED_CATEGORIES)),
@@ -694,9 +738,7 @@ process.stdin.on("end", () => {
       );
     }
 
-    for (const fp of refs.paths) {
-      for (const p of expandCandidate(fp)) scanFile(p, allowTags);
-    }
+    scanPathsLiteralsFirst(refs.paths, allowTags);
 
     process.exit(0);
   }
@@ -705,7 +747,7 @@ process.stdin.on("end", () => {
   // contents the same way Read does, so a field naming an existing file is
   // scanned before the call. Grep needs no branch of its own — its `path` is one
   // of the fields collected here, and it is neither exempt nor named as a writer.
-  if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool) && !isWritingTool(tool)) {
+  if (!TOOLS_WITHOUT_FILE_OUTPUT.has(tool)) {
     // An MCP server that runs a shell takes the command as an input field, and
     // an IDE bridge takes code the same way. Only `Bash` was read as a command,
     // so `mcp__desktop-commander__start_process` with `{"command":"cat .env"}`
@@ -717,15 +759,28 @@ process.stdin.on("end", () => {
       // command in it this can classify, and the path is a quoted literal — the
       // same shape inline `-c` text is read for.
       refs.paths.push(...extractQuotedLiterals(value));
-      for (const fp of refs.paths) {
-        for (const candidate of expandCandidate(fp)) {
-          scanIfRegularFile(candidate, allowTags);
-        }
-      }
+      scanPathsLiteralsFirst(refs.paths, allowTags, { onlyExisting: true });
+
+      // A command names an environment as readily as a file. The Bash branch
+      // has always scanned the variables a command would print; a tool that
+      // runs a shell was collected for paths and nothing else, so
+      // `{"command":"printenv"}` handed the environment back whole.
+      scanEnvironment(
+        refs.dumpsEnvironment
+          ? Object.keys(process.env)
+          : [...new Set([...extractEnvVarNames(value), ...refs.envVars])],
+        allowTags,
+      );
     }
 
-    for (const candidate of collectPathFields(input)) {
-      scanIfRegularFile(candidate, allowTags);
+    // The write-verb exemption is about a tool's *output*: naming a file it only
+    // writes to is not a leak. A command is not output — `create_process` runs
+    // what it is handed — so the command fields above are read whatever the name
+    // says, and only the path fields are exempt.
+    if (!isWritingTool(tool)) {
+      for (const candidate of collectPathFields(input)) {
+        scanIfRegularFile(candidate, allowTags);
+      }
     }
   }
 
