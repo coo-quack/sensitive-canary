@@ -451,6 +451,73 @@ describe("pre-tool-use-hook — command classification", () => {
     });
   });
 
+  // A token carrying glob metacharacters names whatever the shell expands it to,
+  // and the file is in the expansion. Collected and then dropped — no file is
+  // named `sec*` — the read went through. `.env*` is the same one character away
+  // from `.env`, so the guard this hook is most sure of was a wildcard away from
+  // being skipped.
+  describe("glob patterns", () => {
+    it.each([
+      ["cat", "secret_glob.txt"],
+      ["head", "secret_glob_head.txt"],
+      ["sort", "secret_glob_sort.txt"],
+    ])("%s expands a pattern and scans what it matches", (cmd, fixture) => {
+      const file = writeFixture(fixture, `key=${AWS_KEY}`);
+      const dir = writeFixture.path();
+      const stem = file.slice(dir.length + 1, dir.length + 7);
+      const result = runBashHook(`${cmd} ${dir}/${stem}*`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("a bare * reaches the files in the directory", () => {
+      writeFixture("star_target.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`cat ${writeFixture.path()}/*`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    // The name guard runs on what the pattern expands to, so `.env*` is blocked
+    // for the same reason `.env` is.
+    it(".env* is blocked the way .env is", () => {
+      writeFixture(".env", "TOKEN=whatever");
+      const result = runBashHook(`cat ${writeFixture.path()}/.env*`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("a pattern matching nothing is allowed", () => {
+      const result = runBashHook(`cat ${writeFixture.path()}/nomatch*`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // `echo` prints its arguments, so its expansion is not a read.
+    it("a pattern handed to echo is not a read", () => {
+      writeFixture("echo_target.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`echo ${writeFixture.path()}/*`);
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // A redirection may stand before the command. The operator is skipped as a
+  // non-command token, but its target is an ordinary word, so `secrets` was
+  // taken for the command name and the real command went unclassified — a
+  // spelling away from `cat < secrets`, which blocks.
+  describe("a redirection before the command", () => {
+    it.each(["cat", "sort", "grep aws"])("< file %s is read", (rest) => {
+      const file = writeFixture(
+        `lead_redirect_${rest.length}.txt`,
+        `key=${AWS_KEY}`,
+      );
+      const result = runBashHook(`< ${file} ${rest}`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("a command that prints no contents is still not a read", () => {
+      const file = writeFixture("lead_redirect_wc.txt", `key=${AWS_KEY}`);
+      expect(runBashHook(`< ${file} wc -l`).exitCode).toBe(0);
+    });
+  });
+
   // Opening a path that is not a regular file can block forever: reading
   // `/dev/zero` never reaches EOF. The hook then hung until Claude Code's
   // PreToolUse timeout killed it, and a killed hook does not block the call —

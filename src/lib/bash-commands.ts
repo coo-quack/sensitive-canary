@@ -213,6 +213,11 @@ export const GIT_READ_SUBCOMMANDS = new Set([
   "cat-file",
 ]);
 
+// `-L` is not here: it prints the lines of one named file rather than a patch of
+// whatever operands follow, so it is handled where that file is extracted from
+// the range spec. Listing it here as well marked every other operand of the same
+// command as read.
+//
 // `git log <file>` prints who changed the file and when, never a line of it, so
 // it belongs with the subcommands above only when a patch is asked for. Treating
 // it as a read unconditionally blocked an everyday way of looking at history.
@@ -235,6 +240,16 @@ function gitLogPrintsFileContents(operands: ShellToken[]): boolean {
       value.startsWith("--diff-merges")
     );
   });
+}
+
+// The file named inside a `git log -L` argument, which carries it after the last
+// `:` of a range spec (`-L1,10:f`, `-L:funcname:f`). Written as a path on its
+// own it would never be found, since the range is part of the token.
+function gitLineRangeFile(value: string): string | null {
+  const colon = value.lastIndexOf(":");
+  if (colon === -1) return null;
+  const file = value.slice(colon + 1);
+  return file === "" ? null : file;
 }
 
 // Whether a git subcommand writes the contents of the files named after it.
@@ -302,8 +317,15 @@ export function isInPlaceFlag(cmd: string, value: string): boolean {
   return false;
 }
 
+// `--` ends option parsing here as well: in `sed -- -i secrets`, `-i` is the
+// script and `secrets` is a file sed prints. Read as an in-place flag, the whole
+// command counted as writing and the file went unscanned.
 function editsInPlace(cmd: string, operands: ShellToken[]): boolean {
-  return operands.some(({ value }) => isInPlaceFlag(cmd, value));
+  for (const { value } of operands) {
+    if (value === "--") return false;
+    if (isInPlaceFlag(cmd, value)) return true;
+  }
+  return false;
 }
 
 // Global git flags that carry a separate value before the subcommand
@@ -464,9 +486,24 @@ export const ARGUMENT_ONLY_COMMANDS = new Set([
 // flag's value rather than the command.
 function findCommandIndex(tokens: ShellToken[]): number {
   let lead = -1;
+  // A redirection may come before the command — `< secrets cat` is `cat` reading
+  // `secrets`. The operator is skipped as a non-command token, but its target is
+  // an ordinary word, so `secrets` was taken for the command name and the real
+  // one went unclassified: nothing of its operands was collected, and a spelling
+  // away from `cat < secrets`, which blocks.
+  let skipRedirectTarget = false;
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    if (token === undefined || isNonCommandToken(token)) continue;
+    if (token === undefined) continue;
+    if (skipRedirectTarget) {
+      skipRedirectTarget = false;
+      continue;
+    }
+    if (token.redirect) {
+      skipRedirectTarget = true;
+      continue;
+    }
+    if (isNonCommandToken(token)) continue;
     lead = i;
     break;
   }
@@ -617,6 +654,18 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
 
   const cmd = path.basename(cmdToken.value);
   const operands = tokens.slice(start + 1);
+  const behaviourForLead = classifyCommand(cmd);
+
+  // `< secrets cat` puts the redirection before the command, so its target is
+  // not among the operands and the loop below never sees it. The command still
+  // reads it.
+  for (let i = 0; i < start; i++) {
+    if (tokens[i]?.redirect !== true) continue;
+    if (tokens[i]?.value !== "<") continue;
+    const target = tokens[i + 1];
+    if (target === undefined || target.redirect) continue;
+    if (!behaviourForLead.printsNoFileContents) refs.paths.push(target.value);
+  }
 
   // In-place editing sends the result back to the file, so nothing reaches
   // stdout and nothing is read into the conversation.
@@ -647,6 +696,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
   let gitSubcommandSeen = false;
   let gitReadsFiles = false;
   let optionsEnded = false;
+  let lineRangeNext = false;
 
   for (const tok of operands) {
     if (skipNext) {
@@ -696,6 +746,26 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       isInlineCodeFlag(cmd, tok.value)
     ) {
       codeNext = true;
+      continue;
+    }
+
+    // `git log -L1,10:f` prints the lines of `f` themselves, and the file is
+    // written inside the range spec after the last `:`. The flag branch below
+    // consumes any `-`-shaped token, so this has to come before it, and the
+    // operand branch would never see the file anyway.
+    if (
+      behaviour.isGit &&
+      (tok.value.startsWith("-L") || tok.value.startsWith("--line-range"))
+    ) {
+      const inFlag = gitLineRangeFile(tok.value);
+      if (inFlag !== null) refs.paths.push(inFlag);
+      else lineRangeNext = true;
+      continue;
+    }
+    if (lineRangeNext) {
+      lineRangeNext = false;
+      const separate = gitLineRangeFile(tok.value);
+      if (separate !== null) refs.paths.push(separate);
       continue;
     }
 

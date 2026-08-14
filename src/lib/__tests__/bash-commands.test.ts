@@ -176,6 +176,40 @@ describe("tables that had no cases", () => {
   });
 });
 
+describe("a redirection before the command", () => {
+  // The operator is skipped as a non-command token, but its target is an
+  // ordinary word: `secrets` was taken for the command name, the real command
+  // went unclassified, and none of its operands were collected.
+  it.each(["< secrets.txt cat", "<secrets.txt sort", "< secrets.txt grep aws"])(
+    "%s names the file",
+    (command) => {
+      expect(paths(command)).toContain("secrets.txt");
+    },
+  );
+
+  it("a command that prints no contents still names nothing", () => {
+    expect(paths("< secrets.txt wc -l")).not.toContain("secrets.txt");
+  });
+});
+
+describe("git log -L", () => {
+  // `-L` prints the lines themselves, and the file is written inside the range
+  // spec after the last `:`, where neither the flag branch nor the operand
+  // branch would have looked for it.
+  it.each([
+    "git log -L1,10:secrets.txt",
+    "git log -L 1,10:secrets.txt",
+    "git log --line-range=1,10:secrets.txt",
+    "git log -L:funcname:secrets.txt",
+  ])("%s names the file in the range", (command) => {
+    expect(paths(command)).toContain("secrets.txt");
+  });
+
+  it("a range with no file names nothing", () => {
+    expect(paths("git log -L1,10")).toEqual([]);
+  });
+});
+
 describe("inline code", () => {
   it("a quoted literal inside perl -e is a path candidate", () => {
     expect(paths(`perl -e 'open(F, "secrets.txt")'`)).toContain("secrets.txt");
@@ -190,6 +224,16 @@ describe("inline code", () => {
       expect(paths(`${shell} -e script.sh`)).not.toContain("script.sh");
     },
   );
+
+  // `--` ends option parsing for the in-place test too: in `sed -- -i secrets`,
+  // `-i` is the script and `secrets` is a file sed prints.
+  it("sed -- -i reads its operand rather than editing in place", () => {
+    expect(paths("sed -- -i secrets.txt")).toContain("secrets.txt");
+  });
+
+  it("sed -i without the -- still edits in place", () => {
+    expect(paths("sed -i 's/a/b/' secrets.txt")).not.toContain("secrets.txt");
+  });
 
   it("a shell's -c is still inline code", () => {
     expect(paths(`bash -c 'cat secrets.txt'`)).toContain("secrets.txt");

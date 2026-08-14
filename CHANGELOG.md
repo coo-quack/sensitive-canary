@@ -126,6 +126,22 @@
   recognised, so nothing marked the pattern as supplied and the file that
   followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
   (`--regexp=aws`) spellings were already handled
+- Expand a glob before deciding whether it names a file. `cat sec*` collected
+  `sec*`, found nothing on disk by that name, and allowed the read; `cat .env*`
+  did the same, one character away from `cat .env`, which is blocked on its name.
+  A pattern is now expanded and each match is scanned, up to 256 of them
+- Read a redirection that stands before the command. `< secrets cat` is `cat`
+  reading `secrets`, but the operator was skipped and its target taken for the
+  command name, so the real command went unclassified and nothing of it was
+  collected — while `cat < secrets` blocked
+- Scan the file named inside a `git log -L` range. `-L1,10:secrets` prints the
+  lines of that file, and the file is written inside the flag's own argument
+  where neither the flag nor the operand handling would look for it
+- Read `--` as the end of option parsing for the in-place test too. In
+  `sed -- -i secrets`, `-i` is the script and `secrets` is a file sed prints; read
+  as the in-place flag, the command counted as writing and the file was skipped
+- Collect a path from an array inside an array. `{ "paths": [["…"]] }` fell
+  between the string branch and the object branch and was never looked at
 - Stop reading a path that names something other than a regular file. Reading
   `/dev/zero` never reaches the end of the file, so the hook did not return and
   Claude Code's PreToolUse timeout killed it — and a killed hook does not block

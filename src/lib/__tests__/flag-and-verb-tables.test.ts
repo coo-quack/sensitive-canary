@@ -271,6 +271,35 @@ describe("the tools exempt by name", () => {
   });
 });
 
+// An array inside an array. The element is neither a string nor a plain object,
+// so it fell between the two branches and the path in it was never looked at.
+describe("paths nested inside arrays", () => {
+  const SHAPES: Array<[string, Record<string, unknown>]> = [
+    ["an array of strings", { paths: ["/abs/secrets.txt"] }],
+    ["an array inside an array", { paths: [["/abs/secrets.txt"]] }],
+    ["two arrays deep", { paths: [[["/abs/secrets.txt"]]] }],
+    ["an object in an array", { paths: [{ path: "/abs/secrets.txt" }] }],
+  ];
+
+  it.each(SHAPES)("collects from %s", (_label, input) => {
+    expect(collectPathFields(input)).toContain("/abs/secrets.txt");
+  });
+
+  // Re-entered under the same key, so a bare filename inside the nesting is still
+  // collected by the name rule. Walking the array as an object would key it by
+  // index instead, and only the `/` shape rule would be left.
+  it("collects a bare filename from inside the nesting", () => {
+    expect(collectPathFields({ paths: [["secrets.txt"]] })).toContain(
+      "secrets.txt",
+    );
+  });
+
+  // The name still has to be one that says path: nesting does not widen it.
+  it("an unlisted field name is still not collected from a bare name", () => {
+    expect(collectPathFields({ pattern: [["secrets.txt"]] })).toEqual([]);
+  });
+});
+
 // The whole list, written out rather than derived.
 //
 // The generated cases above walk `PATH_FIELD_NAMES`, so deleting an entry deletes

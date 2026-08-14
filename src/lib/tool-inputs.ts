@@ -148,12 +148,17 @@ export function collectPathFields(
         if (typeof item === "string") {
           // An element inherits the array's field name: `{ paths: ["…"] }`.
           if (isPathCandidate(key, item)) found.push(item);
+        } else if (Array.isArray(item)) {
+          // An array inside an array: `{ paths: [["…"]] }`. The element is not a
+          // string and was not an object either, so it fell through and the path
+          // in it was never looked at. Re-entered under the same key, so the
+          // name rule still applies to what is inside.
+          found.push(...collectPathFields({ [key]: item }, depth + 1));
         } else if (
           // Paths also arrive as objects inside an array, e.g.
           // `{ paths: [{ path: "…" }] }` — recurse into those elements too.
           item !== null &&
-          typeof item === "object" &&
-          !Array.isArray(item)
+          typeof item === "object"
         ) {
           found.push(
             ...collectPathFields(item as Record<string, unknown>, depth + 1),

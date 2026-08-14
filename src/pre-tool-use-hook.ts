@@ -217,6 +217,32 @@ function block(
 
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
+// Characters that make a token a pattern rather than a filename.
+const GLOB_METACHARACTERS = /[*?[]/;
+
+// How many matches of one pattern are scanned. `cat *` in a large tree would
+// otherwise read the whole tree before the tool call it is guarding.
+const MAX_GLOB_MATCHES = 256;
+
+// The paths a candidate stands for.
+//
+// A token carrying glob metacharacters names whatever the shell will expand it
+// to, and the file is in the expansion, not in the token: `cat sec*` collected
+// `sec*`, found no file by that name, and allowed the read. `cat .env*` did the
+// same, one character away from `cat .env`, which is blocked on its name — so
+// the guard this hook is most sure of was a wildcard away from being skipped.
+//
+// Expanded here rather than in the tokenizer because it needs the filesystem,
+// which is also why it can differ from what the shell will do a moment later.
+function expandCandidate(candidate: string): string[] {
+  if (!GLOB_METACHARACTERS.test(candidate)) return [candidate];
+  try {
+    return fs.globSync(candidate).slice(0, MAX_GLOB_MATCHES);
+  } catch {
+    return [];
+  }
+}
+
 // Whether a path names something whose bytes can be read to the end.
 //
 // A character device or a FIFO can be opened and read from forever: `cat
@@ -240,8 +266,10 @@ function scanIfRegularFile(
   candidate: string | undefined,
   allowTags: Set<string>,
 ): void {
-  if (!candidate || !isRegularFile(candidate)) return;
-  scanFile(candidate, allowTags);
+  if (!candidate) return;
+  for (const p of expandCandidate(candidate)) {
+    if (isRegularFile(p)) scanFile(p, allowTags);
+  }
 }
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
@@ -377,7 +405,7 @@ process.stdin.on("end", () => {
     }
 
     for (const fp of refs.paths) {
-      scanFile(fp, allowTags);
+      for (const p of expandCandidate(fp)) scanFile(p, allowTags);
     }
 
     process.exit(0);
