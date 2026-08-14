@@ -126,6 +126,28 @@
   recognised, so nothing marked the pattern as supplied and the file that
   followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
   (`--regexp=aws`) spellings were already handled
+- Resolve a relative path against the directory the tool runs in. The payload
+  carries a `cwd` and nothing read it, so `cat secrets.txt` named a path relative
+  to wherever the hook process happened to start and was dropped as a file that
+  is not there. A literal `cd` earlier in the same command moves the base too,
+  which is what `cd build && cat secrets` needs
+- Read an assignment written with `:` and with a lower-case name. The rule wanted
+  `[A-Z_]` and `=`, so a `docker-compose.yml` full of `POSTGRES_PASSWORD: …`, an
+  `appsettings.json` with `"client_secret": …` and an `~/.aws/credentials` with
+  `aws_secret_access_key = …` all passed — the three file shapes this tool exists
+  to guard
+- Keep a substitution among the operands instead of ending the segment at it.
+  `cat <(echo hi) secrets` left `secrets` in a segment of its own, where it was
+  read as a command name; the comment at that line said the only cost was
+  reaching the inner command twice
+- Bound the work of one tool call at 8 MiB across every file it reads, and skip a
+  file already read. A glob naming three hundred large files took half a minute,
+  and five overlapping globs read the same files five times
+- Lift the `.env` name block only for a tag that allows secrets. `parseAllowTags`
+  reads `[allow-<anything>]`, and the guard asked only whether any tag was
+  present, so `[allow-pii]` and a mistyped `[allow-pi]` both turned it off. It no
+  longer skips the content scan either: a tag for one category was silently
+  covering the other
 - Expand `~` and `~/…` to the home directory. `cat ~/.aws/credentials` named a
   path that exists on no disk, so it was dropped as a file that is not there —
   and `~/.ssh/id_rsa`, `~/.npmrc` and `~/.netrc` went the same way

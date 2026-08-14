@@ -21,13 +21,14 @@ Claude Code is a powerful development tool, but file reads and command execution
 |--------------------------|----------------------|
 | `cat .env` → full contents sent to Claude ❌ | Blocked by name before Claude reads it ✅ |
 | Paste `AKIAIOSFODNN7EXAMPLE` in prompt ❌ | Blocked before the API call is made ✅ |
-| Tool result contains user@email.com ❌ | PII detected and blocked ✅ |
+| `Read customers.csv` full of email addresses ❌ | PII detected before Claude sees the file ✅ |
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
+| `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
 - **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
-- **Context gating** — phone numbers, postal codes, and public IP addresses require a nearby label, reducing false positives on bare digit sequences
+- **Context gating** — the noisiest rules (French, Italian, German, Spanish, Korean and Chinese phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6) only fire when a label such as `phone` or `ZIP` is nearby. US and Japanese phone numbers, Japanese postal codes and private IPv4 are matched without one, since their shapes are specific enough
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
@@ -225,7 +226,7 @@ To intentionally bypass a block, include the appropriate tag in your **current p
 | `[allow-pii]` | Skip all PII-category checks |
 | `[allow-all]` | Skip all sensitive-canary checks |
 
-> **Note:** Tags are read from the **current user message only**. Tags in previous messages are ignored — there is no risk of an accidental persistent bypass. Tags are case-insensitive. `[allow-secret]` does not bypass PII blocks (and vice versa). The name-based block on `.env`/`.env.*` files can be bypassed by any of the three allow tags.
+> **Note:** Tags are read from the **current user message only**. Tags in previous messages are ignored — there is no risk of an accidental persistent bypass. Tags are case-insensitive. `[allow-secret]` does not bypass PII blocks (and vice versa). The name-based block on `.env`/`.env.*` files is a secret guard, so `[allow-secret]` and `[allow-all]` lift it and `[allow-pii]` does not.
 
 ---
 
@@ -491,7 +492,7 @@ Which tools reach the hook at all is the matcher's business, and the default (`R
 
 Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Neither are the tools that surface no file contents — `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`, `AskUserQuestion` — nor any tool whose name leads with a write verb, such as `mcp__fs__write_file` or `createPage`.
 
-Neither is a command that sends its result back to the file it was handed. `sed -i`, `perl -i` and `ruby -i` (bundled forms such as `perl -pi -e` and `perl -lpi` included) edit in place and write nothing to stdout. A bundle is read one letter at a time, continuing only past switches that command is known to accept without a value — so `sed -Ei` and `perl -lpi` are in-place edits, while `perl -Ilib -pe` and `perl -MList::Util -pe` are reads. A letter the list does not know stops the reading and the file is scanned, which is the safe way to be wrong. `git log <file>` is not a read either — it prints who changed the file and when — unless a patch is asked for with `-p`, `--patch` or `-U<n>`.
+Neither is a command that sends its result back to the file it was handed. `sed -i`, `perl -i` and `ruby -i` (bundled forms such as `perl -pi -e` and `perl -lpi` included) edit in place and write nothing to stdout. A bundle is read one letter at a time, continuing only past switches that command is known to accept without a value — so `sed -Ei` and `perl -lpi` are in-place edits, while `perl -Ilib -pe` and `perl -MList::Util -pe` are reads. A letter the list does not know stops the reading and the file is scanned, which is the safe way to be wrong. `git log <file>` is not a read either — it prints who changed the file and when — unless a patch is asked for with `-p`, `-u`, `--patch`, `-U<n>`, `--unified=<n>`, one of the merge-diff forms (`-c`, `-m`, `--cc`, `--diff-merges`), or `-L`, which prints the lines of one named file.
 
 When blocked, the hook exits 2, which stops the tool call, and writes the reason to stderr, which is where Claude reads it from. The reason names what was detected and which allow tag lifts the block, and asks Claude to pass that on to the user.
 The terminal also receives a direct message (via `/dev/tty`).
@@ -510,6 +511,8 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **`~user/…` is not expanded** — `~` and `~/…` are resolved to the home directory, but the form naming another user needs the password database, and guessing would name the wrong file.
 - **A file whose text is not bytes the scanner reads as text** — scanning stops at the first NUL byte, so a UTF-16 file is read as far as its first character and no further. That is the same rule that keeps a binary from being ground through every pattern.
 - **A shell construct that names the file only at run time** — `for f in secrets; do cat "$f"; done` and `find . -name secrets -exec cat {} +` both name the file in the command line, but the hook classifies the command it can see, and in these the reading command is `cat` reached through a loop or through `find`'s own argument list.
+- **At most 8 MiB is read across one tool call** — the per-file cut bounds one file; this bounds the call. A glob naming three hundred large files took half a minute, which is long enough for the PreToolUse timeout to kill the hook, and a killed hook does not block. Files past the budget are not scanned.
+- **A relative path is resolved against the directory Claude Code reports** — and against the last literal `cd` in the same command. A `cd` whose argument is a variable, or a directory change made some other way, leaves the hook resolving against the wrong place.
 - **A glob is expanded by the hook, not by the shell** — `cat *.env` is expanded here to decide what to scan, a moment before the shell expands it and against the hook's own working directory. A file created in between is missed, and at most 256 matches of one pattern are scanned.
 - **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
 - **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.

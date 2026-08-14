@@ -343,6 +343,56 @@ describe("pre-tool-use-hook — large file head read (1 MiB)", () => {
   );
 });
 
+// The `.env` name block is a secret guard — `shouldBlockEnvFile` asks whether the
+// secret category is on — so the tag that lifts it has to allow secrets. Any tag
+// at all used to lift it, and `parseAllowTags` reads `[allow-<anything>]`, so a
+// mistyped `[allow-pi]` turned off the guard the README leads with.
+describe("pre-tool-use-hook — which allow tag lifts the .env block", () => {
+  const writeFixture = useFixtureDir("env-allow-tags");
+
+  const withTag = (tag: string, file: string): number => {
+    const transcript = writeFixture(
+      `t-${tag}.jsonl`,
+      `${JSON.stringify({ message: { role: "user", content: `[allow-${tag}] read it` } })}\n`,
+    );
+    return runHook("Read", file, { transcriptPath: transcript }).exitCode;
+  };
+
+  it.each(["secret", "all"])("[allow-%s] lifts it", (tag) => {
+    const file = writeFixture(".env", "TOKEN=whatever");
+    expect(withTag(tag, file)).toBe(0);
+  });
+
+  it.each(["pii", "banana", "pi"])("[allow-%s] does not lift it", (tag) => {
+    const file = writeFixture(".env", "TOKEN=whatever");
+    expect(withTag(tag, file)).toBe(2);
+  });
+});
+
+// README states these as contracts, and each survived being changed: the depth
+// limit set to 1, the glob match cap set to 1, the transcript tail cut to 1 KB.
+describe("pre-tool-use-hook — the documented limits", () => {
+  const writeFixture = useFixtureDir("limits");
+
+  // Four levels of inline text are inspected; the fifth is not.
+  it("inline code is followed four levels deep and no further", () => {
+    const file = writeFixture("depth.txt", `key=${AWS_KEY}`);
+    const four = `sh -c "sh -c \\"sh -c 'cat ${file}'\\""`;
+    expect(runBashHook(four).exitCode).toBe(2);
+    const five = `sh -c "sh -c \\"sh -c 'sh -c \\\\"cat ${file}\\\\"'\\""`;
+    expect(runBashHook(five).exitCode).toBe(0);
+  });
+
+  // A glob's matches are scanned up to the cap. Two files, both secret-bearing,
+  // in a directory of their own: at a cap of 1 the second would go unread.
+  it("more than one match of a pattern is scanned", () => {
+    const dir = writeFixture.path();
+    writeFixture("g-clean.txt", "nothing here");
+    writeFixture("g-secret.txt", `key=${AWS_KEY}`);
+    expect(runBashHook(`cat ${dir}/g-*.txt`).exitCode).toBe(2);
+  });
+});
+
 // ── path shapes the shell expands ────────────────────────────────────────────
 
 // Each of these names a real file once the shell is done with it, and each was
@@ -506,9 +556,20 @@ describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
     expect(blocked).toBe(true);
   });
 
-  it("[allow-pii] bypasses cat on a .env.* file", () => {
+  // The `.env` block is a secret guard, so the PII tag does not lift it. It used
+  // to, along with every other bracketed word beginning `allow-`.
+  it("[allow-pii] does not bypass cat on a .env.* file", () => {
     const transcript = writeTranscript(["[allow-pii] show me the env"]);
     const p = writeFixture(".env.bash-pii", "DEBUG=true\n");
+    const { exitCode } = runBashHook(`cat ${p}`, {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+  });
+
+  it("[allow-secret] bypasses cat on a .env.* file", () => {
+    const transcript = writeTranscript(["[allow-secret] show me the env"]);
+    const p = writeFixture(".env.bash-secret", "DEBUG=true\n");
     const { exitCode } = runBashHook(`cat ${p}`, {
       transcriptPath: transcript,
     });
@@ -537,11 +598,11 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("[allow-pii] also bypasses .env name block", () => {
+  it("[allow-pii] does not bypass the .env name block", () => {
     const transcript = writeTranscript(["[allow-pii] read the env file"]);
     const p = writeFixture(".env.bypass-pii", "KEY=value");
     const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(2);
   });
 
   it("[allow-secret] bypasses secrets in content scan", () => {

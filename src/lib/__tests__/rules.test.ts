@@ -902,6 +902,121 @@ describe("scan — adversarial inputs", () => {
   });
 });
 
+// The shipped rules, written out.
+//
+// This is the largest table in the product and had neither an equality nor a
+// case per entry. Measured: deleting `mapbox-token` and `sentry-org-token` whole
+// left the suite green — 1,459 cases instead of 1,467, because the only thing
+// walking the rules is the timing matrix, and a rule that matches nothing passes
+// all eight of its shapes. A rule silently dropped from a release is the worst
+// version of that.
+// The boundary between a reserved range and a public address. One public case
+// (`8.8.8.8`) left the 224 edge free to move: at 200 the whole 200–223 block
+// stops being PII.
+describe("the reserved IPv4 boundary", () => {
+  it.each(["223.255.255.255", "199.0.0.1", "126.0.0.1"])(
+    "%s is public",
+    (ip) => {
+      expect(isReservedIpv4(ip)).toBe(false);
+    },
+  );
+
+  it.each(["224.0.0.1", "239.255.255.255", "240.0.0.1", "127.0.0.1"])(
+    "%s is reserved",
+    (ip) => {
+      expect(isReservedIpv4(ip)).toBe(true);
+    },
+  );
+});
+
+describe("the shipped rules", () => {
+  it("are exactly these sixty-four", () => {
+    expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
+      "anthropic-key",
+      "atlassian-token",
+      "aws-access-key",
+      "connection-string",
+      "digitalocean-pat",
+      "discord-webhook",
+      "env-assignment",
+      "gcp-api-key",
+      "generic-secret",
+      "github-fine-grained",
+      "github-pat",
+      "gitlab-pat",
+      "groq-key",
+      "huggingface-token",
+      "jwt",
+      "linear-key",
+      "mailchimp-key",
+      "mailgun-key",
+      "mapbox-token",
+      "npm-token",
+      "openai-key",
+      "openai-project-key",
+      "openrouter-key",
+      "perplexity-key",
+      "pii-brn-kr",
+      "pii-codice-fiscale-it",
+      "pii-credit-card",
+      "pii-dni-nie-es",
+      "pii-email",
+      "pii-ipv4",
+      "pii-ipv4-public",
+      "pii-ipv6",
+      "pii-mynumber-jp",
+      "pii-nir-fr",
+      "pii-phone-cn",
+      "pii-phone-de",
+      "pii-phone-es",
+      "pii-phone-fr",
+      "pii-phone-it",
+      "pii-phone-jp",
+      "pii-phone-kr",
+      "pii-phone-us",
+      "pii-postal-cn",
+      "pii-postal-code",
+      "pii-postal-jp",
+      "pii-resident-id-cn",
+      "pii-rrn-kr",
+      "pii-ssn",
+      "pii-steuer-id-de",
+      "postman-key",
+      "private-key",
+      "replicate-token",
+      "sendgrid-key",
+      "sentry-org-token",
+      "sentry-user-token",
+      "slack-token",
+      "slack-webhook",
+      "square-access-token",
+      "stripe-restricted-key",
+      "stripe-secret-key",
+      "supabase-key",
+      "telegram-bot-token",
+      "twilio-sid",
+      "xai-key",
+    ]);
+  });
+
+  it("are split as the README says: 39 secret, 25 PII", () => {
+    const byCategory = DEFAULT_RULES.reduce<Record<string, number>>(
+      (acc, r) => ({ ...acc, [r.category]: (acc[r.category] ?? 0) + 1 }),
+      {},
+    );
+    expect(byCategory).toEqual({ secret: 39, pii: 25 });
+  });
+
+  it("each declare the fields the loader needs", () => {
+    for (const rule of DEFAULT_RULES) {
+      expect(typeof rule.id, rule.id).toBe("string");
+      expect(typeof rule.description, rule.id).toBe("string");
+      expect(["secret", "pii"], rule.id).toContain(rule.category);
+      expect(() => new RegExp(rule.regex), rule.id).not.toThrow();
+    }
+  });
+});
+
 // ── the two rules whose patterns were rewritten for speed ────────────────────
 
 // Both were changed by bounding a quantifier, which is a change to what they
@@ -1510,7 +1625,14 @@ describe("user config — custom rules", () => {
     expect(dupes[0]?.description).toBe("Last Definition");
 
     // Only the last regex is active, and a match produces a single finding.
-    expect(scan("token: MYSVC-abcdefghijklmnopqrst")).toHaveLength(0);
+    // Filtered by rule id: the built-in `env-assignment` reads `token: <value>`
+    // as an assignment of its own, which is a finding about the text rather than
+    // about which custom regex is loaded.
+    expect(
+      scan("token: MYSVC-abcdefghijklmnopqrst").filter(
+        (f) => f.ruleId === "custom-token",
+      ),
+    ).toHaveLength(0);
     const findings = scan("token: MYSVC2-abcdefghijklmnopqrst");
     expect(findings.filter((f) => f.ruleId === "custom-token")).toHaveLength(1);
   });

@@ -17,6 +17,30 @@ function runHook(prompt: string, opts?: { env?: Record<string, string> }) {
   };
 }
 
+// Every case in this file used a one-line prompt, so a cap on how much of it is
+// scanned would not have shown up. A pasted log or `.env` is the case the hook
+// exists for, and it is long.
+describe("user-prompt-submit-hook — how much of the prompt is scanned", () => {
+  const KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
+
+  it.each([
+    ["8 KB", 8 * 1024],
+    ["64 KB", 64 * 1024],
+    ["256 KB", 256 * 1024],
+  ])("finds a key after %s of text", (_label, padding) => {
+    const { exitCode } = runHook(
+      `${"lorem ipsum ".repeat(padding / 12)}${KEY}`,
+    );
+    expect(exitCode).toBe(2);
+  });
+
+  it("finds a key on the last line of a pasted file", () => {
+    const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
+    const { exitCode } = runHook(`${lines.join("\n")}\nkey=${KEY}\n`);
+    expect(exitCode).toBe(2);
+  });
+});
+
 describe("user-prompt-submit-hook — allow (exit 0)", () => {
   it("passes a clean prompt", () => {
     const { exitCode } = runHook("hello, can you help me?");
