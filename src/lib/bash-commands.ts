@@ -397,9 +397,12 @@ interface CommandBehaviour {
 // means "operands understood" — which is what lets a new field be added without
 // updating it, and also what a field has to respect to live here:
 //
-//   - `WRITE_TARGET_FLAGS[cmd]` would arrive as a Set, truthy even when empty,
-//     making every command classifiable and stopping the wrapper search at the
-//     first operand it meets.
+//   - `WRITE_TARGET_FLAGS[cmd]` would arrive as a Set for the three commands
+//     that have one, and a Set is truthy whatever it holds. That would make
+//     `sort`, `shuf` and `iconv` classifiable on the strength of having an
+//     output flag, which says nothing about whether their operands are
+//     understood. (It is `undefined` for every other command, so the reach is
+//     those three, not all of them.)
 //   - `cmd === "env"` for the `-S` string would make `env` classifiable, and
 //     `env` is left out on purpose: it is a wrapper as often as a command.
 //
@@ -726,10 +729,9 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     if (codeNext) {
       codeNext = false;
       // The expression came from -e/-c, so a later operand is a file, not the
-      // script `perl file` would have run. `patternSkipped` is set for the same
-      // reason, though no command is in both tables today, so it is
-      // `inlineCodeSeen` below that carries this case.
-      patternSkipped = true;
+      // script `perl file` would have run. That is `inlineCodeSeen` below: no
+      // command takes inline code *and* a leading pattern, an assumption the
+      // tests pin, so there is no pattern here to mark as supplied.
       if (behaviour.inlineCodeReadsOperands) inlineCodeSeen = true;
       mergeRefs(refs, extractCommandRefs(tok.value, depth + 1));
       refs.paths.push(...extractQuotedLiterals(tok.value));

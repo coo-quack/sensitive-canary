@@ -425,6 +425,16 @@ describe("the tables", () => {
     });
   });
 
+  // The inline-code branch does not mark a pattern as supplied, because there is
+  // no command where both would apply. If that stops being true, the branch
+  // needs the mark back and this is where it says so.
+  it("no command takes inline code and a leading pattern", () => {
+    const both = [...INLINE_CODE_COMMANDS].filter((c) =>
+      PATTERN_OR_SCRIPT_FIRST_COMMANDS.has(c),
+    );
+    expect(both).toEqual([]);
+  });
+
   it("the shells are exactly these", () => {
     expect([...POSIX_SHELLS].sort()).toEqual([
       "bash",
