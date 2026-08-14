@@ -98,7 +98,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `generic-secret` | `api_key`, `secret_key`, `access_token`, `api_secret` assignments | 3.5 |
 | `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `PASSWD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY`, with up to 64 capitals either side of the keyword | 3.0 |
 
-The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`) that are unlikely to be real secrets. Entropy is calculated using the Shannon entropy formula.
+The entropy threshold filters out low-entropy values that are unlikely to be real secrets — `API_KEY=aaaaaaaa` scores 0 and is dropped. It is a weak filter, not a classifier: `placeholder` scores 3.096 and clears the 3.0 threshold, so `API_KEY=placeholder` is reported. Entropy is the Shannon entropy of the value.
 
 ## PII
 
@@ -183,6 +183,8 @@ All blocks can be bypassed by including an allow tag in your prompt. Allow tags 
 
 Tags are **case-insensitive**: `[ALLOW-SECRET]` and `[Allow-Secret]` work the same as `[allow-secret]`.
 
+The name-based block on `.env`/`.env.*` files is a secret guard, so `[allow-secret]` and `[allow-all]` lift it and `[allow-pii]` does not.
+
 ### Mask Tags
 
 `[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content before it is sent to the API.
@@ -235,7 +237,7 @@ When Claude uses the `Bash` tool, sensitive-canary checks three things:
 
 1. **Environment variables** — any `$VAR` or `${VAR}` references in the command are looked up in the current environment; if their values contain secrets or PII, the command is blocked.
 2. **Command string** — the raw command is scanned (catches inline secrets like `echo AKIAIOSFODNN7EXAMPLE`).
-3. **File-reading commands** — for `cat`, `head`, `tail`, `less`, `more`, `bat`, `nl`, the target files are read and scanned before the command runs. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently.
+3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
 
 ## Custom Rules
 

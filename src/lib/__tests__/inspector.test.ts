@@ -10,6 +10,33 @@ import {
 
 // ── parseAllowTags ────────────────────────────────────────────────────────────
 
+// A tag is the bracketed form and nothing else. Without a case saying so, the
+// brackets could be made optional and prose that merely mentions `allow-all`
+// would turn the hook off.
+describe("what is not a tag", () => {
+  it.each([
+    "allow-all",
+    "allow-secret without brackets",
+    "the allow-pii option",
+    "(allow-all)",
+    "{allow-all}",
+    "allow-all]",
+    "[allow-all",
+  ])("%s is not a tag", (text) => {
+    expect(parseAllowTags([{ role: "user", content: text }]).size, text).toBe(
+      0,
+    );
+  });
+
+  it("the bracketed form is", () => {
+    expect(
+      parseAllowTags([{ role: "user", content: "[allow-all] please" }]).has(
+        "all",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("parseAllowTags", () => {
   it("returns empty set when no tags are present", () => {
     const tags = parseAllowTags([{ role: "user", content: "hello" }]);

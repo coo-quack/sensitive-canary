@@ -158,12 +158,24 @@ export function tokenizeCommand(command: string): ShellToken[][] {
       continue;
     }
 
+    // A substitution standing among the operands is one word to the command, so
+    // it is consumed whole and no token is emitted for it. Ending the segment
+    // here instead cut the operand list in two: `cat <(echo hi) secrets` left
+    // `secrets` in a segment of its own, where it was read as a command name and
+    // its own reading went unseen. The comment that used to sit here said the
+    // only cost was reaching the inner command twice, which was wrong.
+    //
+    // The inner command is still reached: extractSubstitutions walks the raw
+    // string for these forms, and the paths are deduplicated.
+    if ((ch === "$" || ch === "<" || ch === ">") && command[i + 1] === "(") {
+      endToken();
+      i = findSubstitutionEnd(command, i + 2, ")") + 1;
+      continue;
+    }
+
     // A subshell holds a command line of its own. Without this, `(cat secrets)`
     // tokenized as `(cat` and `secrets)`, naming neither a command this hook
-    // classifies nor a path that exists, and the read went unseen. The opening
-    // paren of `$(`, `<(` and `>(` lands here too, which only means the inner
-    // command is reached twice — extractSubstitutions already recurses into it,
-    // and the paths are deduplicated.
+    // classifies nor a path that exists, and the read went unseen.
     if (ch === "(" || ch === ")") {
       endSegment();
       i++;
@@ -447,7 +459,7 @@ export function extractSubstitutions(command: string): string[] {
 // file nothing noticed. The keywords that open a condition (`if`, `while`,
 // `until`) matter as much as the ones that open a body: the command being tested
 // runs too.
-const SHELL_KEYWORD_TOKENS = new Set([
+export const SHELL_KEYWORD_TOKENS = new Set([
   "{",
   "}",
   "!",

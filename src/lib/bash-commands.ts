@@ -49,6 +49,12 @@ export const FILE_READ_COMMANDS = new Set([
   "bzcat",
   "xzcat",
   "zstdcat",
+  "lz4cat",
+  "lzcat",
+  "zless",
+  "zmore",
+  "bzless",
+  "xzless",
   "diff",
   "comm",
   "join",
@@ -96,6 +102,11 @@ export const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
   "ag",
   "jq",
   "yq",
+  "zgrep",
+  "zegrep",
+  "zfgrep",
+  "ack",
+  "ugrep",
 ]);
 
 // Flags that hand a pattern-first command its pattern or script, so no operand

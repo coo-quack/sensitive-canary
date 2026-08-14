@@ -30,6 +30,50 @@ import {
 
 const paths = (command: string): string[] => extractCommandRefs(command).paths;
 
+const FILE_READ_EXPECTED = [
+  "base64",
+  "bat",
+  "bzcat",
+  "bzless",
+  "cat",
+  "column",
+  "comm",
+  "cut",
+  "diff",
+  "expand",
+  "fmt",
+  "fold",
+  "gzcat",
+  "head",
+  "hexdump",
+  "iconv",
+  "join",
+  "less",
+  "look",
+  "lz4cat",
+  "lzcat",
+  "more",
+  "nl",
+  "od",
+  "paste",
+  "pr",
+  "rev",
+  "shuf",
+  "sort",
+  "strings",
+  "tac",
+  "tail",
+  "unexpand",
+  "uniq",
+  "xxd",
+  "xzcat",
+  "xzless",
+  "zcat",
+  "zless",
+  "zmore",
+  "zstdcat",
+];
+
 describe("commands that print the files they are given", () => {
   it.each([...FILE_READ_COMMANDS])("%s names its operand", (cmd) => {
     expect(paths(`${cmd} secrets.txt`)).toContain("secrets.txt");
@@ -230,6 +274,49 @@ describe("holes an adversarial pass found", () => {
   });
 });
 
+// A substitution standing among the operands is one word to the command. Ending
+// the segment there cut the operand list in two, and the file after it was read
+// as a command name — a fail-open behind a comment that called it harmless.
+// A leading `VAR=value` is not the command. The pattern accepts a lower-case
+// name, and every case in the suite used an upper-case one, so narrowing it to
+// `[A-Z_]` went unnoticed — `foo=1 cat secrets` then classified `foo=1` as the
+// command and collected nothing.
+describe("a leading assignment", () => {
+  it.each([
+    "FOO=1 cat secrets.txt",
+    "foo=1 cat secrets.txt",
+    "_x=1 cat secrets.txt",
+    "a1=1 cat secrets.txt",
+    "foo=1 bar=2 cat secrets.txt",
+  ])("%s still reaches the command", (command) => {
+    expect(paths(command)).toContain("secrets.txt");
+  });
+});
+
+describe("a substitution among the operands", () => {
+  it.each([
+    "cat <(echo hi) secrets.txt",
+    "cat $(echo hi) secrets.txt",
+    "diff <(sort a.txt) secrets.txt",
+    "paste <(echo 1) secrets.txt",
+    "grep pat <(echo x) secrets.txt",
+  ])("%s still names the file after it", (command) => {
+    expect(paths(command)).toContain("secrets.txt");
+  });
+
+  // The inner command is still walked, by extractSubstitutions.
+  it("the command inside the substitution is read too", () => {
+    expect(paths("diff <(cat inner.txt) outer.txt")).toEqual(
+      expect.arrayContaining(["inner.txt", "outer.txt"]),
+    );
+  });
+
+  // A subshell is a command line of its own and still ends the segment.
+  it("a subshell is still its own segment", () => {
+    expect(paths("(cat secrets.txt)")).toContain("secrets.txt");
+  });
+});
+
 describe("git log -L", () => {
   // `-L` prints the lines themselves, and the file is written inside the range
   // spec after the last `:`, where neither the flag branch nor the operand
@@ -286,47 +373,12 @@ describe("the tables", () => {
   // one still passed all 820 cases. Deleting a read command is the fail-open
   // direction — the command stops being one whose operands are scanned.
   it("commands that print their file operands are exactly these", () => {
-    expect([...FILE_READ_COMMANDS].sort()).toEqual([
-      "base64",
-      "bat",
-      "bzcat",
-      "cat",
-      "column",
-      "comm",
-      "cut",
-      "diff",
-      "expand",
-      "fmt",
-      "fold",
-      "gzcat",
-      "head",
-      "hexdump",
-      "iconv",
-      "join",
-      "less",
-      "look",
-      "more",
-      "nl",
-      "od",
-      "paste",
-      "pr",
-      "rev",
-      "shuf",
-      "sort",
-      "strings",
-      "tac",
-      "tail",
-      "unexpand",
-      "uniq",
-      "xxd",
-      "xzcat",
-      "zcat",
-      "zstdcat",
-    ]);
+    expect([...FILE_READ_COMMANDS].sort()).toEqual(FILE_READ_EXPECTED);
   });
 
   it("pattern-first commands are exactly these", () => {
     expect([...PATTERN_OR_SCRIPT_FIRST_COMMANDS].sort()).toEqual([
+      "ack",
       "ag",
       "awk",
       "egrep",
@@ -336,7 +388,11 @@ describe("the tables", () => {
       "jq",
       "rg",
       "sed",
+      "ugrep",
       "yq",
+      "zegrep",
+      "zfgrep",
+      "zgrep",
     ]);
   });
 
@@ -428,6 +484,15 @@ describe("the tables", () => {
   // The inline-code branch does not mark a pattern as supplied, because there is
   // no command where both would apply. If that stops being true, the branch
   // needs the mark back and this is where it says so.
+  // A name in both tables would be read as printing its operands in one place
+  // and as printing nothing in another, and the two disagree at the point of use.
+  it("no command both prints its operands and only measures them", () => {
+    const both = [...FILE_READ_COMMANDS].filter((c) =>
+      COUNT_ONLY_COMMANDS.has(c),
+    );
+    expect(both).toEqual([]);
+  });
+
   it("no command takes inline code and a leading pattern", () => {
     const both = [...INLINE_CODE_COMMANDS].filter((c) =>
       PATTERN_OR_SCRIPT_FIRST_COMMANDS.has(c),

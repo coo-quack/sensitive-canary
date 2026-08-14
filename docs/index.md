@@ -50,12 +50,12 @@ Claude Code is a powerful development tool, but file reads and command execution
 |--------------------------|----------------------|
 | `cat .env` → full contents sent to Claude ❌ | Blocked by name by default before Claude reads it ✅ |
 | Paste `AKIAIOSFODNN7EXAMPLE` in prompt ❌ | Blocked before the API call is made ✅ |
-| Tool result contains user@email.com ❌ | PII detected and blocked ✅ |
+| `Read customers.csv` full of email addresses ❌ | PII detected before Claude sees the file ✅ |
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
 - **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
-- **Context gating** — noisy PII rules (phone, postal, IP) only fire when a relevant label is nearby
+- **Context gating** — the noisiest PII rules (non-US/JP phone numbers, postal codes, public IP addresses) only fire when a relevant label is nearby; US and JP phone numbers and JP postal codes are matched without one
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere

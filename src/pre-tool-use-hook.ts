@@ -13,7 +13,7 @@ import {
   randomBird,
 } from "./lib/inspector.ts";
 import { enabledCategoriesFromEnv, type Finding, scan } from "./lib/rules.ts";
-import { extractEnvVarNames } from "./lib/shell.ts";
+import { extractEnvVarNames, tokenizeCommand } from "./lib/shell.ts";
 import {
   collectPathFields,
   isWritingTool,
@@ -22,6 +22,10 @@ import {
 
 interface HookInput {
   transcript_path?: string;
+  // The directory Claude Code runs the tool in. A relative path in a command is
+  // relative to this, and reading it is the difference between scanning
+  // `cat secrets.txt` and dropping it as a file that is not there.
+  cwd?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown> & {
     file_path?: string;
@@ -45,7 +49,24 @@ const MAX_TRANSCRIPT_TAIL_BYTES = 65_536; // 64 KB
 // cut is missed; the transcript read above makes the same trade for its tail.
 const MAX_FILE_SCAN_BYTES = 1_048_576; // 1 MiB
 
+// Total bytes one hook invocation will read across every file it scans. The
+// per-file cap bounds one file; nothing bounded the number of files, and a glob
+// naming three hundred of them took half a minute — long enough for the
+// PreToolUse timeout to kill the hook, which does not block the call. Files past
+// the budget are not scanned, which is the same trade the per-file cap makes.
+const MAX_TOTAL_SCAN_BYTES = 8 * 1_048_576; // 8 MiB
+
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
+
+// Mutable for one run of the process: what has been read, and what has already
+// been looked at. Overlapping globs named the same file five times over.
+const scanned = new Set<string>();
+let bytesScanned = 0;
+
+// The directory a relative path is relative to. Set from the payload before any
+// scanning; `process.cwd()` is where the hook was started, which is not
+// necessarily where the command will run.
+let baseDirectory = process.cwd();
 
 // ── Transcript ────────────────────────────────────────────────────────────────
 
@@ -239,8 +260,13 @@ const MAX_GLOB_MATCHES = 256;
 // Expanded here rather than in the tokenizer because it needs the filesystem,
 // which is also why it can differ from what the shell will do a moment later.
 function expandCandidate(candidate: string): string[] {
-  const literal = expandTilde(candidate);
+  const literal = path.resolve(baseDirectory, expandTilde(candidate));
   if (!GLOB_METACHARACTERS.test(literal)) return [literal];
+  // Only the last segment may be a pattern, so the expansion costs one directory
+  // listing. `globSync` builds its whole result before anything can trim it, and
+  // `cat ~/**/*` walked the home directory until the hook was killed — which is
+  // the failure this file spends a `stat` per path to avoid.
+  if (GLOB_METACHARACTERS.test(path.dirname(literal))) return [literal];
   let matches: string[] = [];
   try {
     matches = fs.globSync(literal).slice(0, MAX_GLOB_MATCHES);
@@ -298,19 +324,33 @@ function scanIfRegularFile(
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
   if (shouldBlockEnvFile(filePath)) {
-    if (allowTags.size > 0) return;
-    block(
-      filePath,
-      [
-        "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
-      ],
-      buildAllowHints(`please read ${filePath}`, [], true),
-    );
+    // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
+    // secret category is on — so the tag that lifts it has to be one that allows
+    // secrets. Any tag at all used to lift it, and `parseAllowTags` reads
+    // `[allow-<anything>]`, so `[allow-banana]` and a mistyped `[allow-pi]` both
+    // turned the guard off.
+    //
+    // Lifting the name guard is not permission to skip the file: `[allow-secret]`
+    // says nothing about the PII in it, and returning here skipped the content
+    // scan along with the name. So this falls through, and `applyAllowTags`
+    // below drops the findings the tag really covers.
+    if (!allowTags.has("secret") && !allowTags.has("all")) {
+      block(
+        filePath,
+        [
+          "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
+        ],
+        buildAllowHints(`please read ${filePath}`, [], true),
+      );
+    }
   }
 
   // The name guard above runs first and on the name alone, so `cat .env.missing`
   // is still blocked. Everything past here opens the file.
   if (!isRegularFile(filePath)) return;
+  if (scanned.has(filePath)) return;
+  scanned.add(filePath);
+  if (bytesScanned >= MAX_TOTAL_SCAN_BYTES) return;
 
   let content: string;
   try {
@@ -333,6 +373,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       fs.closeSync(fd);
     }
     // Binary files: scan only the text prefix before the first NUL byte
+    bytesScanned += raw.length;
     const nulIndex = raw.indexOf(0);
     content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(
       "utf8",
@@ -373,6 +414,10 @@ process.stdin.on("end", () => {
   }
 
   const tool = data.tool_name ?? "";
+  // Before anything resolves a path: a relative path in a command is relative to
+  // where Claude Code will run it, not to where this hook was started.
+  if (data.cwd) baseDirectory = data.cwd;
+
   const input = data.tool_input ?? {};
 
   const allowTags = data.transcript_path
@@ -386,6 +431,16 @@ process.stdin.on("end", () => {
 
   if (tool === "Bash") {
     const command = input.command ?? "";
+    // `cd build && cat secrets` runs the read somewhere else, and the payload's
+    // cwd is where the command starts rather than where it ends up. The last
+    // `cd` wins, which is what the shell does; a `cd` whose argument is not a
+    // literal path leaves the base alone rather than guessing.
+    for (const segment of tokenizeCommand(command)) {
+      const [head, target] = segment;
+      if (head?.value !== "cd" || head.redirect) continue;
+      if (target === undefined || target.redirect) continue;
+      baseDirectory = path.resolve(baseDirectory, target.value);
+    }
     const refs = extractCommandRefs(command);
 
     // A bare `env` or `printenv` prints everything, so every variable is in play.

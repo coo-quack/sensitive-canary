@@ -25,6 +25,7 @@ import {
   extractSubstitutions,
   isNonCommandToken,
   MAX_QUOTED_LITERAL_LENGTH,
+  SHELL_KEYWORD_TOKENS,
   type ShellToken,
   stripHeredocBodies,
   tokenizeCommand,
@@ -232,6 +233,38 @@ describe("isNonCommandToken", () => {
       expect(isNonCommandToken(word(value))).toBe(false);
     },
   );
+});
+
+// A keyword cannot name a command, and a keyword missing from the set becomes
+// one: dropping `else` made `if x; then :; else cat secrets; fi` classify `else`
+// as the command and collect nothing. Ten of the seventeen entries had no case
+// and the set had no equality.
+describe("shell keywords", () => {
+  it.each([...SHELL_KEYWORD_TOKENS])("%s cannot name a command", (value) => {
+    expect(isNonCommandToken({ value, redirect: false })).toBe(true);
+  });
+
+  it("are exactly these", () => {
+    expect([...SHELL_KEYWORD_TOKENS].sort()).toEqual([
+      "!",
+      "case",
+      "do",
+      "done",
+      "elif",
+      "else",
+      "esac",
+      "fi",
+      "for",
+      "if",
+      "in",
+      "select",
+      "then",
+      "until",
+      "while",
+      "{",
+      "}",
+    ]);
+  });
 });
 
 describe("extractQuotedLiterals", () => {

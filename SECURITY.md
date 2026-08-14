@@ -35,10 +35,11 @@ sensitive-canary is a best-effort guard, not a guaranteed security boundary:
 - **Pattern coverage** — Only secrets matching defined rules are detected. Unknown or novel credential formats may not be caught.
 - **Entropy filtering** — Generic rules use Shannon entropy thresholds to reduce false positives. Low-entropy values that happen to be real secrets may pass through.
 - **Allow tags** — Any block can be bypassed by the user with `[allow-secret]`, `[allow-pii]`, or `[allow-all]`. This is intentional — the tool assists, not enforces.
-- **Hook execution** — If the Node.js process fails to start (e.g., wrong Node version), the hook exits 0 (pass) to avoid blocking Claude entirely.
+- **Hook execution** — If the Node.js process fails to start, the hook does not block the call. It does not exit 0 to do so: node exits with its own status (9 for an unknown flag), and Claude Code treats anything other than 2 as "do not block". A hook killed by the PreToolUse timeout is the same case, which is why the scan bounds what it reads and what its patterns can cost.
 - **Parse errors** — If the hook input cannot be parsed (malformed JSON from Claude Code), the hook exits 0 (pass) as a fail-open fallback.
 - **Binary files** — Binary files are detected by the presence of a NUL byte. Only the text portion before the first NUL is scanned; content after the NUL is not checked.
-- **Scope** — Only `Read` and `Bash` tool calls are intercepted. Other tool types are not scanned.
+- **Scope** — The default matcher is `Read|Bash|Grep|mcp__.*`, so `Read`, `Bash`, `Grep` and every MCP tool are intercepted. A tool outside the matcher is not scanned at all, and a tool inside it is scanned for the input fields that name a file — see Known Limitations in the README for what that does not reach.
+- **Tool results are not scanned** — there is no `PostToolUse` hook. What a tool returns, having been allowed, is not inspected.
 
 ---
 

@@ -271,6 +271,24 @@ describe("the tools exempt by name", () => {
   });
 });
 
+// The shape rule is "contains a `/`", not "starts with one". Every fixture path
+// in the suite is absolute, so narrowing it to `startsWith` went unnoticed — and
+// an MCP tool passing `{"target":"config/prod.env"}` would stop being scanned.
+describe("a path found by its shape", () => {
+  it.each([
+    "/abs/config/prod.env",
+    "config/prod.env",
+    "./config/prod.env",
+    "../config/prod.env",
+  ])("%s is collected under an unlisted field name", (value) => {
+    expect(collectPathFields({ target: value })).toContain(value);
+  });
+
+  it("a value with no separator is not", () => {
+    expect(collectPathFields({ target: "prod.env" })).toEqual([]);
+  });
+});
+
 // An array inside an array. The element is neither a string nor a plain object,
 // so it fell between the two branches and the path in it was never looked at.
 describe("paths nested inside arrays", () => {
