@@ -138,6 +138,14 @@ This matters more than a slow scan. A hook that does not return is killed by Cla
 
 A rule that needs an unbounded repeat should say why in its `description`, and should come with a case in that file.
 
+What the bounds cost, stated rather than implied:
+
+- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_%+-]` characters in an unbroken run before the `@`. A dot restarts the word boundary, so a long address with dots in it is still found; 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
+- **`env-assignment`**: a name with 65 or more capitals in a run on either side of the keyword — `AAA…SECRET=` and `SECRET…AAA=` alike. `_` is a word character, so `A×65_SECRET=` is lost too, since the boundary does not restart at the underscore.
+- **`connection-string`**: a user or a password longer than 256 characters.
+
+None of these is a spelling anyone writes. All of them are a way to write one this tool will not see, which is the honest way to hold both facts.
+
 ### National ID Validation
 
 National ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE) are matched by pattern **and** validated against their official checksum algorithm. A digit sequence that looks right but fails the checksum is not flagged. The algorithms follow each issuing authority's published spec:
