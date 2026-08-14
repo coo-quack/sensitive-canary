@@ -1,13 +1,28 @@
 name: CI
 
-# No `branches` filter: it matches the *base* branch, so a stacked PR whose base
-# is another feature branch got no CI at all — exactly the changes that most want
-# checking, since nobody has seen them yet.
+# `pull_request` carries no `branches` filter: there it matches the *base*
+# branch, so a stacked PR whose base is another feature branch got no CI at all —
+# exactly the changes that most want checking, since nobody has seen them yet.
+#
+# `push` is filtered, and its filter is a different one: it matches the branch
+# pushed to. Feature branches are covered by the trigger above, so naming them
+# here would only run all seven jobs a second time for every push. What the
+# trigger above does not cover is the commit that merging makes: it exists on no
+# PR, and `06a5223` reached `develop` having never been built. Two branches green
+# apart can still be red together.
+#
+# The same shape as `codeql.yml`, and for the same reason.
 on:
   pull_request:
+  push:
+    branches: [main, develop]
 
 permissions: {}
 
+# A push run and a PR run never cancel each other: one groups by ref, the other
+# by number. Two merges in quick succession do, and the survivor builds the tree
+# the cancelled one was working towards, so the tip of `develop` stays covered.
+# The merge commit skipped over does not, and nothing branches from it.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

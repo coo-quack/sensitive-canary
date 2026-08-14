@@ -100,6 +100,9 @@
 - Add a `versions` job that fails when `package.json` and
   `.claude-plugin/plugin.json` declare different versions, or when either
   declares nothing that looks like one
+- Run CI on pushes to `main` and `develop`, not only on pull requests. The
+  commit a merge makes belongs to no PR, so nothing built it: two branches that
+  are green apart can still be red together
 
 ---
 
