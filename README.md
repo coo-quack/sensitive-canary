@@ -505,6 +505,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
 - **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
 - **`.env.*` is blocked by name** — the filename guard covers every `.env.*`, so a template like `.env.example` is blocked as well, now through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` for those.
+- **Anything that is not a regular file** — a FIFO, a process substitution (`/dev/fd/63`) and `/dev/stdin` are not read, so `cat` of one is not scanned. Reading them can never reach the end of the file: `cat /dev/zero` held the hook open until Claude Code's PreToolUse timeout killed it, and a killed hook does not block the call. Not scanning them is the lesser of the two, since a hang lets the call through as well.
 - **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
 - **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.
 - **Programs that read files themselves** — `python script.py` is not scanned, because running a script does not print its source; whatever the script opens at run time is beyond the hook's reach.

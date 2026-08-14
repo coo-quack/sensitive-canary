@@ -95,8 +95,12 @@
   `/dev/zero` never reaches the end of the file, so the hook did not return and
   Claude Code's PreToolUse timeout killed it — and a killed hook does not block
   the call, which made the hang a way through. The tool-input side already
-  stat'd first; the Bash side now does too. `.env` and `.env.*` are still
-  blocked on the name alone, before anything is opened
+  stat'd first; the Bash side now does too. On the paths that name a file
+  outright — `Read` and a Bash command — `.env` and `.env.*` are still blocked
+  on the name alone, before anything is opened. A tool input naming no existing
+  file is left alone as before, since its "path" may be a URL route or an object
+  key. What is no longer read is a FIFO, a process substitution or `/dev/stdin`,
+  which is now listed under Known Limitations
 - Read `--` as the end of option parsing. `grep -- -aws secrets` searches for
   `-aws` in `secrets`, but `-aws` was taken for a flag, so nothing marked the
   pattern as supplied and `secrets` was consumed in its place rather than
@@ -104,7 +108,11 @@
   is the pattern and the command reads stdin
 - Scan a variable named inside another expansion's suffix. `${A:-$TOKEN}` prints
   `$TOKEN` whenever `A` is unset, but each expansion was matched whole, so the
-  skip to the closing brace swallowed the suffix and the name in it
+  skip to the closing brace swallowed the suffix and the name in it. Every `$` a
+  name follows now counts, which also takes in an unclosed `${TOKEN`: searching
+  a checkout for template references with `grep -rn '${TOKEN' .` is blocked when
+  that variable holds a secret. A false block, and the same direction the hook
+  already errs in for `echo '$TOKEN'`
 - `.claude-plugin/plugin.json` declared `0.5.1` while `package.json` declared
   `0.7.0`: the release checklist asks for both, and the bump was missed for
   0.6.0 and 0.7.0. The plugin manifest now matches the released version
