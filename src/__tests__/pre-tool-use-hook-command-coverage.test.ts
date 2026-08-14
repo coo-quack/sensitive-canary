@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   AWS_KEY,
@@ -259,6 +260,31 @@ describe("pre-tool-use-hook — command classification", () => {
       expect(result.blocked).toBe(true);
     });
 
+    // `--` ends option parsing, so what follows is the pattern and the file
+    // after it is a file. Read as a flag, `-aws` marked nothing as supplying the
+    // pattern, and the file was consumed in its place — the same hole the
+    // attached spelling above had, reached a different way.
+    it.each([
+      ["grep -- -aws", "dashdash_grep.txt"],
+      ["grep -- -e", "dashdash_grep_e.txt"],
+      ["sed -- s/a/b/", "dashdash_sed.txt"],
+    ])("%s should block the file after the pattern", (prefix, fixture) => {
+      const file = writeFixture(fixture, `key=${AWS_KEY}`);
+      const result = runBashHook(`${prefix} ${file}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // Without the `--`, the same tokens mean something else: `-aws` is a bundle
+    // of flags, the file is the pattern, and grep reads stdin. Nothing is read,
+    // so nothing is scanned — the pair is what says the `--` is being read
+    // rather than every `-`-shaped token being waved through.
+    it("the same command without -- reads stdin, not the file", () => {
+      const file = writeFixture("no_dashdash.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(`grep -aws ${file}`);
+      expect(result.exitCode).toBe(0);
+    });
+
     // The separate-value spelling still consumes the next token, so a pattern
     // that happens to name a secret-bearing file is not scanned as an operand.
     it("grep -e with a separate value does not scan that value", () => {
@@ -391,6 +417,70 @@ describe("pre-tool-use-hook — command classification", () => {
         replaceEnv: true,
       });
       expect(result.exitCode).toBe(0);
+    });
+
+    // A name inside another expansion's suffix is a reference like any other:
+    // `${A:-$SECRET}` prints the secret whenever `A` is unset. Matching each
+    // expansion whole meant the suffix was skipped over to reach the closing
+    // brace, and the name in it went unread.
+    it.each([
+      "echo ${A:-$SECRET}",
+      'echo ${A:-"$SECRET"}',
+      "echo ${A:-${B:-$SECRET}}",
+      "echo ${A:+$SECRET}",
+      "echo ${A#$SECRET}",
+    ])("%s should block on the name inside the expansion", (command) => {
+      const pathVal = process.env["PATH"] ?? "";
+      const result = runBashHook(command, {
+        env: { PATH: pathVal, SECRET: TOKEN_VALUE },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The outer name is still read, so an expansion naming a clean variable
+    // around a secret-free suffix stays allowed.
+    it("an expansion naming no secret-bearing variable is allowed", () => {
+      const pathVal = process.env["PATH"] ?? "";
+      const result = runBashHook("echo ${A:-${B:-fallback}}", {
+        env: { PATH: pathVal, SECRET: TOKEN_VALUE },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // Opening a path that is not a regular file can block forever: reading
+  // `/dev/zero` never reaches EOF. The hook then hung until Claude Code's
+  // PreToolUse timeout killed it, and a killed hook does not block the call —
+  // so the hang was a fail-open. The tool-input side has always stat'd first;
+  // the Bash side did not.
+  describe("targets that are not regular files", () => {
+    it("a character device is not read", () => {
+      const result = runBashHook("cat /dev/zero");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a fifo is not read", () => {
+      const fifo = writeFixture("fifo_placeholder.txt", "");
+      execFileSync("mkfifo", [`${fifo}.pipe`]);
+      const result = runBashHook(`cat ${fifo}.pipe`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a directory is not read", () => {
+      const result = runBashHook(`cat ${writeFixture.path()}`);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The name guard runs before the file is opened, so it still applies to a
+    // path that names nothing. That is what keeps `cat .env.production` blocked
+    // on a machine where the file is absent.
+    it("a .env name is still blocked when no such file exists", () => {
+      const result = runBashHook(`cat ${writeFixture.path(".env.missing")}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
     });
   });
 

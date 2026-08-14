@@ -210,18 +210,30 @@ function block(
 
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
+// Whether a path names something whose bytes can be read to the end.
+//
+// A character device or a FIFO can be opened and read from forever: `cat
+// /dev/zero` never returns, and neither did the hook, until Claude Code's
+// PreToolUse timeout killed it. A killed hook does not block the call, so a hang
+// is a fail-open — the one failure mode worth spending a `stat` on every path to
+// avoid.
+function isRegularFile(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
 // Scan a candidate only when it names an existing regular file. Tools whose
-// "path" means something else (a URL route, an object key) are left alone.
+// "path" means something else (a URL route, an object key) are left alone —
+// including from the `.env` name guard, which a tool input has no business
+// tripping over a value that names no file at all.
 function scanIfRegularFile(
   candidate: string | undefined,
   allowTags: Set<string>,
 ): void {
-  if (!candidate) return;
-  try {
-    if (!fs.statSync(candidate).isFile()) return;
-  } catch {
-    return;
-  }
+  if (!candidate || !isRegularFile(candidate)) return;
   scanFile(candidate, allowTags);
 }
 
@@ -236,6 +248,10 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       buildAllowHints(`please read ${filePath}`, [], true),
     );
   }
+
+  // The name guard above runs first and on the name alone, so `cat .env.missing`
+  // is still blocked. Everything past here opens the file.
+  if (!isRegularFile(filePath)) return;
 
   let content: string;
   try {
