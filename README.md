@@ -28,8 +28,8 @@ Claude Code is a powerful development tool, but file reads and command execution
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
 - **73 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
-- **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6, and private IPv4 (which needs a *person* nearby — `client`, `user`, `visitor` — because `ping 10.0.0.1` names a machine). US and Japanese phone numbers and Japanese postal codes are matched without one, since their shapes are specific enough
-- **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work
+- **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. A private IPv4 is matched without one, but *excluded* when a command that takes a host is beside it — `ping 10.0.0.1` and `kubectl port-forward --address 10.0.0.1` name machines. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough
+- **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`, `user@host:path`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work. A template is exempt only when its contents can be read whole. One holding a NUL byte, running past the per-file cut, reached after the call's budget or deadline, or that is not a regular file at all is blocked on its name, since the contents are what the exemption relies on. A template name that exists on no disk is not blocked — there is nothing to read and nothing to leak
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
 
@@ -87,7 +87,7 @@ Then add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/user-prompt-submit-hook.ts"
+            "command": "node $(npm root -g)/@coo-quack/sensitive-canary/dist/user-prompt-submit-hook.js"
           }
         ]
       }
@@ -98,7 +98,7 @@ Then add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx tsx $(npm root -g)/@coo-quack/sensitive-canary/src/pre-tool-use-hook.ts"
+            "command": "node $(npm root -g)/@coo-quack/sensitive-canary/dist/pre-tool-use-hook.js"
           }
         ]
       }
@@ -107,7 +107,7 @@ Then add to `~/.claude/settings.json`:
 }
 ```
 
-> **Note:** Node.js does not support `--experimental-strip-types` for files inside `node_modules`, so `npx tsx` is used instead.
+> **Note:** These point at the compiled JavaScript the package ships. Node refuses to strip types from a `.ts` file inside `node_modules`, and a hook that fails to start exits non-zero without blocking — so an installation wired to `src/` looks installed and checks nothing. The plugin install uses the `.ts` sources, which sit outside `node_modules` and work.
 
 </details>
 
@@ -524,6 +524,8 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **A shell construct that names the file only at run time** — `for f in secrets; do cat "$f"; done` and `find . -name secrets -exec cat {} +` both name the file in the command line, but the hook classifies the command it can see, and in these the reading command is `cat` reached through a loop or through `find`'s own argument list.
 - **At most 64 MiB is read across one tool call** — the per-file cut bounds one file; this bounds the call. A glob naming three hundred large files took half a minute, which is long enough for the PreToolUse timeout to kill the hook, and a killed hook does not block. Files past the budget are not scanned, so naming enough large files before the one that matters is a way past the scan.
 - **A relative path is resolved against the directory Claude Code reports** — and against a literal `cd` at the start of the same command. A `cd` later in the line, one inside a subshell, and one whose argument is a variable, a glob or `-` are all left alone, because where they land cannot be worked out here. A directory changed some other way is the same case.
+- **`**` reaches one level, not every level** — a pattern crossing directories is expanded as a single `*`, because expanding it properly walked a whole tree until the hook was killed. `cat **/secrets` sees `*/secrets`.
+- **One tool call stops reading after five seconds** — whatever it has read by then is what was scanned. A byte budget bounds the reading; this bounds the walking as well, and both are ways past the scan for anyone willing to name enough files first.
 - **A glob is expanded by the hook, not by the shell** — `cat *.env` is expanded here to decide what to scan, a moment before the shell expands it and against the hook's own working directory. A file created in between is missed, and at most 256 matches of one pattern are scanned.
 - **Paths held in shell variables** — a path is only scanned when it appears literally in the command. `f=.env; cat "$f"` resolves at run time, after the hook has already decided.
 - **Paths arriving over a pipe** — `find . -name '.env' | xargs cat` names no file the hook can see.

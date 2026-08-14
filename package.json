@@ -10,6 +10,8 @@
   },
   "files": [
     "src/",
+    "!src/**/__tests__/**",
+    "dist/",
     ".claude-plugin/",
     "hooks/",
     "README.md",
@@ -30,7 +32,10 @@
     "ci": "tsc --noEmit && biome check src vitest.config.ts && vitest run",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('src/lib/default-config.json','dist/lib/default-config.json')\"",
+    "prepack": "pnpm run build",
+    "prepare": "pnpm run build"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.8",

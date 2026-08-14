@@ -48,6 +48,40 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run ci
+      # The gates the pull-request build runs, run again here. `release.yml`
+      # is reached by a push to `main` and is not chained to that build, so
+      # without these a red branch still publishes — and the manifest went
+      # out stale twice for exactly this reason.
+      - run: pnpm audit --audit-level high
+      - run: pnpm run build
+      - name: package.json and plugin.json declare the same version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
+          for value in "$pkg" "$plugin"; do
+            if ! printf '%s' "$value" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "::error::a manifest declares no usable version — package.json is '$pkg', .claude-plugin/plugin.json is '$plugin'."
+              exit 1
+            fi
+          done
+          if [ "$pkg" != "$plugin" ]; then
+            echo "::error::version mismatch — package.json is $pkg, .claude-plugin/plugin.json is $plugin."
+            exit 1
+          fi
+      - name: the published hooks run, and still block
+        run: |
+          # Exit 0 alone would pass for a hook that starts and checks nothing,
+          # which is the failure this exists to catch. So both directions.
+          key="AKIA""IOSFODNN7EXAMPLE"
+          printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
+            | node dist/pre-tool-use-hook.js
+          test $? -eq 0 || { echo "::error::the published PreToolUse hook did not allow a clean command"; exit 1; }
+          printf '{"prompt":"key=%s"}' "$key" | node dist/user-prompt-submit-hook.js
+          test $? -eq 2 || { echo "::error::the published UserPromptSubmit hook did not block a secret"; exit 1; }
+          printf 'key=%s\n' "$key" > /tmp/smoke-secret.txt
+          printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-secret.txt"}}' \
+            | node dist/pre-tool-use-hook.js
+          test $? -eq 2 || { echo "::error::the published PreToolUse hook did not block a secret"; exit 1; }
 
       - name: Publish to npm
         run: pnpm publish --provenance --access public

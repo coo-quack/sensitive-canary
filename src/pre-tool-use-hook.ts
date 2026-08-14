@@ -78,12 +78,28 @@ const COMMAND_FIELD_NAMES = new Set([
   "commandline",
 ]);
 
+// How far into a nested input a command field is looked for. The same depth the
+// path fields use, and for the same reason: a tool wraps its arguments.
+const MAX_COMMAND_FIELD_DEPTH = 4;
+
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
 // Mutable for one run of the process: what has been read, and what has already
 // been looked at. Overlapping globs named the same file five times over.
 const scanned = new Set<string>();
 let bytesScanned = 0;
+
+// When this invocation has to stop reading files, whatever it has read.
+//
+// A byte budget bounds the reading and not the walking, and a pattern reaching
+// one level under a home directory took ten seconds — close enough to the
+// PreToolUse timeout to matter, and a hook killed by that timeout does not
+// block. This is checked between files, so it bounds the reading of many files
+// where a byte count would not. It does not bound a single `globSync` call,
+// which cannot be interrupted: a pattern several directories deep still costs
+// what the walk costs. Files after the deadline are not scanned, and a `.env`
+// name reached after it falls back on the name.
+const DEADLINE = Date.now() + 5_000;
 
 // The directory a relative path is relative to. Set from the payload before any
 // scanning; `process.cwd()` is where the hook was started, which is not
@@ -160,6 +176,11 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
 // .env and .env.* (e.g. .env.local, .env.production) match the env filename pattern.
 // The block only applies while the "secret" category is enabled (see shouldBlockEnvFile).
 // Files that merely end in .env (e.g. production.env) are handled by content scanning.
+// Said in two places — the name guard and the partial-read guard — and a
+// difference between them would read as two different rules.
+const ENV_BLOCK_REASON =
+  "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.";
+
 // Suffixes that say a file is the template rather than the filled-in thing.
 // These are committed on purpose, carry placeholders, and a tool that refuses to
 // read `.env.example` is refusing the file people write in order to explain the
@@ -172,6 +193,13 @@ const ENV_TEMPLATE_SUFFIXES = [
   ".dist",
   ".defaults",
 ];
+
+// Any `.env` name, template or not.
+function isEnvName(filePath: string): boolean {
+  if (!filePath) return false;
+  const base = path.basename(filePath);
+  return base === ".env" || base.startsWith(".env.");
+}
 
 function isBlockedEnvFile(filePath: string): boolean {
   if (!filePath) return false;
@@ -301,14 +329,17 @@ function expandCandidate(candidate: string): string[] {
     expandTilde(fromFileUrl(candidate)),
   );
   if (!GLOB_METACHARACTERS.test(literal)) return [literal];
-  // `**` is what walked a whole tree: `cat ~/**/*` ran until the hook was killed,
-  // which is the failure this file spends a `stat` per path to avoid. A single
-  // `*` in a directory component costs one listing per matching directory, which
-  // is what `cat services/*/config.yml` in a monorepo needs.
-  if (literal.includes("**")) return [literal];
+  // `**` matches across directories, and expanding it walked a whole tree:
+  // `cat ~/**/*` ran until the hook was killed, which is the failure this file
+  // spends a `stat` per path to avoid. Refusing it outright was worse — the
+  // shell still expands it and reads the files, so `cat **` was scanned not at
+  // all. Collapsed to one `*`, which costs a listing per matching directory the
+  // way every other pattern here does, and reaches one level rather than every
+  // level. Written up as a limitation.
+  const pattern = literal.replace(/\*{2,}/g, "*");
   let matches: string[] = [];
   try {
-    matches = fs.globSync(literal).slice(0, MAX_GLOB_MATCHES);
+    matches = fs.globSync(pattern).slice(0, MAX_GLOB_MATCHES);
   } catch {
     matches = [];
   }
@@ -343,6 +374,38 @@ function expandTilde(candidate: string): string {
   return path.join(os.homedir(), candidate.slice(2));
 }
 
+// Every command an input carries, whatever shape it arrives in.
+//
+// Reading only top-level strings left two shapes through, and both reach the
+// `.env` name guard by a name with no slash in it, which the path rules do not
+// collect: an argv array (`{"command":["cat",".env"]}`) and a command nested
+// under another key (`{"args":{"command":"cat .env"}}`). Depth-limited the way
+// path fields are, for the same reason.
+function collectCommandFields(
+  input: Record<string, unknown>,
+  depth = 0,
+): string[] {
+  if (depth > MAX_COMMAND_FIELD_DEPTH) return [];
+  const found: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    const named = COMMAND_FIELD_NAMES.has(
+      key.toLowerCase().replace(/[-_]/g, ""),
+    );
+    if (named && typeof value === "string") {
+      found.push(value);
+    } else if (named && Array.isArray(value)) {
+      // An argv array is one command line with the spaces taken out.
+      const argv = value.filter((v): v is string => typeof v === "string");
+      if (argv.length > 0) found.push(argv.join(" "));
+    } else if (value !== null && typeof value === "object") {
+      found.push(
+        ...collectCommandFields(value as Record<string, unknown>, depth + 1),
+      );
+    }
+  }
+  return found;
+}
+
 // Whether a path names something whose bytes can be read to the end.
 //
 // A character device or a FIFO can be opened and read from forever: `cat
@@ -373,6 +436,25 @@ function scanIfRegularFile(
   }
 }
 
+// A `.env` file that will not be read is judged on its name, template or not.
+function blockUnreadEnvFile(filePath: string, allowTags: Set<string>): void {
+  if (!isEnvName(filePath) || !ENABLED_CATEGORIES.has("secret")) return;
+  // A path that names nothing has nothing to leak. `cat .env.example` in a
+  // checkout without one is an ordinary command, and the plain `.env` guard
+  // above already decides the names that are blocked whether they exist or not.
+  if (!fs.existsSync(filePath)) return;
+  if (allowTags.has("secret") || allowTags.has("all")) return;
+  block(
+    filePath,
+    [
+      ENV_BLOCK_REASON,
+      "",
+      "Its contents were not read — it is not a regular file, or the scan for this call had already stopped — so the name is what decides.",
+    ],
+    buildAllowHints(`please read ${filePath}`, [], true),
+  );
+}
+
 function scanFile(filePath: string, allowTags: Set<string>): void {
   if (shouldBlockEnvFile(filePath)) {
     // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
@@ -388,9 +470,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     if (!allowTags.has("secret") && !allowTags.has("all")) {
       block(
         filePath,
-        [
-          "🚫 Blocked: .env and .env.* files contain secrets and must not be read into the conversation.",
-        ],
+        [ENV_BLOCK_REASON],
         buildAllowHints(`please read ${filePath}`, [], true),
       );
     }
@@ -398,12 +478,29 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   // The name guard above runs first and on the name alone, so `cat .env.missing`
   // is still blocked. Everything past here opens the file.
-  if (!isRegularFile(filePath)) return;
+  //
+  // Each of these is a way of not reading it: something that is not a regular
+  // file, a budget already spent, a deadline already passed. For a `.env` name
+  // the contents were what the template exemption relied on, so when they are
+  // not going to be read the name decides — otherwise naming enough large files
+  // first was a way past the guard, and so was a FIFO called `.env.x.example`.
+  if (!isRegularFile(filePath)) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
   if (scanned.has(filePath)) return;
   scanned.add(filePath);
-  if (bytesScanned >= MAX_TOTAL_SCAN_BYTES) return;
+  if (bytesScanned >= MAX_TOTAL_SCAN_BYTES) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
+  if (Date.now() > DEADLINE) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
 
   let content: string;
+  let readWasPartial = false;
   try {
     // The buffer is the cap, not the reported size. Sizing it from `stat` made
     // the read believe the file: procfs and sysfs entries are regular files that
@@ -426,13 +523,41 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     // Binary files: scan only the text prefix before the first NUL byte
     bytesScanned += raw.length;
     const nulIndex = raw.indexOf(0);
+    // Whether the file was read to its end. Recorded here and acted on below,
+    // outside the catch: `block` exits the process, and anything it threw on the
+    // way — a closed stderr, say — would be swallowed by the `catch` and turn a
+    // block into a pass.
+    readWasPartial = nulIndex !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
     content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(
       "utf8",
     );
-    if (content.length === 0) return;
   } catch {
     return;
   }
+
+  // Exempting a template name from the guard assumed the contents would be read
+  // instead. A NUL byte and the per-file cut both stop that, and a file named
+  // `.env.something.example` carrying either was passing on its name after all.
+  // When the read is partial, the name is what is left to decide on.
+  if (
+    readWasPartial &&
+    isEnvName(filePath) &&
+    ENABLED_CATEGORIES.has("secret") &&
+    !allowTags.has("secret") &&
+    !allowTags.has("all")
+  ) {
+    block(
+      filePath,
+      [
+        ENV_BLOCK_REASON,
+        "",
+        "This one is named as a template, which is normally read. It could not be read whole — it holds a NUL byte or runs past the scan limit — so the name is what decides.",
+      ],
+      buildAllowHints(`please read ${filePath}`, [], true),
+    );
+  }
+
+  if (content.length === 0) return;
 
   const findings = applyAllowTags(
     dedupeFindings(scan(content, ENABLED_CATEGORIES)),
@@ -490,7 +615,13 @@ process.stdin.on("end", () => {
     // A tool input is whatever the tool declares, so a `command` that is not a
     // string is a shape this really receives. It used to throw, and an exception
     // exits 1, which does not block: the call went through unscanned.
-    const command = typeof input.command === "string" ? input.command : "";
+    const command = Array.isArray(input.command)
+      ? input.command
+          .filter((v): v is string => typeof v === "string")
+          .join(" ")
+      : typeof input.command === "string"
+        ? input.command
+        : "";
     // `cd build && cat secrets` runs the read somewhere else, and the payload's
     // cwd is where the command starts rather than where it ends up.
     //
@@ -508,7 +639,14 @@ process.stdin.on("end", () => {
         // `cd -`, `cd b*ld` and a `cd` into a variable name a directory this
         // cannot work out, and resolving them anyway pointed the scan at some
         // other directory entirely.
-        if (target.value === "-" || GLOB_METACHARACTERS.test(target.value)) {
+        // `cd -`, `cd b*ld` and `cd $VAR` name a directory this cannot work
+        // out. Resolving them anyway pointed the scan at a directory that does
+        // not exist, and every relative path after it went unscanned.
+        if (
+          target.value === "-" ||
+          target.value.includes("$") ||
+          GLOB_METACHARACTERS.test(target.value)
+        ) {
           break;
         }
         baseDirectory = path.resolve(baseDirectory, expandTilde(target.value));
@@ -573,11 +711,7 @@ process.stdin.on("end", () => {
     // so `mcp__desktop-commander__start_process` with `{"command":"cat .env"}`
     // was looked at as a path, found not to be a file, and let through — with
     // the default matcher sending every `mcp__*` tool here.
-    for (const [key, value] of Object.entries(input)) {
-      if (typeof value !== "string") continue;
-      if (!COMMAND_FIELD_NAMES.has(key.toLowerCase().replace(/[-_]/g, ""))) {
-        continue;
-      }
+    for (const value of collectCommandFields(input)) {
       const refs = extractCommandRefs(value);
       // Code is not a command line: `print(open("secrets").read())` has no
       // command in it this can classify, and the path is a quoted literal — the

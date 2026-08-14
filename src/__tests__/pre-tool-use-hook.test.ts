@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import {
   runBashHook,
   runHook,
   runHookWithRawInput,
+  runToolHook,
   useFixtureDir,
 } from "./hook-harness.ts";
 
@@ -429,6 +431,130 @@ describe("pre-tool-use-hook — input shapes the runtime can send", () => {
     ['{"tool_name":"Bash","tool_input":null}', "a null tool_input"],
   ])("%s (%s) does not crash", (payload) => {
     expect(runHookWithRawInput(payload).exitCode).toBe(0);
+  });
+});
+
+// Exempting a template name assumed the contents would be read instead. Two
+// things stop them being read whole, and a file carrying either was passing on
+// its name after all.
+describe("pre-tool-use-hook — .env templates", () => {
+  const writeFixture = useFixtureDir("env-templates");
+
+  it("a template holding placeholders is readable", () => {
+    const p = writeFixture(".env.example", "TOKEN=changeme\n");
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
+  it("a template holding a real key is not", () => {
+    const p = writeFixture(".env.example", `AWS=${AWS_KEY}\n`);
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a template whose contents cannot be read past a NUL is not", () => {
+    const p = writeFixture(".env.nul.example", `\0AWS=${AWS_KEY}\n`);
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a template larger than the per-file cut is not", () => {
+    const p = writeFixture(
+      ".env.big.example",
+      `${"x".repeat(1_100_000)}\nAWS=${AWS_KEY}\n`,
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  // Every way of not reading a template falls back on its name. Filling the byte
+  // budget first was a way past the guard, and so was a FIFO with a template
+  // name — the contents are what the exemption relies on.
+  it("a template reached after the byte budget is blocked", () => {
+    const dir = writeFixture.path();
+    const pad = "the quick brown fox ".repeat(55_000);
+    for (let i = 0; i < 70; i++) writeFixture(`pad${i}.log`, pad);
+    writeFixture(".env.late.example", "TOKEN=changeme\n");
+    expect(
+      runBashHook(`cat ${dir}/pad*.log ${dir}/.env.late.example`).exitCode,
+    ).toBe(2);
+  });
+
+  it("a fifo with a template name is blocked", () => {
+    const fifo = writeFixture.path(".env.fifo.example");
+    execFileSync("mkfifo", [fifo]);
+    expect(runHook("Read", fifo).exitCode).toBe(2);
+  });
+
+  // `endsWith`, not `includes`: `.env.distributed` ends in neither template
+  // suffix and is a real environment file.
+  it.each([
+    ".env",
+    ".env.production",
+    ".env.local",
+    ".env.distributed",
+    ".env.exampleish",
+  ])("%s is still blocked on its name", (name) => {
+    const p = writeFixture(name, "TOKEN=changeme\n");
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+});
+
+// A relative path is relative to where the tool runs, which the payload carries.
+// Nothing asserted that, so deleting the line that reads it left the suite green
+// while every relative path went unscanned.
+describe("pre-tool-use-hook — the directory a relative path is relative to", () => {
+  const writeFixture = useFixtureDir("cwd");
+
+  it("a relative path in a command resolves against the payload's cwd", () => {
+    const dir = writeFixture.path();
+    writeFixture("creds.txt", `key=${AWS_KEY}`);
+    const result = runToolHook(
+      "Bash",
+      { command: "cat creds.txt" },
+      { cwd: dir },
+    );
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("a relative path in a Read resolves against it too", () => {
+    const dir = writeFixture.path();
+    writeFixture("read-me.txt", `key=${AWS_KEY}`);
+    const result = runToolHook(
+      "Read",
+      { file_path: "read-me.txt" },
+      { cwd: dir },
+    );
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("a leading cd moves it", () => {
+    const dir = writeFixture.path();
+    writeFixture("cd-target.txt", `key=${AWS_KEY}`);
+    expect(runBashHook(`cd ${dir} && cat cd-target.txt`).exitCode).toBe(2);
+  });
+
+  // A `cd` after the read, inside a subshell, or with an argument this cannot
+  // resolve, all leave the base where it was — pointing the scan somewhere else
+  // is how a read stops being seen.
+  it.each([
+    "cat cd-after.txt && cd /tmp",
+    "(cd /tmp && ls) && cat cd-after.txt",
+    "cd - && cat cd-after.txt",
+    "cd $SOMEWHERE && cat cd-after.txt",
+  ])("%s still scans against the payload's cwd", (command) => {
+    const dir = writeFixture.path();
+    writeFixture("cd-after.txt", `key=${AWS_KEY}`);
+    expect(runToolHook("Bash", { command }, { cwd: dir }).exitCode).toBe(2);
+  });
+
+  // Two files of the same name in different directories are two files.
+  it("the same basename in two directories is scanned twice", () => {
+    const dir = writeFixture.path();
+    const { mkdirSync, writeFileSync } = require("node:fs");
+    mkdirSync(`${dir}/a`, { recursive: true });
+    mkdirSync(`${dir}/b`, { recursive: true });
+    writeFileSync(`${dir}/a/notes.md`, "nothing here");
+    writeFileSync(`${dir}/b/notes.md`, `key=${AWS_KEY}`);
+    expect(
+      runBashHook(`cat ${dir}/a/notes.md ${dir}/b/notes.md`).exitCode,
+    ).toBe(2);
   });
 });
 

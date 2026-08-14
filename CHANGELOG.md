@@ -126,6 +126,43 @@
   recognised, so nothing marked the pattern as supplied and the file that
   followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
   (`--regexp=aws`) spellings were already handled
+- Put back what quieting the rules had taken out. A corpus of five hundred
+  generated values, run against this release and against v0.7.0, found a hundred
+  and twenty-seven inputs the old version detected and this one did not — none of
+  which the thirty-two cases chosen by hand had caught. Restored:
+  - an address near an excluded word. One word within a couple of dozen
+    characters was erasing every address near it, three at a time in a CSV. The
+    exclusion is now the three shapes that are really hostnames: a VCS user, an
+    address straight after `ssh`/`scp`/`rsync`/`sftp`, and the `host:path` form
+  - a bare private address. Requiring a label lost `192.168.1.50`,
+    `X-Forwarded-For: 10.0.0.5` and `remote_addr=…`; what says an address is a
+    machine is the command around it, so that is what excludes it now, and a
+    `host:port` pair is a service rather than a person
+  - an assignment that is not at the start of a line: `docker run -e PASSWORD=…`,
+    `cd /app && PASSWORD=…`, a single-quoted value, a value with a trailing
+    semicolon or comma, and one indented past sixteen columns. `DB_PASS` counts
+    as well as `DB_PASSWORD`
+  - a Square token after `key_` or in a query string, which a boundary counting
+    `_` and `=` as base64 had erased
+  - the Korean resident and business numbers without their separators, which is
+    how they are stored. Context keeps a timestamp out instead
+  - a postal code next to the word `max`, and a connection string whose password
+    runs past 256 characters
+- Read a command that arrives as an argv array on the `Bash` tool too, not only
+  on an MCP one. The same command was scanned or not depending on who sent it
+- Block a `.env` template whose contents cannot be read whole. The exemption
+  assumed the contents would be scanned instead, and a NUL byte or a file past
+  the per-file cut stopped that — so `.env.nul.example` and `.env.big.example`
+  passed on their names after all
+- Expand `**` as a single `*` rather than refusing it. Refusing it meant `cat **`
+  was scanned not at all, while the shell expanded it and read the files
+- Read a command field that arrives as an argv array or nested under another key.
+  Only a top-level string was read, so `{"command":["cat",".env"]}` and
+  `{"args":{"command":"cat .env"}}` went past — both by a name with no slash in
+  it, which the path rules do not collect either
+- Stop reading after five seconds. A byte budget bounds what is read and not what
+  is walked, and a pattern reaching one level under a home directory took ten
+  seconds, which is close enough to the PreToolUse timeout to matter
 - Stop blocking ordinary work. Measured over sixty-four commands from a working
   day, the hook blocked sixteen of them; it now blocks five, and four of those
   five are this repository's own README and changelog, which contain an
@@ -269,6 +306,21 @@
   that is tested
 
 ### CI
+
+- Publish compiled JavaScript. Node refuses to strip types from a `.ts` file
+  inside `node_modules`, so an npm install wired to `src/` started the hook,
+  failed with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, exited 1 — and a
+  non-zero exit that is not 2 does not block. The tool looked installed and
+  checked nothing. `dist/` now ships beside `src/`, the npm instructions point at
+  it, and no type stripper or `tsx` download is involved. The plugin install
+  keeps using the sources, which sit outside `node_modules` and work
+- Run the release path's own gates. `release.yml` is reached by a push to `main`
+  and is not chained to the pull-request build, so a red branch could publish. It
+  now runs the audit, the version-agreement check whose absence let the plugin
+  manifest ship stale twice, a build, and a smoke test that starts both published
+  hooks with plain `node`
+- Stop shipping the tests. `files` carried `src/`, which carried `__tests__`:
+  more than half the tarball, and none of it useful to anyone installing
 
 - Add a `versions` job that fails when `package.json` and
   `.claude-plugin/plugin.json` declare different versions, or when either
