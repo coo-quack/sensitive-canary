@@ -116,12 +116,19 @@
 - `.claude-plugin/plugin.json` declared `0.5.1` while `package.json` declared
   `0.7.0`: the release checklist asks for both, and the bump was missed for
   0.6.0 and 0.7.0. The plugin manifest now matches the released version
+- Also treat the rest of the digest commands as measuring a file rather than
+  printing it: `sha512sum < secrets` was scanned while `sha256sum < secrets` was
+  not, because only four of the family were listed. `sha224sum`, `sha384sum`,
+  `sha512sum`, `b2sum`, `shasum`, `md5` and `sum` join them
 
 ### CI
 
 - Add a `versions` job that fails when `package.json` and
   `.claude-plugin/plugin.json` declare different versions, or when either
   declares nothing that looks like one
+- Check `vitest.config.ts` the way `src/` is checked. It sits at the repository
+  root, and both `tsc` and `biome` were scoped to `src`, so the file that decides
+  how the tests run was neither typechecked nor linted
 - Run CI on pushes to `main` and `develop`, not only on pull requests. The
   commit a merge makes belongs to no PR, so nothing built it: two branches that
   are green apart can still be red together

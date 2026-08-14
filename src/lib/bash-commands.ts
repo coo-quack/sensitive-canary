@@ -17,7 +17,7 @@ import {
 
 // Commands that write the contents of every non-flag argument to stdout.
 // `wc` is deliberately absent: it reports counts, never the bytes themselves.
-const FILE_READ_COMMANDS = new Set([
+export const FILE_READ_COMMANDS = new Set([
   "cat",
   "head",
   "tail",
@@ -57,12 +57,25 @@ const FILE_READ_COMMANDS = new Set([
 
 // Commands that read a file but report only measurements of it. Their stdin is
 // not echoed either, so a redirection into one of them is not a read.
-const COUNT_ONLY_COMMANDS = new Set([
+// The rest of the digest family, and the BSD spellings, were missing. Naming a
+// file, that costs nothing — an unclassified command's operands are not
+// collected either. Over `<` it did: stdin is collected for any command not
+// known to print no contents, so `sha512sum < secrets` was scanned while
+// `sha256sum < secrets` was not. The wrong direction is only a false block, but
+// the two spellings disagreeing is not something to leave in a table.
+export const COUNT_ONLY_COMMANDS = new Set([
   "wc",
   "cksum",
+  "sum",
+  "md5",
   "md5sum",
+  "shasum",
   "sha1sum",
+  "sha224sum",
   "sha256sum",
+  "sha384sum",
+  "sha512sum",
+  "b2sum",
 ]);
 
 // Commands whose first non-flag argument is a pattern, expression or script,
@@ -72,7 +85,7 @@ const COUNT_ONLY_COMMANDS = new Set([
 // argument rather than print it, and the files named after it are argv, not
 // output. Their inline code (`-c`, `-e`) is still scanned via
 // INLINE_CODE_COMMANDS.
-const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
+export const PATTERN_OR_SCRIPT_FIRST_COMMANDS = new Set([
   "sed",
   "awk",
   "gawk",
@@ -129,7 +142,7 @@ function patternSupplyingFlag(token: string): "attached" | "separate" | null {
 // different things: `-o` is an output file for these three but an octal-format
 // flag taking no value for `od` and `hexdump`, so a shared list would swallow
 // the operand of `od -o secrets` and miss the read.
-const WRITE_TARGET_FLAGS: Record<string, Set<string>> = {
+export const WRITE_TARGET_FLAGS: Record<string, Set<string>> = {
   sort: new Set(["-o", "--output"]),
   shuf: new Set(["-o", "--output"]),
   iconv: new Set(["-o", "--output"]),
@@ -139,11 +152,11 @@ const WRITE_TARGET_FLAGS: Record<string, Set<string>> = {
 // `perl -pe 's/a/b/' f` and `ruby -pe '…' f` print f. Hand them a program file
 // instead and the operands are argv — `perl script.pl data.txt` prints neither —
 // so their operands count as reads only once inline code has been seen.
-const INLINE_CODE_READS_OPERANDS = new Set(["perl", "ruby"]);
+export const INLINE_CODE_READS_OPERANDS = new Set(["perl", "ruby"]);
 
 // Commands that run another command. They are stripped so the wrapped command
 // is classified instead: `sudo cat secrets` is treated as `cat secrets`.
-const WRAPPER_COMMANDS = new Set([
+export const WRAPPER_COMMANDS = new Set([
   "sudo",
   "doas",
   "command",
@@ -164,7 +177,7 @@ const WRAPPER_COMMANDS_WITH_OPERAND = new Set(["timeout", "flock"]);
 
 // Interpreters that accept inline program text, which is scanned both as a
 // nested command line and for quoted path literals.
-const INLINE_CODE_COMMANDS = new Set([
+export const INLINE_CODE_COMMANDS = new Set([
   "sh",
   "bash",
   "zsh",
@@ -180,14 +193,14 @@ const INLINE_CODE_COMMANDS = new Set([
   "php",
 ]);
 
-const POSIX_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+export const POSIX_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 
 // git subcommands that can write file contents to stdout. Blob references such
 // as `git show HEAD:.env` name history, not the working tree, and stay
 // uncovered — only paths that exist on disk are scanned. `difftool` hands off
 // to an external tool and `stash` prints no file contents, so neither is here:
 // classifying them would push tokens like the `pop` in `git stash pop` as paths.
-const GIT_READ_SUBCOMMANDS = new Set([
+export const GIT_READ_SUBCOMMANDS = new Set([
   "show",
   "diff",
   "blame",
@@ -292,7 +305,7 @@ function editsInPlace(cmd: string, operands: ShellToken[]): boolean {
 // Global git flags that carry a separate value before the subcommand
 // (`git -C repo show f`, `git -c k=v show f`). Attached forms (`--git-dir=x`)
 // are single flag tokens and need no entry here.
-const GIT_GLOBAL_FLAGS_WITH_OPERAND = new Set([
+export const GIT_GLOBAL_FLAGS_WITH_OPERAND = new Set([
   "-C",
   "-c",
   "--git-dir",
@@ -418,7 +431,7 @@ function isWrapperTarget(name: string): boolean {
 // because an incomplete table of those flags fails the other way, missing reads
 // instead of over-reporting them. If a third false positive of this shape turns
 // up, do that instead of adding a sixth name.
-const ARGUMENT_ONLY_COMMANDS = new Set([
+export const ARGUMENT_ONLY_COMMANDS = new Set([
   "echo",
   "printf",
   "true",
