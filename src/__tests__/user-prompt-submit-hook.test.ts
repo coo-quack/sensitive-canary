@@ -41,6 +41,28 @@ describe("user-prompt-submit-hook — how much of the prompt is scanned", () => 
   });
 });
 
+// A prompt that is not a string used to throw, and exit 1 does not block, so
+// `{"prompt":{"text":"<a key>"}}` went through unscanned.
+describe("user-prompt-submit-hook — a prompt of the wrong type", () => {
+  const raw = (payload: string) => {
+    const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
+      input: payload,
+      encoding: "utf8",
+    });
+    return result.status ?? -1;
+  };
+
+  it.each([
+    '{"prompt":12345}',
+    '{"prompt":{"text":"AKIAIOSFODNN7EXAMPLE"}}',
+    '{"prompt":["AKIAIOSFODNN7EXAMPLE"]}',
+    '{"prompt":true}',
+    "{}",
+  ])("%s does not crash", (payload) => {
+    expect(raw(payload)).toBe(0);
+  });
+});
+
 describe("user-prompt-submit-hook — allow (exit 0)", () => {
   it("passes a clean prompt", () => {
     const { exitCode } = runHook("hello, can you help me?");

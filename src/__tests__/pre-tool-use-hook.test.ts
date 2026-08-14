@@ -393,6 +393,42 @@ describe("pre-tool-use-hook — the documented limits", () => {
   });
 });
 
+// The reason a block gives is sent to Claude. It used to carry the first eighty
+// characters of the command, so blocking `export GITHUB_TOKEN=ghp_…` handed the
+// token to the model in the sentence explaining that it had been withheld.
+describe("pre-tool-use-hook — what the block reason contains", () => {
+  const KEY = ["ghp_", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"].join("");
+
+  it("does not repeat the command it blocked", () => {
+    const result = runBashHook(`export GITHUB_TOKEN=${KEY}`);
+    expect(result.exitCode).toBe(2);
+    expect(result.reason).not.toContain(KEY);
+    expect(result.reason).toContain("bash command");
+  });
+
+  it("still names the rule that fired", () => {
+    const result = runBashHook(`export GITHUB_TOKEN=${KEY}`);
+    expect(result.reason).toContain("github-pat");
+  });
+});
+
+// An input field of the wrong type used to throw, and an exception exits 1,
+// which does not block.
+describe("pre-tool-use-hook — input shapes the runtime can send", () => {
+  it.each([
+    ['{"tool_name":"Bash","tool_input":{"command":123}}', "a numeric command"],
+    ['{"tool_name":"Bash","tool_input":{"command":["cat","f"]}}', "an array"],
+    ['{"tool_name":"Bash","tool_input":{"command":null}}', "a null command"],
+    [
+      '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":5}',
+      "a numeric cwd",
+    ],
+    ['{"tool_name":"Bash","tool_input":null}', "a null tool_input"],
+  ])("%s (%s) does not crash", (payload) => {
+    expect(runHookWithRawInput(payload).exitCode).toBe(0);
+  });
+});
+
 // ── path shapes the shell expands ────────────────────────────────────────────
 
 // Each of these names a real file once the shell is done with it, and each was

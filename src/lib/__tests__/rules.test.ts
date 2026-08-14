@@ -1117,6 +1117,55 @@ describe("connection-string after bounding the credentials", () => {
   });
 });
 
+// The rule was widened to read `:` and lower case, and that made it read
+// ordinary code: `function check(token: ShellToken)` became a secret, and the
+// plugin could not read its own source — 97 findings across 17 files of this
+// repository. It is anchored to the start of a line now, and its value has to be
+// a value rather than an expression.
+describe("env-assignment does not read code as a secret", () => {
+  const assigned = (text: string): boolean =>
+    scan(text).some((f) => f.ruleId === "env-assignment");
+
+  it.each([
+    "function check(token: ShellToken): boolean {",
+    "  tokens: ShellToken[]",
+    "  token: ShellToken;",
+    "  accessToken: string;",
+    "  secretGroup: 2,",
+    "  const token = tokens[i];",
+    "  const hasSecret =\n    showAllTags || findings.some(f)",
+    "Callback: https://example.com/oauth?token=REPLACE_ME_LATER",
+  ])("%s is not a secret", (text) => {
+    expect(assigned(text)).toBe(false);
+  });
+
+  it.each([
+    "POSTGRES_PASSWORD: Sup3rS3cretDbPassw0rd",
+    '  "client_secret": "Xk9mP2qR7vL4nW1sYj3c"',
+    "aws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
+    "export GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz01",
+    "  DB_PASSWORD: hunter2xyzabc",
+  ])("%s is", (text) => {
+    expect(assigned(text)).toBe(true);
+  });
+
+  // The whole point of anchoring: the plugin has to be able to read itself.
+  it("does not flag this repository's own source", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const src = join(dirname(fileURLToPath(import.meta.url)), "..");
+    for (const file of ["shell.ts", "bash-commands.ts", "tool-inputs.ts"]) {
+      const text = readFileSync(join(src, file), "utf8");
+      const hits = scan(text).filter((f) => f.ruleId === "env-assignment");
+      expect(
+        hits.map((f) => f.ruleId),
+        file,
+      ).toEqual([]);
+    }
+  });
+});
+
 describe("env-assignment after bounding the name", () => {
   const assigned = (text: string): boolean =>
     scan(text).some((f) => f.ruleId === "env-assignment");
