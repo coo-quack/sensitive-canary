@@ -432,6 +432,44 @@ describe("pre-tool-use-hook — input shapes the runtime can send", () => {
   });
 });
 
+// Exempting a template name assumed the contents would be read instead. Two
+// things stop them being read whole, and a file carrying either was passing on
+// its name after all.
+describe("pre-tool-use-hook — .env templates", () => {
+  const writeFixture = useFixtureDir("env-templates");
+
+  it("a template holding placeholders is readable", () => {
+    const p = writeFixture(".env.example", "TOKEN=changeme\n");
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
+  it("a template holding a real key is not", () => {
+    const p = writeFixture(".env.example", `AWS=${AWS_KEY}\n`);
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a template whose contents cannot be read past a NUL is not", () => {
+    const p = writeFixture(".env.nul.example", `\0AWS=${AWS_KEY}\n`);
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a template larger than the per-file cut is not", () => {
+    const p = writeFixture(
+      ".env.big.example",
+      `${"x".repeat(1_100_000)}\nAWS=${AWS_KEY}\n`,
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it.each([".env", ".env.production", ".env.local"])(
+    "%s is still blocked on its name",
+    (name) => {
+      const p = writeFixture(name, "TOKEN=changeme\n");
+      expect(runHook("Read", p).exitCode).toBe(2);
+    },
+  );
+});
+
 // ── path shapes the shell expands ────────────────────────────────────────────
 
 // Each of these names a real file once the shell is done with it, and each was

@@ -126,6 +126,41 @@
   recognised, so nothing marked the pattern as supplied and the file that
   followed was consumed as the pattern. The separate (`grep -e aws`) and `=`
   (`--regexp=aws`) spellings were already handled
+- Put back what quieting the rules had taken out. A corpus of five hundred
+  generated values, run against this release and against v0.7.0, found a hundred
+  and twenty-seven inputs the old version detected and this one did not — none of
+  which the thirty-two cases chosen by hand had caught. Restored:
+  - an address near an excluded word. One word within a couple of dozen
+    characters was erasing every address near it, three at a time in a CSV. The
+    exclusion is now the three shapes that are really hostnames: a VCS user, an
+    address straight after `ssh`/`scp`/`rsync`/`sftp`, and the `host:path` form
+  - a bare private address. Requiring a label lost `192.168.1.50`,
+    `X-Forwarded-For: 10.0.0.5` and `remote_addr=…`; what says an address is a
+    machine is the command around it, so that is what excludes it now, and a
+    `host:port` pair is a service rather than a person
+  - an assignment that is not at the start of a line: `docker run -e PASSWORD=…`,
+    `cd /app && PASSWORD=…`, a single-quoted value, a value with a trailing
+    semicolon or comma, and one indented past sixteen columns. `DB_PASS` counts
+    as well as `DB_PASSWORD`
+  - a Square token after `key_` or in a query string, which a boundary counting
+    `_` and `=` as base64 had erased
+  - the Korean resident and business numbers without their separators, which is
+    how they are stored. Context keeps a timestamp out instead
+  - a postal code next to the word `max`, and a connection string whose password
+    runs past 256 characters
+- Block a `.env` template whose contents cannot be read whole. The exemption
+  assumed the contents would be scanned instead, and a NUL byte or a file past
+  the per-file cut stopped that — so `.env.nul.example` and `.env.big.example`
+  passed on their names after all
+- Expand `**` as a single `*` rather than refusing it. Refusing it meant `cat **`
+  was scanned not at all, while the shell expanded it and read the files
+- Read a command field that arrives as an argv array or nested under another key.
+  Only a top-level string was read, so `{"command":["cat",".env"]}` and
+  `{"args":{"command":"cat .env"}}` went past — both by a name with no slash in
+  it, which the path rules do not collect either
+- Stop reading after five seconds. A byte budget bounds what is read and not what
+  is walked, and a pattern reaching one level under a home directory took ten
+  seconds, which is close enough to the PreToolUse timeout to matter
 - Stop blocking ordinary work. Measured over sixty-four commands from a working
   day, the hook blocked sixteen of them; it now blocks five, and four of those
   five are this repository's own README and changelog, which contain an

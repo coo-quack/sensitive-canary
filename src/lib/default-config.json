@@ -167,7 +167,7 @@
     {
       "id": "square-access-token",
       "description": "Square Access Token",
-      "regex": "(?<![A-Za-z0-9\\-_+=])EAAA[a-zA-Z0-9\\-_+=]{60}(?![A-Za-z0-9\\-_+=])",
+      "regex": "(?<![A-Za-z0-9+/])EAAA[a-zA-Z0-9\\-_+=]{60}(?![A-Za-z0-9+/])",
       "category": "secret"
     },
     {
@@ -230,7 +230,7 @@
     {
       "id": "env-assignment",
       "description": ".env style secret assignment",
-      "regex": "(?:^|\\n)[ \\t-]{0,16}(?:export[ \\t]+|set[ \\t]+)?\"?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}\"?[ \\t]*[:=][ \\t]*\"?(?!\\$)([^\\s\"'\\[\\]{}();,<>]{8,})(?=$|[\\s\"'])",
+      "regex": "(?:(?:^|\\n)[ \\t-]{0,64}[\"']?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|PASS|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[\"']?[ \\t]*:|\\b[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|PASS|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[ \\t]*=)[ \\t]*[\"']?(?!\\$)([^\\s\"'\\[\\]{}();,<>]{8,})(?=$|[\\s\"';,)\\]}])",
       "flags": "gi",
       "category": "secret",
       "secretGroup": 1,
@@ -239,32 +239,14 @@
     {
       "id": "connection-string",
       "description": "Database Connection String with credentials",
-      "regex": "(mongodb|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]{1,256}:[^@\\s]{1,256}@",
+      "regex": "(mongodb|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]{1,1024}:[^@\\s]{1,1024}@",
       "category": "secret"
     },
     {
       "id": "pii-email",
       "description": "Email Address",
-      "regex": "\\b[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}\\b",
-      "category": "pii",
-      "excludeContext": [
-        "ssh",
-        "scp",
-        "sftp",
-        "rsync",
-        "clone",
-        "remote",
-        "host",
-        "hostname",
-        "ssh-keygen",
-        "git",
-        "hg",
-        "svn",
-        "example",
-        "invalid",
-        "localhost",
-        "test"
-      ]
+      "regex": "(?<!\\bssh )(?<!\\bscp )(?<!\\brsync )(?<!\\bsftp )\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
+      "category": "pii"
     },
     {
       "id": "pii-credit-card",
@@ -300,9 +282,8 @@
     {
       "id": "pii-ipv4",
       "description": "IPv4 Address (private range)",
-      "regex": "\\b(10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b",
+      "regex": "\\b(10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b(?!:\\d)",
       "category": "pii",
-      "requireContext": true,
       "contextWords": [
         "client",
         "user",
@@ -310,7 +291,43 @@
         "customer",
         "subscriber",
         "household",
-        "resident"
+        "resident",
+        "ip",
+        "addr",
+        "address",
+        "forwarded",
+        "src",
+        "remote"
+      ],
+      "excludeContext": [
+        "ping",
+        "curl",
+        "wget",
+        "ssh",
+        "scp",
+        "telnet",
+        "nc",
+        "netcat",
+        "redis",
+        "psql",
+        "mysql",
+        "mongo",
+        "kubectl",
+        "docker",
+        "port",
+        "forward",
+        "bind",
+        "listen",
+        "cidr",
+        "netmask",
+        "subnet",
+        "route",
+        "gateway",
+        "dns",
+        "nslookup",
+        "dig",
+        "traceroute",
+        "iptables"
       ]
     },
     {
@@ -414,34 +431,41 @@
         "\uc6b0\ud3b8\ubc88\ud638",
         "cap"
       ],
-      "excludeContext": [
-        "buffer",
-        "bytes",
-        "byte",
-        "memory",
-        "size",
-        "limit",
-        "cache",
-        "rate",
-        "timeout",
-        "threshold",
-        "max",
-        "min"
-      ]
+      "excludeContext": ["buffer", "bytes", "byte", "memory", "cache"]
     },
     {
       "id": "pii-rrn-kr",
       "description": "Korean Resident Registration Number",
-      "regex": "\\b\\d{6}[-\\s]\\d{7}\\b",
+      "regex": "\\b\\d{6}[-\\s]?\\d{7}\\b",
       "category": "pii",
-      "validate": "rrn-kr"
+      "validate": "rrn-kr",
+      "requireContext": true,
+      "contextWords": [
+        "\uc8fc\ubbfc\ub4f1\ub85d\ubc88\ud638",
+        "\uc8fc\ubbfc\ubc88\ud638",
+        "rrn",
+        "resident",
+        "registration",
+        "\uc2e0\ubd84\uc99d",
+        "\uac1c\uc778\uc815\ubcf4"
+      ]
     },
     {
       "id": "pii-brn-kr",
       "description": "Korean Business Registration Number",
-      "regex": "\\b\\d{3}-\\d{2}-\\d{5}\\b",
+      "regex": "\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{5}\\b",
       "category": "pii",
-      "validate": "brn-kr"
+      "validate": "brn-kr",
+      "requireContext": true,
+      "contextWords": [
+        "\uc0ac\uc5c5\uc790\ub4f1\ub85d\ubc88\ud638",
+        "\uc0ac\uc5c5\uc790\ubc88\ud638",
+        "brn",
+        "business",
+        "registration",
+        "\ubc95\uc778",
+        "\uc138\uae08\uacc4\uc0b0\uc11c"
+      ]
     },
     {
       "id": "pii-resident-id-cn",
