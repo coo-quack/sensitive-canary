@@ -1201,6 +1201,78 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
 // put one on disk — and POSIX allows a newline in it. The block message is text
 // Claude reads, so a file could be named such that the message grew lines saying
 // the block was a false positive.
+// README: "[allow-secret] does not bypass PII blocks (and vice versa)."
+//
+// Deduplication keys on the value, so a string that a secret rule and a PII rule
+// both match yields two findings with the same value. Deduplicating first threw
+// the PII one away, and the tag then removed what was left — so the tag lifted a
+// PII block. Allow first, then dedupe.
+describe("pre-tool-use-hook — a tag lifts only its own category", () => {
+  const writeFixture = useFixtureDir("tag-categories");
+
+  // env-assignment (secret) and pii-email (pii) capture this identically.
+  const BOTH = "API_TOKEN=alice.dupont@realcompany.co.jp";
+
+  const withTag = (
+    tag: string | null,
+    contents: string,
+  ): ReturnType<typeof runHook> => {
+    const file = writeFixture(`${tag ?? "none"}.txt`, contents);
+    return tag === null
+      ? runHook("Read", file)
+      : runHook("Read", file, {
+          transcriptPath: writeTranscript([`[allow-${tag}] read it`]),
+        });
+  };
+
+  it("a value both categories match is blocked with no tag", () => {
+    expect(withTag(null, BOTH).exitCode).toBe(2);
+  });
+
+  it("[allow-secret] leaves the PII finding standing", () => {
+    const { exitCode, reason } = withTag("secret", BOTH);
+    expect(exitCode).toBe(2);
+    expect(reason).toContain("pii-email");
+    expect(reason).not.toContain("env-assignment");
+  });
+
+  it("[allow-pii] leaves the secret finding standing", () => {
+    const { exitCode, reason } = withTag("pii", BOTH);
+    expect(exitCode).toBe(2);
+    expect(reason).toContain("env-assignment");
+    expect(reason).not.toContain("pii-email");
+  });
+
+  it("[allow-all] lifts both", () => {
+    expect(withTag("all", BOTH).exitCode).toBe(0);
+  });
+
+  // The same three sites read a command and an environment variable, and each
+  // had the order the wrong way round.
+  it("a command carrying the value is blocked through [allow-secret]", () => {
+    expect(
+      runBashHook(`echo ${BOTH}`, {
+        transcriptPath: writeTranscript(["[allow-secret] run it"]),
+      }).exitCode,
+    ).toBe(2);
+  });
+
+  it("an environment variable holding it is blocked through [allow-secret]", () => {
+    expect(
+      runBashHook("echo $BOTH_CATEGORIES", {
+        env: {
+          PATH: process.env["PATH"] ?? "",
+          // The variable's value is what gets scanned, so the value has to be
+          // the thing both rules match — not just the address inside it.
+          BOTH_CATEGORIES: BOTH,
+        },
+        replaceEnv: true,
+        transcriptPath: writeTranscript(["[allow-secret] run it"]),
+      }).exitCode,
+    ).toBe(2);
+  });
+});
+
 describe("pre-tool-use-hook — what a filename can put in the message", () => {
   const writeFixture = useFixtureDir("output-escaping");
 
