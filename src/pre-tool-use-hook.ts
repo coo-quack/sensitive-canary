@@ -65,6 +65,7 @@ interface HookInput {
 }
 
 interface TranscriptLine {
+  type?: unknown;
   message?: Message;
 }
 
@@ -130,7 +131,23 @@ const DEADLINE = Date.now() + 5_000;
 // The directory a relative path is relative to. Set from the payload before any
 // scanning; `process.cwd()` is where the hook was started, which is not
 // necessarily where the command will run.
-let baseDirectory = process.cwd();
+let baseDirectory = currentDirectoryOrRoot();
+
+// `process.cwd()` throws when the directory the hook was started in has been
+// removed, which a build script does every time it runs `rm -rf dist` from
+// inside `dist`, and `git worktree remove` does to a worktree. That throw
+// happens while this module is still being evaluated — before the transcript is
+// read — so it stopped every tool call with a message telling the user to add
+// an allow tag that could not possibly be honoured. There is nothing sensitive
+// about a missing directory: a relative path simply has no base, and one that
+// resolves to nothing is scanned as the name it is.
+function currentDirectoryOrRoot(): string {
+  try {
+    return process.cwd();
+  } catch {
+    return path.sep;
+  }
+}
 
 // ── Transcript ────────────────────────────────────────────────────────────────
 
@@ -139,12 +156,30 @@ let baseDirectory = process.cwd();
 // arguments of a slash command, and system reminders. A tag anywhere in one of
 // those used to lift the guard for the next tool call — so `grep -r allow-all`,
 // or a README mentioning the tag, switched the protection off.
-const SYNTHETIC_USER_ELEMENTS =
-  /<(local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-stdout|bash-stderr|system-reminder)>[\s\S]*?<\/\1>/g;
+const SYNTHETIC_ELEMENT_NAMES =
+  "local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-output|bash-stdout|bash-stderr|system-reminder";
 
-// Text inside a fence is being quoted, not issued. A pasted log or diff that
+const SYNTHETIC_USER_ELEMENTS = new RegExp(
+  `<(${SYNTHETIC_ELEMENT_NAMES})>[\\s\\S]*?<\\/\\1>`,
+  "g",
+);
+
+// An opening tag with nothing closing it takes the rest of the message with it.
+// Pairs alone would have left an unclosed one — a truncated capture, or output
+// that happens to contain the tag — reading as the user speaking.
+const UNCLOSED_SYNTHETIC_ELEMENT = new RegExp(
+  `<(?:${SYNTHETIC_ELEMENT_NAMES})>[\\s\\S]*$`,
+  "g",
+);
+
+// Text inside a fence is being quoted, not issued: a pasted log or diff that
 // happens to contain the tag is not the user asking for it.
-const FENCED_OR_INLINE_CODE = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
+//
+// Backticks around a single word are not the same thing. The documentation here
+// writes the tags that way — `[allow-secret]` — so stripping them refused the
+// form the project itself teaches, and refused it silently: the block that
+// followed advised adding the tag it had just ignored.
+const FENCED_CODE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
 
 // What the user actually typed, with the above taken out.
 function userTypedText(msg: Message): string {
@@ -155,7 +190,8 @@ function userTypedText(msg: Message): string {
   return blocks
     .join("\n")
     .replace(SYNTHETIC_USER_ELEMENTS, " ")
-    .replace(FENCED_OR_INLINE_CODE, " ");
+    .replace(UNCLOSED_SYNTHETIC_ELEMENT, " ")
+    .replace(FENCED_CODE, " ");
 }
 
 // Returns true when the message carries text the user typed. A message that is
@@ -178,6 +214,9 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
   let raw: string;
   try {
     const stat = fs.statSync(transcriptPath);
+    // A FIFO here would block the read until something wrote to it, and a hook
+    // that never returns is killed by the timeout, which does not block.
+    if (!stat.isFile()) return new Set();
     if (stat.size <= MAX_TRANSCRIPT_TAIL_BYTES) {
       raw = fs.readFileSync(transcriptPath, "utf8");
     } else {
@@ -208,7 +247,15 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
     try {
       const parsed = JSON.parse(trimmed) as TranscriptLine;
       const msg = parsed.message;
-      if (msg?.role === "user" && msg.content !== undefined) {
+      // A line the runtime wrote as an assistant turn is not user input,
+      // whatever the message inside it says its role is. Absent rather than
+      // contradictory is fine: the field is rejected only when it names some
+      // other kind of line.
+      if (
+        (parsed.type === undefined || parsed.type === "user") &&
+        msg?.role === "user" &&
+        msg.content !== undefined
+      ) {
         if (hasTextContent(msg)) {
           lastUserMessage = msg;
           toolResultAfterLastText = false;
@@ -357,7 +404,14 @@ function block(
   //
   // When both channels carry text, stdout wins and stderr is discarded, so
   // writing both would leave the documented one dead. Hence stderr alone.
-  process.stderr.write(`${reasonLines.join("\n")}\n`);
+  // Wrapped, and the exit is outside it: a closed stderr made this write throw,
+  // and an exception exits 1, which passes the call through. The block became
+  // its opposite because the message could not be delivered.
+  try {
+    process.stderr.write(`${reasonLines.join("\n")}\n`);
+  } catch {
+    // Nothing to say and nowhere to say it. The verdict stands.
+  }
   process.exit(2);
 }
 
@@ -570,31 +624,62 @@ function scanPathsLiteralsFirst(
 }
 
 // The bytes as little-endian UTF-16, or null when the file is not UTF-16.
-// Only the prefix is examined: the question is which byte of each pair is the
-// NUL, and a few hundred pairs settle it.
+//
+// The byte-order mark decides it outright. Without one, the question is whether
+// every NUL falls on the same side of each pair — which it does in UTF-16 text,
+// because the high byte of a Latin character is zero. Requiring most pairs to
+// carry one was too strong: a file whose first few hundred characters are
+// Japanese or Chinese has neither byte zero, and the whole file went unread. One
+// NUL on a consistent side is enough to ask the question; whether the answer is
+// text is what settles it.
 function detectUtf16(raw: Buffer): Buffer | null {
   if (raw.length < 4) return null;
   // Swapping is done on a copy: `raw` is a view into the shared read buffer.
-  if (raw[0] === 0xff && raw[1] === 0xfe) return raw;
-  if (raw[0] === 0xfe && raw[1] === 0xff)
-    return Buffer.from(raw)
+  const swapped = (): Buffer =>
+    Buffer.from(raw)
       .subarray(0, raw.length & ~1)
       .swap16();
-  const pairs = Math.min(raw.length >> 1, 512);
+  if (raw[0] === 0xff && raw[1] === 0xfe) return raw;
+  if (raw[0] === 0xfe && raw[1] === 0xff) return swapped();
+
+  // Far enough in to reach a newline or a space. Five hundred pairs of Japanese
+  // carry no zero byte at all, and that prefix decided the whole file.
+  const pairs = Math.min(raw.length >> 1, 8192);
   let evenNuls = 0;
   let oddNuls = 0;
   for (let i = 0; i < pairs; i++) {
     if (raw[i * 2] === 0) evenNuls++;
     if (raw[i * 2 + 1] === 0) oddNuls++;
   }
-  // Text in either encoding is almost all ASCII, so one side of every pair is
-  // NUL and the other is not. A file that is merely binary has no such split.
-  if (oddNuls > pairs * 0.9 && evenNuls === 0) return raw;
-  if (evenNuls > pairs * 0.9 && oddNuls === 0)
-    return Buffer.from(raw)
-      .subarray(0, raw.length & ~1)
-      .swap16();
+  // Several, not one: a UTF-8 file with a stray NUL in it has the asymmetry
+  // too, and reading that as UTF-16 turns a file the scan could read into
+  // nonsense it cannot.
+  const MINIMUM_NULS = 8;
+  if (evenNuls === 0 && oddNuls >= MINIMUM_NULS && readsAsText(raw)) return raw;
+  if (oddNuls === 0 && evenNuls >= MINIMUM_NULS) {
+    const be = swapped();
+    if (readsAsText(be)) return be;
+  }
   return null;
+}
+
+// Whether these bytes decoded as UTF-16 look like something someone wrote. A
+// binary file can have its NULs on one side by chance; text decoded from the
+// wrong encoding is mostly control characters and replacement characters, and
+// this is what separates the two.
+function readsAsText(le: Buffer): boolean {
+  const sample = le.subarray(0, 4096).toString("utf16le");
+  if (sample.length === 0) return false;
+  let bad = 0;
+  for (const ch of sample) {
+    const code = ch.codePointAt(0) ?? 0;
+    const isControl =
+      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      code === 0x7f;
+    if (isControl || code === 0xfffd || (code >= 0xe000 && code <= 0xf8ff))
+      bad++;
+  }
+  return bad / sample.length < 0.05;
 }
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
@@ -740,7 +825,13 @@ process.stdin.on("data", (chunk: string) => (raw += chunk));
 process.stdin.on("end", () => {
   let data: HookInput;
   try {
-    data = JSON.parse(raw) as HookInput;
+    const parsed: unknown = JSON.parse(raw);
+    // `JSON.parse("null")` succeeds and returns null, which then threw on the
+    // first field read. A payload that is not an object names nothing, so
+    // there is nothing to scan and nothing to stop.
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+      process.exit(0);
+    data = parsed as HookInput;
   } catch {
     process.exit(0);
   }
@@ -796,14 +887,16 @@ process.stdin.on("end", () => {
     if (!command.trimStart().startsWith("(")) {
       for (const segment of tokenizeCommand(command)) {
         const [head, target] = segment;
+        // `head.redirect` is defensive rather than reachable: the tokenizer
+        // marks a token as a redirect only when it built it from `<` or `>`, so
+        // no input produces one whose value is `cd`. Kept because the guard
+        // costs nothing and the tokenizer is free to change.
         if (head?.value !== "cd" || head.redirect) break;
         if (target === undefined || target.redirect) break;
-        // `cd -`, `cd b*ld` and a `cd` into a variable name a directory this
-        // cannot work out, and resolving them anyway pointed the scan at some
-        // other directory entirely.
         // `cd -`, `cd b*ld` and `cd $VAR` name a directory this cannot work
         // out. Resolving them anyway pointed the scan at a directory that does
-        // not exist, and every relative path after it went unscanned.
+        // not exist — or worse, at one that happens to exist under the literal
+        // name — and every relative path after it went unscanned.
         if (
           target.value === "-" ||
           target.value === "--" ||

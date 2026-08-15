@@ -185,6 +185,55 @@
   - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` and
     `.env.defaults` are not blocked by name. Their contents are still scanned, so
     a template with a real key in it is still caught — by what is in it
+- **The same defect was still in `env-assignment`, and worse.** Its value
+  capture was open-ended, so a megabyte of `TOKEN=TOKEN=…` took six minutes —
+  past any hook timeout, and a killed hook does not block. The capture is atomic
+  now (`(?=(X))\1`, since every character the delimiter test accepts is one the
+  class already excludes, so retrying a shorter run could never succeed) and
+  capped, with a single character deciding whether the value simply ran past the
+  cap. 373 seconds to 2 milliseconds, and a fifty-thousand-character value is
+  still found
+- **The hook stopped every tool call, with no way out, when its working
+  directory had been removed.** `process.cwd()` throws there, and it was called
+  while the module was still loading — before the transcript is read — so the
+  message advising an allow tag described something that could not be honoured.
+  A build script that runs `rm -rf dist` from inside `dist`, or a
+  `git worktree remove`, is enough. There is nothing sensitive about a missing
+  directory: a relative path simply has no base
+- **A tag written in backticks did not work, and the documentation writes them
+  that way.** Treating inline code as quoting refused the form this project
+  teaches, and refused it silently — the block that followed advised adding the
+  tag it had just ignored. Fenced blocks still quote rather than issue, so a
+  pasted log cannot lift the guard
+- `<bash-input>` was missing from the elements that are not user input, an
+  unclosed element was not stripped at all, and a line the runtime wrote as an
+  assistant turn was read as user input if the message inside it claimed the
+  role
+- A UTF-16 file whose first characters are Japanese or Chinese has no zero byte
+  among them, and five hundred pairs of prefix decided the whole file. The
+  window is wider, the threshold is on the asymmetry rather than the rate, and
+  whether the result reads as text is what settles it
+- A FIFO named as the transcript blocked the read forever; a write to a closed
+  stderr threw on the way out of a block and turned it into a pass; and a
+  payload of `null` parsed successfully and then threw on the first field read
+- **Twenty-six wrong blocks out of six hundred real files.** A value that is a
+  URL, a path, an identifier, a header name, a number or a dotted setting name
+  is no longer read as the secret its variable is named after — `secret_name`,
+  `VAULT_TOKEN_PATH` and `TOKEN_HEADER_NAME` describe a secret rather than
+  holding one, and a key whose last word is `PROJECT` or `ENDPOINT` says so
+  outright. The shape test applies only where a rule captured a free-form value:
+  a Slack webhook is a URL and a secret both, and asking whether it looks like a
+  URL is the wrong question
+- A connection string with `${PGPASSWORD}` still in it holds no credential at
+  all, and `postgres:postgres@` is what a compose file ships with
+- A context word is a label, not a fragment of the identifier beside the number.
+  `extract-zip` supplied "zip" and `golang.org/x/mobile` supplied "mobile", so a
+  version number beside either read as a postal code or a telephone number —
+  which is to say lockfiles and `go.sum` could not be read at all. Nor could
+  `name@version`, which is an address by shape
+- Twelve identical digits satisfy the My Number checksum by arithmetic rather
+  than by being anyone's number, and `01-02-2024` is a date. A Japanese
+  telephone number has ten digits or eleven, and 0120 belongs to a business
 - **A megabyte of `eyJ` used to kill the hook, and a killed hook does not
   block.** Two rules were shaped `{n,}` followed by a literal that may never
   come, which makes the engine retry the whole tail from every start position.

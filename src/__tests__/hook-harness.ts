@@ -74,8 +74,11 @@ function spawnHook(input: string, opts?: RunOptions): HookResult {
 
 // Feed the hook a raw stdin payload, for cases where the payload is not valid
 // JSON and so cannot be described as a tool call.
-export function runHookWithRawInput(input: string): HookResult {
-  return spawnHook(input);
+export function runHookWithRawInput(
+  input: string,
+  opts?: RunOptions,
+): HookResult {
+  return spawnHook(input, opts);
 }
 
 // Run the hook against an arbitrary tool call.

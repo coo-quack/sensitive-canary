@@ -134,6 +134,10 @@ export function luhn(str: string): boolean {
 // 11 - (sum mod 11); when the remainder is 0 or 1, the check digit is 0.
 // Spec: 地方公共団体情報システム機構 (J-LIS).
 export function validateMyNumber(input: string): boolean {
+  // Twelve of the same digit satisfies the weighted sum by arithmetic, not by
+  // being anyone's number. Padding, zeroed records and hex dumps are full of
+  // them.
+  if (/^(\d)\1*$/.test(input.replace(/[-\s]/g, ""))) return false;
   const digits = input.replace(/\D/g, "");
   if (digits.length !== 12) return false;
   const weights = [6, 5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
@@ -452,13 +456,55 @@ export function isReservedIpv6(ip: string): boolean {
 // Only secret rules consult this. "todo@company.com" is a real address, and
 // AWS's own documented key ends in EXAMPLE and is still a key, so `example` is
 // deliberately absent from the list.
+// A value whose shape says it is not a credential, whatever its name suggests.
+// `TOKEN_ENDPOINT`, `secret_name`, `VAULT_TOKEN_PATH` and `TOKEN_HEADER_NAME`
+// all assign something that points at a secret rather than being one, and
+// blocking them made Terraform, Kubernetes manifests and OAuth configuration
+// unreadable — fourteen of the twenty-six wrong blocks in a survey of six
+// hundred real files.
+export function isNotSecretShaped(value: string): boolean {
+  const v = value.trim();
+  // A URL or a URN. Credentials embedded in one are the connection-string
+  // rule's business, and a URL carrying a token in its query is left alone
+  // here so the `?` case still reaches the other rules.
+  if (
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(v) &&
+    !v.includes("?") &&
+    !v.includes("@")
+  )
+    return true;
+  if (/^urn:/i.test(v)) return true;
+  // A filesystem path.
+  if (/^[~.]?\/[^\s]*$/.test(v)) return true;
+  // The name of a variable rather than its value.
+  if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(v)) return true;
+  // An HTTP header name.
+  if (/^[A-Z][A-Za-z0-9]*(?:-[A-Z][A-Za-z0-9]*)+$/.test(v)) return true;
+  // A number.
+  if (/^\d+$/.test(v)) return true;
+  // A dotted lower-case identifier, as a storage key or a setting name.
+  if (/^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$/.test(v)) return true;
+  return false;
+}
+
+// A key that says where a secret lives, or what it is called, rather than what
+// it is. The rule fires on the keyword anywhere in the name, so
+// `SECRET_MANAGER_PROJECT` reads as a secret because of its first word, when its
+// last one says it holds a project.
+const DESCRIBES_A_SECRET =
+  /\b[A-Za-z0-9_]*_(?:PROJECT|NAME|PATH|FILE|DIR|URL|URI|ENDPOINT|HOST|PORT|ID|TYPE|HEADER|PREFIX|SUFFIX|FIELD|COLUMN|TABLE|ENV|REGION|BUCKET|ARN|VERSION|TTL|TIMEOUT|LENGTH|COUNT|ENABLED|ALGORITHM|ISSUER|AUDIENCE|SCOPE|PROVIDER|BACKEND|SOURCE)\b[ \t]*[:=]/i;
+
+export function keyDescribesRatherThanHolds(matchText: string): boolean {
+  return DESCRIBES_A_SECRET.test(matchText);
+}
+
 // A word that only ever appears in a value nobody typed.
 const PLACEHOLDER_MARKERS =
-  /^(?:changeme|change|me|replace|with|real|this|your|my|here|todo|tbd|fixme|dummy|placeholder|insecure|sample|value|xxx+)$/i;
+  /^(?:changeme|change|me|replace|insert|set|with|real|this|your|my|here|todo|tbd|fixme|dummy|placeholder|insecure|sample|example|test|fake|redacted|value|x{3,})$/i;
 
 // A word that can make up the rest of such a value, but never marks one alone.
 const PLACEHOLDER_FILLER =
-  /^(?:api|key|token|secret|password|passwd|pwd|pass|url|uri|host|hostname|name|user|username|id|in|production|development|the|a|of|for|and|[0-9]+)$/i;
+  /^(?:api|key|keys|token|tokens|secret|secrets|password|passwd|pwd|pass|base|url|uri|host|hostname|name|user|username|id|access|refresh|client|auth|sk|pk|in|production|development|staging|local|dev|the|a|of|for|and|[0-9]+)$/i;
 
 export function isPlaceholder(value: string, following = ""): boolean {
   const v = value.trim();
@@ -467,6 +513,28 @@ export function isPlaceholder(value: string, following = ""): boolean {
   if (/^[Xx]+$/.test(v)) return true;
   // A slot rather than a value: `<your-token>`, `${TOKEN}`, `{{ token }}`.
   if (/^[<{[]/.test(v) && /[>}\]]$/.test(v)) return true;
+  // A shell or template reference, which holds nothing at all.
+  if (/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(v)) return true;
+  // An unexpanded reference anywhere inside a connection string: no character
+  // of the credentials has been substituted yet.
+  if (
+    /:\/\/[^@\s]*(?:\$\{[A-Za-z_][^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\{\})[^@\s]*@/.test(
+      v,
+    )
+  )
+    return true;
+  // A user and a password that are the same word, and that word names the
+  // service: `postgres:postgres@`, `root:root@`, `guest:guest@` are what a
+  // compose file and a quickstart ship with.
+  const samePair = v.match(/:\/\/([A-Za-z]{3,12}):([A-Za-z]{3,12})@/);
+  if (
+    samePair &&
+    samePair[1]?.toLowerCase() === samePair[2]?.toLowerCase() &&
+    /^(?:postgres|postgresql|mysql|mariadb|mongo|mongodb|redis|root|guest|admin|user|test|rabbitmq)$/i.test(
+      samePair[1] ?? "",
+    )
+  )
+    return true;
   // The default the django template generates, which ships in every new project.
   if (/^django-insecure-/i.test(v)) return true;
   // A connection string where the user, the password and the host are all the
@@ -531,6 +599,23 @@ function tokenize(text: string): string[] {
     .filter(Boolean);
 }
 
+// Words as they were written, with only the punctuation around them removed.
+// Splitting on punctuation made `extract-zip` supply "zip" and
+// `golang.org/x/mobile` supply "mobile", so a version number beside either read
+// as a postal code or a telephone number — which is to say lockfiles and
+// `go.sum` could not be read.
+function contextTokens(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of text.split(/\s+/)) {
+    const word = raw
+      .replace(/^[\p{P}\p{S}]+/gu, "")
+      .replace(/[\p{P}\p{S}]+$/gu, "")
+      .toLowerCase();
+    if (word) out.add(word);
+  }
+  return out;
+}
+
 function hasNearbyContextWord(
   text: string,
   matchStart: number,
@@ -542,8 +627,17 @@ function hasNearbyContextWord(
   const charWindow = windowTokens * 8;
   const before = text.slice(Math.max(0, matchStart - charWindow), matchStart);
   const after = text.slice(matchEnd, matchEnd + charWindow);
-  const nearby = new Set(tokenize(`${before} ${after}`));
-  return contextWords.some((word) => nearby.has(word.toLowerCase()));
+  const window = `${before} ${after}`;
+  const nearby = contextTokens(window);
+  const lowered = window.toLowerCase();
+  return contextWords.some((raw) => {
+    const word = raw.toLowerCase();
+    // A label in a language that does not put spaces around its words is
+    // written against the number, so it is looked for as written.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the ASCII range is the test
+    if (!/^[\x00-\x7f]+$/.test(word)) return lowered.includes(word);
+    return nearby.has(word);
+  });
 }
 
 // ── Validator registry ───────────────────────────────────────────────────────
@@ -551,9 +645,22 @@ function hasNearbyContextWord(
 // referenced by name from the JSON config. User-defined rules can use any of
 // these validators or omit `validate` entirely.
 
+// A Japanese telephone number: ten digits, or eleven for a mobile. The pattern
+// alone also matched `01-02-2024`, which is a date, and `0000 0000 0000`, which
+// is an identifier. Freephone prefixes are excluded — 0120 and 0800 belong to a
+// business and are printed to be dialled.
+export function validateJapanesePhone(input: string): boolean {
+  const digits = input.replace(/\D/g, "");
+  if (!/^0\d{8,10}$/.test(digits)) return false;
+  if (digits.length !== 10 && digits.length !== 11) return false;
+  if (/^0(?:120|800)/.test(digits)) return false;
+  return true;
+}
+
 const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
   luhn: isRealCardNumber,
   "mynumber-jp": validateMyNumber,
+  "phone-jp": validateJapanesePhone,
   "nir-fr": validateFrenchNIR,
   "codice-fiscale-it": validateCodiceFiscale,
   "steuer-id-de": validateGermanIdNr,
@@ -846,10 +953,19 @@ export function scan(
       const matchStart = match.index ?? 0;
       const matchEnd = matchStart + match[0].length;
       const following = text.slice(matchEnd, matchEnd + 64);
+      // The shape test applies only where the rule captured a free-form value.
+      // A rule that matches a fixed prefix has already said what the thing is —
+      // a Slack webhook is a URL and a secret, and asking whether it looks like
+      // a URL is asking the wrong question.
+      const capturesAValue = rule.secretGroup != null;
       if (
         rule.category === "secret" &&
         (isPlaceholder(secretValue, following) ||
-          (rule.secretGroup != null && isPlaceholder(match[0], following)))
+          (capturesAValue &&
+            (isNotSecretShaped(secretValue) ||
+              isPlaceholder(match[0], following) ||
+              isNotSecretShaped(match[0]) ||
+              keyDescribesRatherThanHolds(match[0]))))
       )
         continue;
       if (

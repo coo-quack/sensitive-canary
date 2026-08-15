@@ -6,3 +6,8 @@ node_modules/
 docs/.vitepress/dist
 docs/.vitepress/cache
 dist/
+
+# Worktrees a review agent checked out here. Each is a full copy of this
+# repository, so committing one nests the repo inside itself and the test
+# suite runs twice.
+.claude/worktrees/
