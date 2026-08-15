@@ -21,7 +21,7 @@ If legitimate content is being blocked:
 
 - Add `[allow-secret]`, `[allow-pii]`, or `[allow-all]` to your prompt to bypass the check for that message
 - Allow tags apply only to the current message and do not persist
-- For PreToolUse hooks, allow tags are single-use — they are consumed by the first tool call. If Claude performs multiple tool calls, you may need to include the tag again
+- For PreToolUse hooks a tag stops applying once a tool result is recorded after it. Tool calls issued together, before any result comes back, are all covered by one tag — a tag is not a promise that only the next one goes through
 
 ## .env file blocking
 

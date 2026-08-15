@@ -103,10 +103,15 @@ describe("user-prompt-submit-hook — an unforeseen error", () => {
   // A payload that is not an object carries no prompt, so there is nothing to
   // scan and nothing to stop. The handler is for a check that started and could
   // not finish, which the other hook's tests cover through the scan budget.
-  it.each(["not json", "", "{}", "null", "42", "[]"])(
-    "%s is still allowed",
+  it.each(["", "   ", "{}"])("%s is still allowed", (payload) => {
+    expect(raw(payload).status).toBe(0);
+  });
+
+  // Input the check could not read is not input the check approved.
+  it.each(["not json", '{"prompt":"x"', "{"])(
+    "%s stops the call",
     (payload) => {
-      expect(raw(payload).status).toBe(0);
+      expect(raw(payload).status).toBe(2);
     },
   );
 
@@ -371,12 +376,14 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 });
 
 describe("user-prompt-submit-hook — malformed input", () => {
-  it("exits 0 on invalid JSON", () => {
-    const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
+  // Bytes that do not parse mean the check could not read its input, which is
+  // not the same as nothing being there.
+  it("stops the call on invalid JSON", () => {
+    const result = spawnSync(process.execPath, [...NODE_FLAGS, HOOK], {
       input: "not json",
       encoding: "utf8",
     });
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(2);
   });
 });
 

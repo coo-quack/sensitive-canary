@@ -254,6 +254,31 @@ When Claude uses the `Bash` tool, sensitive-canary checks three things:
 2. **Command string** — the raw command is scanned (catches inline secrets like `echo AKIAIOSFODNN7EXAMPLE`).
 3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
 
+### Ways a rule goes quiet without saying so
+
+A rule that matches nothing looks the same as a rule that finds nothing. These
+are the settings that produce one, and none of them warns:
+
+- **`secretGroup: 0`** is not the same as omitting the field. A rule that names a
+  capture group is treated as capturing a free-form value, which brings in the
+  placeholder and shape tests that the built-in assignment rules rely on — so a
+  value that is all digits, or a path, or a URL, is skipped. Omit the field when
+  the whole match is the secret.
+- **`entropyThreshold` above 8.** Shannon entropy is at most 8 bits per
+  character, so anything higher rejects every match. `1e999` parses as
+  `Infinity` and is accepted.
+- **`secretGroup` pointing at a group the pattern does not have.** The capture is
+  `undefined` and the match is dropped.
+- **`flags` containing `y`.** A sticky pattern only matches at position 0, so the
+  rule finds a secret at the very start of a file and nothing anywhere else.
+- **A large `contextWindow`.** It widens `excludeContext` as well as
+  `contextWords`, so a single `buffer` anywhere in a large file can suppress
+  every postal-code match in it.
+
+After writing or overriding a rule, check it against a file you expect it to
+catch. An override that fails to compile leaves the built-in in place and says so
+on stderr; one that compiles and matches nothing replaces the built-in silently.
+
 ## Custom Rules
 
 All built-in rules are defined in `src/lib/default-config.json` as JSON data. You can add your own rules or override built-in ones without modifying the plugin source.
@@ -270,13 +295,13 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | `description` | string | yes | Human-readable label shown in block messages. |
 | `regex` | string | yes | Regex source (not a `/literal/`). |
 | `category` | `"secret"` \| `"pii"` | yes | Which category the rule belongs to. |
-| `flags` | string | no | Regex flags. Default `"g"`. |
-| `secretGroup` | number | no | Capture group containing the secret. Default 0 (full match). |
+| `flags` | string | no | Regex flags. `g` is added if you leave it out, since the scan needs every match; `y` makes a rule match only at the start of the text, which is almost never what a detection rule wants |
+| `secretGroup` | number | no | Capture group containing the secret. Omit it for the full match — writing `0` is not the same as omitting it, see below |
 | `entropyThreshold` | number | no | Skip matches below this Shannon entropy (bits/char). |
 | `requireContext` | boolean | no | Only fire when a context word is nearby. |
 | `contextWords` | string[] | no | Words that satisfy `requireContext`. |
 | `contextWindow` | number | no | Per-rule override for context scan width (tokens). |
-| `excludeContext` | No | Words that suppress a match when one of them is near it — the inverse of `contextWords`. Used by the postal-code rule so a number beside a word like `port` or `max` is not an address |
+| `excludeContext` | string[] | no | Words that suppress a match when one is near it — the inverse of `contextWords`. The postal-code rule uses `buffer`, `bytes`, `byte`, `memory` and `cache`, so `65536 bytes` is a size rather than a place |
 | `validate` | string | no | Name of a built-in checksum validator. |
 
 ### Available validators
@@ -284,6 +309,7 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | Name | Algorithm |
 |------|-----------|
 | `luhn` | Luhn checksum, and not a card number the payment gateways publish as test data |
+| `phone-jp` | Ten or eleven digits beginning with 0, excluding the 0120 and 0800 freephone prefixes, which belong to a business |
 | `mynumber-jp` | Japanese Individual Number (My Number) |
 | `nir-fr` | French NIR / Social Security Number |
 | `codice-fiscale-it` | Italian Codice Fiscale |

@@ -185,6 +185,49 @@
   - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` and
     `.env.defaults` are not blocked by name. Their contents are still scanned, so
     a template with a real key in it is still caught — by what is in it
+- **`[allow-secret]` lifted PII blocks, which the README says it cannot.**
+  Deduplication ran before the allow tag, and it keys on the value — so a string
+  that a secret rule and a PII rule both match lost the PII finding first, and
+  the tag then removed what was left. The two hooks had the order the other way
+  round from each other; the prompt hook was right
+- **A pasted log could lift the guard on the key in the same message.** The
+  prompt hook read tags from the raw prompt while the other hook read them from
+  what the user typed, so a fenced log or a README quoting `[allow-secret]`
+  decided them. One implementation now answers for both
+- **Input the check could not read was treated as input the check approved.**
+  Two characters missing from the end of a payload passed a key through. Empty
+  stdin is still nothing to check; bytes that will not parse now stop the call
+- **A filename could put lines into the text Claude reads.** POSIX allows a
+  newline in a path and a path is attacker-chosen, so a file could be named such
+  that the block message grew a line saying the block was a false positive.
+  Escape sequences went the same way and could clear the screen first. Control
+  characters are escaped on the way out now, and the finding list is capped —
+  one rule that matched everywhere produced forty thousand lines
+- **A single rule from a config file could hang the hook.** The scan budget is
+  checked between rules and cannot interrupt one match, so `(a+)+$` ran for
+  hours and the hook was killed — which does not block. A V8-side timeout does
+  interrupt a running match, at 0.06ms per scan
+- A config path that is a FIFO blocked the read forever, and a config with more
+  than about 120,000 rules threw while the module was still loading, before any
+  handler existed. Both exited without blocking
+- **`tail` printed the part that was not scanned.** The per-file cap reads the
+  first megabyte; `tail -2 app.log` shows the last lines, which on a large log is
+  where a failure has just printed a connection string. Both ends are read now.
+  What is still missed is the middle of a file larger than both windows
+- `view` and `vimdiff` print a file the way `less` does and were not on the list
+- The documentation said the hooks are active immediately after installing the
+  plugin. A session that is already running does not pick them up: it reports the
+  plugin as enabled and checks nothing. It also said a PreToolUse allow tag is
+  consumed by the first tool call — it lasts until a tool result is recorded, so
+  calls issued together are all covered by one. And it said a `.env` with an
+  allow tag is passed through without scanning, which is the opposite of what the
+  code does. All three are corrected, and the step that proves a hook is really
+  running is now on the recommended install path rather than only the pnpm one
+- The `phone-jp` validator existed and was named in neither document; a test now
+  holds both documents to the registry. Added a section on the ways a rule goes
+  quiet without warning — `secretGroup: 0` is not the same as omitting it, an
+  `entropyThreshold` above 8 rejects everything, `flags: "y"` matches only at the
+  start of the text, and a large `contextWindow` widens `excludeContext` too
 - **The same defect was still in `env-assignment`, and worse.** Its value
   capture was open-ended, so a megabyte of `TOKEN=TOKEN=…` took six minutes —
   past any hook timeout, and a killed hook does not block. The capture is atomic

@@ -18,7 +18,23 @@ Run the following two commands inside a Claude Code session:
 /plugin install sensitive-canary@coo-quack
 ```
 
-Claude Code will download the plugin and register the hooks automatically. No restart is required.
+Claude Code will download the plugin and register the hooks automatically.
+
+A session that is already running does not pick them up. It reports the install as successful and lists the plugin as enabled, and checks nothing until it is restarted — which is exactly the state this tool exists to prevent, and it is invisible. Start a new session, then check that it blocks.
+
+**3. Check that it blocks**
+
+An installation that checks nothing looks exactly like one that works, and only
+exit 2 stops a tool call, so a hook that fails to start is silent. This step is
+not optional.
+
+```bash
+printf 'key=AKIA''IOSFODNN7EXAMPLE\n' > /tmp/canary-check.txt
+```
+
+Ask Claude to read `/tmp/canary-check.txt`. It should refuse and say why. If it
+reads the file and shows you the key, the hooks are not running — see
+[Troubleshooting](/troubleshooting).
 
 ### Updating
 

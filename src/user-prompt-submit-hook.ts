@@ -7,6 +7,7 @@ import {
   findingsToLines,
   randomBird,
   resolveTagPriority,
+  typedTextOf,
 } from "./lib/inspector.ts";
 import { enabledCategoriesFromEnv, scan } from "./lib/rules.ts";
 
@@ -63,14 +64,20 @@ process.stdin.on("data", (chunk: string) => (raw += chunk));
 process.stdin.on("end", () => {
   let data: HookInput;
   try {
+    // Empty stdin is nothing to check. Bytes that do not parse are a check that
+    // could not read its input, which is not the same as safe: two characters
+    // missing from the end of a payload used to pass a key through.
+    if (raw.trim().length === 0) process.exit(0);
     const parsed: unknown = JSON.parse(raw);
     // `JSON.parse("null")` succeeds and returns null, which then threw on the
     // first field read. A payload that is not an object carries no prompt.
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
       process.exit(0);
     data = parsed as HookInput;
-  } catch {
-    process.exit(0);
+  } catch (error) {
+    // The check never started, so it vouches for nothing. Everything else that
+    // cannot finish stops the call; input that will not parse is the same case.
+    failClosed(error);
   }
 
   // Whatever the runtime sends. Not throwing on a prompt that is not a string
@@ -84,7 +91,13 @@ process.stdin.on("end", () => {
 
   if (allFindings.length === 0) process.exit(0);
 
-  const { effectiveAllow, effectiveMask } = resolveTagPriority(prompt);
+  // From what the user typed, not from what they pasted: a fenced log or a
+  // README quoting `[allow-secret]` used to lift the guard on the key in the
+  // same message. The other hook already read tags this way, so the two gave
+  // different answers to the same text.
+  const { effectiveAllow, effectiveMask } = resolveTagPriority(
+    typedTextOf(prompt),
+  );
 
   const afterAllow: Finding[] = dedupeFindings(
     applyAllowTags(allFindings, effectiveAllow),

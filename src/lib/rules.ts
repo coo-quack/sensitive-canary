@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 export type Category = "secret" | "pii";
 
@@ -672,6 +673,11 @@ const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
   "public-ipv6": (ip: string) => !isReservedIpv6(ip),
 };
 
+// The names a config file may put in `validate`. Exported so the documents can
+// be held to the same list: `phone-jp` was added to the registry and named in
+// neither document, so a user writing a rule could not know it existed.
+export const VALIDATOR_NAMES: readonly string[] = Object.keys(VALIDATORS);
+
 export function getValidator(
   name: string,
 ): ((str: string) => boolean) | undefined {
@@ -822,6 +828,16 @@ function loadDefaultConfig(): CanaryConfig {
 // so that a broken config file is not silently ignored.
 function loadUserConfig(): CanaryConfig | null {
   try {
+    // A FIFO or a device here would block the read until something wrote to
+    // it, and a hook that never returns is killed by the timeout, which does
+    // not block. The transcript reader and the file scanner both pay this stat
+    // already; this path was the one that did not.
+    if (!statSync(USER_CONFIG_PATH).isFile()) {
+      process.stderr.write(
+        `sensitive-canary: user config "${USER_CONFIG_PATH}" is not a regular file, ignoring\n`,
+      );
+      return null;
+    }
     return readJsonFile(USER_CONFIG_PATH) as CanaryConfig;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -894,7 +910,7 @@ function buildRules(): Rule[] {
       }
       return defaultRules
         .filter((r) => !byId.has(r.id))
-        .concat(...byId.values());
+        .concat(Array.from(byId.values()));
     }
   }
 
@@ -926,9 +942,41 @@ export class ScanBudgetExceeded extends Error {
   }
 }
 
+// The between-rule check below cannot interrupt a single `matchAll`, and one
+// rule from a user config is enough to hang the hook — which is then killed by
+// the timeout, and a killed hook does not block. A V8-side timeout does
+// interrupt a running match. Measured at 0.06ms per call, against a scan that
+// costs hundreds of times that.
+const SCAN_SLOT = "__sensitiveCanaryScan";
+const SCAN_HARD_LIMIT_MS = SCAN_BUDGET_MS + 2_000;
+
+function runInterruptibly<T>(work: () => T): T {
+  const slots = globalThis as unknown as Record<string, unknown>;
+  slots[SCAN_SLOT] = work;
+  try {
+    return vm.runInThisContext(`globalThis.${SCAN_SLOT}()`, {
+      timeout: SCAN_HARD_LIMIT_MS,
+      displayErrors: false,
+    }) as T;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("timed out"))
+      throw new ScanBudgetExceeded("a single rule", SCAN_HARD_LIMIT_MS);
+    throw error;
+  } finally {
+    delete slots[SCAN_SLOT];
+  }
+}
+
 export function scan(
   text: string,
   categories: ReadonlySet<Category> = ALL_CATEGORIES,
+): Finding[] {
+  return runInterruptibly(() => scanUninterrupted(text, categories));
+}
+
+function scanUninterrupted(
+  text: string,
+  categories: ReadonlySet<Category>,
 ): Finding[] {
   const findings: Finding[] = [];
   const startedAt = Date.now();

@@ -24,6 +24,10 @@ export const FILE_READ_COMMANDS = new Set([
   "less",
   "more",
   "bat",
+  // `view` is read-only vi and `vimdiff` opens two files at once; both print
+  // the contents the way `less` does.
+  "view",
+  "vimdiff",
   "nl",
   "tac",
   "rev",
