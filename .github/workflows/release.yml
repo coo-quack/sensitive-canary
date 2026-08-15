@@ -68,20 +68,109 @@ jobs:
             echo "::error::version mismatch — package.json is $pkg, .claude-plugin/plugin.json is $plugin."
             exit 1
           fi
+      - name: the packed artifact is what gets tested
+        run: |
+          # Everything below runs against the tarball npm would publish, not the
+          # checked-out tree. Dropping "dist/" from `files` used to pass every
+          # gate here while shipping a package whose hooks cannot start.
+          set -euo pipefail
+          # A clean directory and an exact filename: a leftover tarball from an
+          # earlier pack would otherwise be the one extracted, and the checks
+          # below would pass against a package this build did not produce.
+          rm -rf /tmp/pack /tmp/artifact
+          mkdir -p /tmp/pack /tmp/artifact
+          pnpm pack --pack-destination /tmp/pack
+          tarball=$(ls /tmp/pack/*.tgz)
+          test -f "$tarball" || { echo "::error::pnpm pack produced no tarball."; exit 1; }
+          tar xzf "$tarball" -C /tmp/artifact
+          root=/tmp/artifact/package
+          for required in \
+            "$root/dist/pre-tool-use-hook.js" \
+            "$root/dist/user-prompt-submit-hook.js" \
+            "$root/dist/lib/default-config.json" \
+            "$root/hooks/hooks.json" \
+            "$root/.claude-plugin/plugin.json"; do
+            test -f "$required" || {
+              echo "::error::the tarball is missing $required — check the \`files\` field."
+              exit 1
+            }
+          done
+          if find "$root/src" -path '*__tests__*' -print -quit | grep -q .; then
+            echo "::error::the tarball ships tests."
+            exit 1
+          fi
+          echo "ARTIFACT_ROOT=$root" >> "$GITHUB_ENV"
+
+      - name: the hook manifest names commands that run
+        run: |
+          # The plugin install path uses hooks/hooks.json and nothing else did
+          # read it. Emptying it left every other gate green.
+          set -uo pipefail
+          node -e '
+            const { readFileSync, existsSync } = require("node:fs");
+            const root = process.env.ARTIFACT_ROOT;
+            const manifest = JSON.parse(readFileSync(`${root}/hooks/hooks.json`, "utf8"));
+            const events = Object.keys(manifest.hooks ?? {});
+            for (const want of ["PreToolUse", "UserPromptSubmit"]) {
+              if (!events.includes(want)) throw new Error(`hooks.json declares no ${want}`);
+            }
+            const commands = Object.values(manifest.hooks)
+              .flat()
+              .flatMap((entry) => entry.hooks ?? [])
+              .map((hook) => hook.command);
+            if (commands.length < 2) throw new Error("hooks.json declares no commands");
+            for (const command of commands) {
+              const match = command.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"\s]+)/);
+              if (!match) throw new Error(`no CLAUDE_PLUGIN_ROOT path in: ${command}`);
+              const target = `${root}/${match[1]}`;
+              if (!existsSync(target)) throw new Error(`hooks.json points at a missing ${match[1]}`);
+            }
+            console.log(`hooks.json: ${commands.length} commands, all present`);
+          '
+
       - name: the published hooks run, and still block
         run: |
           # Exit 0 alone would pass for a hook that starts and checks nothing,
           # which is the failure this exists to catch. So both directions.
+          #
+          # No `set -e` here, and every hook invocation captures its status with
+          # `|| status=$?`: a blocking hook exits 2 on purpose, and under the
+          # default `bash -e {0}` that killed the step before the assertion ran,
+          # which made the release unable to publish at all.
+          set -uo pipefail
           key="AKIA""IOSFODNN7EXAMPLE"
-          printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
-            | node dist/pre-tool-use-hook.js
-          test $? -eq 0 || { echo "::error::the published PreToolUse hook did not allow a clean command"; exit 1; }
-          printf '{"prompt":"key=%s"}' "$key" | node dist/user-prompt-submit-hook.js
-          test $? -eq 2 || { echo "::error::the published UserPromptSubmit hook did not block a secret"; exit 1; }
+          fail=0
+          check() {
+            local want=$1 label=$2 hook=$3 payload=$4 status=0
+            printf '%s' "$payload" | node "$ARTIFACT_ROOT/$hook" > /dev/null || status=$?
+            if [ "$status" -ne "$want" ]; then
+              echo "::error::$label — expected exit $want, got $status"
+              fail=1
+            fi
+          }
           printf 'key=%s\n' "$key" > /tmp/smoke-secret.txt
-          printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-secret.txt"}}' \
-            | node dist/pre-tool-use-hook.js
-          test $? -eq 2 || { echo "::error::the published PreToolUse hook did not block a secret"; exit 1; }
+          printf 'ok\n' > /tmp/smoke-clean.txt
+          mkdir -p /tmp/smoke-env
+          printf 'TOKEN=real\n' > /tmp/smoke-env/.env
+          printf 'TOKEN=your-token-here\n' > /tmp/smoke-env/.env.example
+          check 0 "a clean command must be allowed" dist/pre-tool-use-hook.js \
+            '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+          check 0 "a clean file must be allowed" dist/pre-tool-use-hook.js \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-clean.txt"}}'
+          check 2 "a secret in a prompt must be blocked" dist/user-prompt-submit-hook.js \
+            "$(printf '{"prompt":"key=%s"}' "$key")"
+          check 2 "a secret in a file must be blocked" dist/pre-tool-use-hook.js \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-secret.txt"}}'
+          check 2 "a secret in a command must be blocked" dist/pre-tool-use-hook.js \
+            "$(printf '{"tool_name":"Bash","tool_input":{"command":"echo %s"}}' "$key")"
+          check 2 "an env file must be blocked by name" dist/pre-tool-use-hook.js \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-env/.env"}}'
+          # The other direction of the same guard: a template of placeholders is
+          # a file users are told to commit, and blocking it is what gets the
+          # plugin uninstalled.
+          check 0 "a template of placeholders must be allowed" dist/pre-tool-use-hook.js \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-env/.env.example"}}'
+          exit "$fail"
 
       - name: Publish to npm
         run: pnpm publish --provenance --access public

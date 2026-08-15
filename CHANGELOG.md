@@ -185,6 +185,74 @@
   - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` and
     `.env.defaults` are not blocked by name. Their contents are still scanned, so
     a template with a real key in it is still caught — by what is in it
+- **Private IPv4 addresses are no longer detected.** An RFC 1918 address is
+  non-routable and identifies nothing outside the network it belongs to, and the
+  rule spent its time on ansible inventories, ssh configs, Kubernetes manifests
+  and docker-compose files — five such files, all blocked before, all quiet now.
+  Public addresses are unchanged and still require a nearby label. Anyone who
+  wants the old behaviour can add the rule back through the config file; the
+  `excludeContext` field it used is documented now and still serves the postal
+  code rule. 75 rules to 74
+- **Private IPv4 addresses are no longer detected.** An RFC 1918 address is
+  non-routable and identifies nothing outside the network it belongs to, and the
+  rule spent its time on ansible inventories, ssh configs, Kubernetes manifests
+  and docker-compose files — five such files, all blocked before, all quiet now.
+  Public addresses are unchanged and still require a nearby label. Anyone who
+  wants the old behaviour can add the rule back through the config file; the
+  `excludeContext` field it used is documented now and still serves the postal
+  code rule. 75 rules to 74
+- The release could not publish. GitHub runs every `run:` step as `bash -e {0}`,
+  and the smoke test added last round pipes into a hook that exits 2 on purpose,
+  so errexit killed the step before the assertion that expected the 2. The gate
+  written to make the release safer made it impossible; every invocation now
+  captures its status instead of letting the pipeline decide the step's fate
+- The release gates now run against the tarball `npm publish` would upload, not
+  the checked-out tree. Deleting `"dist/"` from the `files` field used to pass
+  every gate while shipping a package whose hooks cannot start — verified by
+  doing it, along with dropping `hooks/` and shipping the tests
+- `hooks/hooks.json` — the file the plugin install path reads, and the only one
+  still pointing at the TypeScript sources — had no gate at all. Emptying it left
+  every check green. The release now parses it, requires both events, and
+  resolves every command's path inside the tarball
+- Recognise a value written to be replaced. Half of a realistic `.env.example`
+  was blocked on its contents (`your-password-here`, `REPLACE_ME_WITH_REAL`,
+  `django-insecure-...`, `postgres://user:password@localhost/db`), which defeats
+  exempting the name: the file exists to be committed and read. Ten realistic
+  templates now read clean, and one holding a live key is still blocked. Only
+  secret rules consult the list, and `example` is deliberately not on it — AWS's
+  own documented key ends in it and is still a key
+- An address stopped being found when a remote-shell word appeared anywhere
+  within forty characters: `rsync failed, notify alice@corp.io` was silently
+  dropped. The exemption now covers the operand position only — `ssh user@host`
+  and at most two arguments in between — and the `host:path` forms of scp and
+  rsync are left to the trailing-colon rule that already handled them
+- Cover the credit card brands the rule claimed and did not match. The Discover
+  branch required seventeen digits, so no Discover, JCB or Diners card could
+  reach it, and Mastercard's 2-series (2221-2720) and UnionPay were absent
+  outright — five brands undetected. Ranges follow Discover's published IIN
+  summary, which also puts the Discover range at 644-658, so 659 is no longer
+  claimed
+- Slack's rotated tokens (`xoxe-`), app-level tokens (`xapp-`) and workflow
+  tokens (`xwfp-`) were not matched; nor were Stripe restricted, organization
+  and webhook-signing secrets, nor eight of GitLab's ten token prefixes
+- Mapbox and Sentry tokens were written to shapes those services do not issue —
+  Mapbox delimits into three parts of which the first is the literal `pk`, `sk`
+  or `tk`, and a Sentry org token is underscore-separated, not dotted. Neither
+  rule had ever matched a real token
+- A Square token longer than sixty characters was missed. Square's contract
+  allows up to 1024; the length had been pinned at exactly what appears in the
+  wild
+- Codice fiscale: omocodia substitutes letters for digits at the seven numeric
+  positions when two people would share the first fifteen characters, and both
+  the pattern and the checksum guard demanded digits there — so every such code,
+  each issued to a real person, was missed
+- Add two more from a format survey: an Azure Shared Access Key
+  (`SharedAccessKey=` + 44-char base64, for Service Bus, Event Hubs and IoT Hub,
+  which is a different length from the 88-character storage account key) and a
+  Google OAuth client secret (`GOCSPX-`). Google's `ya29.` access tokens and
+  `1//` refresh tokens are deliberately not matched: Google documents no format
+  for them beyond a size cap and reserves the right to change it, so a pattern
+  would be a guess that reads as a guarantee
 - Add nine rules for credentials that no rule covered: OpenAI service-account and
   admin keys, Azure Storage account keys, Fly.io, Databricks, HashiCorp Vault,
   Shopify, Doppler, Grafana and Notion tokens. 64 rules to 73

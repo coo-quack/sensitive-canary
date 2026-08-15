@@ -97,6 +97,8 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
 | `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
+| `azure-sas-key` | Azure Shared Access Key for Service Bus, Event Hubs and IoT Hub (`SharedAccessKey=` + 44-char base64). Separate from the storage account key, which is 88 characters |
+| `google-oauth-secret` | Google OAuth Client Secret (`GOCSPX-` prefix) |
 | `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
 | `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
 | `vault-token` | HashiCorp Vault Token (`hvs.` / `hvb.` prefix) |
@@ -120,7 +122,6 @@ The entropy threshold filters out low-entropy values that are unlikely to be rea
 |---------|-------------|-------|
 | `pii-email` | Email Address | Local part up to 64 characters per unbroken run (RFC 5321's limit); domain matched as dot-separated labels, so a domain with no dot (`user@localhost`) is not one. Both bounds are there to keep the pattern from backtracking — see the note below the table |
 | `pii-credit-card` | Credit Card Number | Visa, Mastercard, Amex, Discover; validated with Luhn algorithm |
-| `pii-ipv4` | Private IPv4 Address | RFC 1918 ranges only: `10.x`, `172.16–31.x`, `192.168.x`. Excluded when a command that takes a host is nearby, or when it is followed by `:port` |
 | `pii-ssn` | US Social Security Number | Excludes invalid area (000, 666, 9xx), group (00), and serial (0000) numbers |
 | `pii-mynumber-jp` | Japanese Individual Number (My Number) | 12 digits, validated with weighted checksum (mod 11) |
 | `pii-nir-fr` | French NIR / Social Security Number | 15 digits, validated with check key (mod 97); Corsica 2A/2B supported |
@@ -179,7 +180,7 @@ Phone numbers (IT, DE, FR, ES, KR, CN) and bare postal codes (5/9-digit and Chin
 
 National ID numbers rely on their checksums instead and do not require context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
-Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.) so that example IPs like `8.8.8.8` and tutorials do not fire unless a label such as `ip`, `ipv4`, or `ipv6` is nearby. The existing `pii-ipv4` rule still flags RFC 1918 private ranges without context.
+Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.), so an address like `8.8.8.8` fires only when a label such as `ip`, `ipv4` or `ipv6` is nearby. RFC 1918 private addresses are not matched by any rule: they are non-routable and identify nothing outside their own network, and treating them as personal data blocked ordinary infrastructure work.
 
 ### Credit Card Validation
 
@@ -275,6 +276,7 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | `requireContext` | boolean | no | Only fire when a context word is nearby. |
 | `contextWords` | string[] | no | Words that satisfy `requireContext`. |
 | `contextWindow` | number | no | Per-rule override for context scan width (tokens). |
+| `excludeContext` | No | Words that suppress a match when one of them is near it — the inverse of `contextWords`. Used by the postal-code rule so a number beside a word like `port` or `max` is not an address |
 | `validate` | string | no | Name of a built-in checksum validator. |
 
 ### Available validators

@@ -62,7 +62,7 @@ This persistent filter is applied before allow tags. A typical use is setting `s
 
 ### Custom rules
 
-All 64 detection rules are defined in JSON. You can add your own or override built-in ones by creating a config file:
+All 74 detection rules are defined in JSON. You can add your own or override built-in ones by creating a config file:
 
 ```bash
 mkdir -p ~/.config/sensitive-canary
@@ -88,4 +88,4 @@ The plugin reads this file at startup. Rules with the same `id` as a built-in ru
 ## Next Steps
 
 - [Installation](/install) — alternative installation methods
-- [Detection Rules](/rules) — all 64 detection rules explained
+- [Detection Rules](/rules) — all 74 detection rules explained

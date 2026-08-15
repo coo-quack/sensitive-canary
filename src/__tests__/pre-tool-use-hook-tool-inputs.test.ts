@@ -313,6 +313,78 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.exitCode).toBe(2);
     });
 
+    // A tool that runs a shell prints an environment as readily as a file. The
+    // Bash branch has always scanned the variables a command would print; a
+    // command field was collected for paths and nothing else, so `printenv`
+    // handed the environment back whole.
+    it("a command field is scanned for the environment it would print", () => {
+      const result = runToolHook(
+        "mcp__shell__run",
+        { command: "printenv" },
+        {
+          env: { PATH: process.env["PATH"] ?? "", LEAKED: AWS_KEY },
+          replaceEnv: true,
+        },
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("a command field naming one variable is scanned for that variable", () => {
+      const result = runToolHook(
+        "mcp__shell__run",
+        { command: "echo $LEAKED" },
+        {
+          env: { PATH: process.env["PATH"] ?? "", LEAKED: AWS_KEY },
+          replaceEnv: true,
+        },
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    // The write-verb exemption covers a tool's output, not what it runs.
+    it("a write-verb name does not exempt the command it is given", () => {
+      const file = writeFixture("createproc.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__x__create_process", {
+        command: `cat ${file}`,
+      });
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("a write-verb name still exempts the paths it is given", () => {
+      const file = writeFixture("writepath.txt", `key=${AWS_KEY}`);
+      expect(runToolHook("mcp__fs__write_file", { path: file }).exitCode).toBe(
+        0,
+      );
+    });
+
+    // An argv array is a command line with the spaces taken out. Deleting this
+    // branch entirely left every test passing.
+    it("a command given as an argv array is scanned", () => {
+      const file = writeFixture("argv.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__shell__exec", {
+        command: ["cat", file],
+      });
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("an argv array joins into one line rather than one token", () => {
+      const result = runToolHook(
+        "mcp__shell__exec",
+        { command: ["echo", "$LEAKED"] },
+        {
+          env: { PATH: process.env["PATH"] ?? "", LEAKED: AWS_KEY },
+          replaceEnv: true,
+        },
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("an argv array of non-strings is not a command", () => {
+      expect(
+        runToolHook("mcp__shell__exec", { command: [1, 2, 3] }).exitCode,
+      ).toBe(0);
+    });
+
     // A field that is not one of those names is not run through the parser.
     it("a query field is not read as a command", () => {
       const file = writeFixture("queryfield.txt", `key=${AWS_KEY}`);

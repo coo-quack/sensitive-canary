@@ -26,9 +26,9 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **73 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **74 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
-- **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. A private IPv4 is matched without one, but *excluded* when a command that takes a host is beside it — `ping 10.0.0.1` and `kubectl port-forward --address 10.0.0.1` name machines. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough
+- **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP and EU/KR postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough. RFC 1918 private addresses are not matched at all — they are non-routable, they identify nothing outside the network they belong to, and they fill the inventories, manifests and ssh configs this tool is most often pointed at
 - **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`, `user@host:path`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work. A template is exempt only when its contents can be read whole. One holding a NUL byte, running past the per-file cut, reached after the call's budget or deadline, or that is not a regular file at all is blocked on its name, since the contents are what the exemption relies on. A template name that exists on no disk is not blocked — there is nothing to read and nothing to leak
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere
@@ -186,7 +186,7 @@ To allow it through, add the suggested tag:
 
 ### .env file blocked
 
-`.env` / `.env.*` files are blocked by filename, regardless of their contents. This name-based block is a secret guard and only applies while the `secret` category is enabled (the default).
+`.env` and its siblings are blocked by filename, before anything is read. Template names — `.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults` — are the exception: they are meant to be committed, so they are read and judged on their contents like any other file. A template that turns out to hold a real credential is still blocked, and one whose contents cannot be read whole falls back to the name. This name-based block is a secret guard and only applies while the `secret` category is enabled (the default).
 
 ```
 > Read .env
@@ -348,12 +348,14 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 
 ## Detection rules
 
-### Secrets (48 rules)
+### Secrets (50 rules)
 
 | Rule ID | Description |
 |---|---|
 | `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
 | `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
+| `azure-sas-key` | Azure Shared Access Key for Service Bus, Event Hubs and IoT Hub (`SharedAccessKey=` + 44-char base64). Separate from the storage account key, which is 88 characters |
+| `google-oauth-secret` | Google OAuth Client Secret (`GOCSPX-` prefix) |
 | `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
 | `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
 | `vault-token` | HashiCorp Vault Token (`hvs.` / `hvb.` prefix) |
@@ -401,13 +403,12 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `env-assignment` | `.env`-style secret assignment *(entropy ≥ 3.0)* |
 | `connection-string` | Database connection string with embedded credentials |
 
-### PII (25 rules)
+### PII (24 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
 | `pii-email` | Email address | — |
 | `pii-credit-card` | Credit card number | Luhn check |
-| `pii-ipv4` | IPv4 address (RFC 1918 private ranges only) | — |
 | `pii-ssn` | US Social Security Number | Invalid prefix exclusion |
 | `pii-mynumber-jp` | Japanese Individual Number (My Number) | Checksum (weighted mod 11) |
 | `pii-nir-fr` | French NIR / Social Security Number | Check key (mod 97) |
@@ -516,7 +517,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **A bare filename under an unlisted field name** — a value is treated as a path when its field name says so or when it contains a `/`. A tool passing `{ "target": "secrets.txt" }` satisfies neither, so it is not scanned. Requiring the `/` is deliberate: without it, a search for the text `.env` would be blocked as though the file had been read.
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
 - **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
-- **`.env.*` is blocked by name** — the filename guard covers every `.env.*`, so a template like `.env.example` is blocked as well, now through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` for those.
+- **A template holding a real credential is blocked** — `.env.example` and its siblings are exempt from the name guard, not from the scan. Placeholders (`your-token-here`, `REPLACE_ME`, `changeme`, `<token>`, `postgres://user:password@localhost/db`) are recognised and left alone, but a template committed with a live key is blocked like any other file, through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` if that is deliberate.
 - **Anything past the first NUL byte of a file** — a file's text prefix is scanned and the rest is dropped, so that a binary is not ground through every rule. A file that uses NUL as a separator rather than as binary content is therefore barely scanned: `/proc/self/environ` on Linux holds the whole environment, and only the first variable of it is seen.
 - **Anything that is not a regular file** — a directory, a FIFO, a process substitution (`/dev/fd/63`) and `/dev/stdin` are not read, so `cat` of one is not scanned. The directory case is what leaves the Grep tool's `path` and a recursive `grep -r pattern src/` alone, both of which would otherwise mean reading every file underneath. Reading them can never reach the end of the file: `cat /dev/zero` held the hook open until Claude Code's PreToolUse timeout killed it, and a killed hook does not block the call. Not scanning them is the lesser of the two, since a hang lets the call through as well.
 - **`~user/…` is not expanded** — `~` and `~/…` are resolved to the home directory, but the form naming another user needs the password database, and guessing would name the wrong file.

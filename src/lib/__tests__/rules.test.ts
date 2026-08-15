@@ -254,8 +254,15 @@ describe("scan — secrets", () => {
   });
 
   it("detects a database connection string with credentials", () => {
-    const findings = scan("postgres://user:password@localhost/mydb");
+    const findings = scan("postgres://admin:s3cr3tP4ss@db.corp.internal/mydb");
     expect(findings.some((f) => f.ruleId === "connection-string")).toBe(true);
+  });
+
+  // `user:password@localhost` is what every database README prints. Reading it
+  // as a credential is what made a committed template unreadable.
+  it("does not detect the connection string every README prints", () => {
+    const findings = scan("postgres://user:password@localhost/mydb");
+    expect(findings.some((f) => f.ruleId === "connection-string")).toBe(false);
   });
 
   it("detects an .env style assignment with sufficient entropy", () => {
@@ -425,53 +432,42 @@ describe("scan — PII", () => {
     expect(findings.some((f) => f.ruleId === "pii-postal-jp")).toBe(false);
   });
 
-  it("detects a 192.168.x.x private IPv4 address", () => {
-    const findings = scan("client 192.168.1.100 connected");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
-  });
-
-  it("detects a 10.x.x.x private IPv4 address", () => {
-    const findings = scan("client 10.0.0.1 connected");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
-  });
-
-  // The rule is context-gated now: `ping 10.0.0.1` and `redis-cli -h 10.0.0.30`
-  // are addresses of machines, and treating every one of them as personal data
-  // blocked most of what infrastructure work looks like.
+  // A private address is not personal data. It is non-routable, it identifies
+  // nothing outside the network it belongs to, and it appears in nearly every
+  // inventory, manifest and ssh config a developer opens — which is where the
+  // rule spent its time. Public addresses are still gated on a nearby label.
   it.each([
+    "client 192.168.1.100 connected",
+    "client 10.0.0.1 connected",
+    "visitor 172.16.0.1 seen",
+    "visitor 172.31.255.255 seen",
+    "192.168.1.50",
+    "ip=10.1.2.3",
+    "X-Forwarded-For: 10.0.0.5",
+    "remote_addr=10.0.0.5",
     "ping 10.0.0.1",
     "curl http://10.0.0.5:8080/health",
     "redis-cli -h 10.0.0.30",
-    "ECONNREFUSED 10.0.0.5:5432",
-    "CIDR 192.168.0.0/24",
+    "ansible_host: 10.0.0.5",
   ])("%s is not PII", (text) => {
-    expect(scan(text).some((f) => f.ruleId === "pii-ipv4")).toBe(false);
-  });
-
-  it("detects a 172.16–31.x.x private IPv4 address", () => {
-    expect(
-      scan("visitor 172.16.0.1 seen").some((f) => f.ruleId === "pii-ipv4"),
-    ).toBe(true);
-    expect(
-      scan("visitor 172.31.255.255 seen").some((f) => f.ruleId === "pii-ipv4"),
-    ).toBe(true);
-  });
-
-  it("does not flag 172.15.x.x (outside private range)", () => {
-    expect(scan("host: 172.15.1.1").some((f) => f.ruleId === "pii-ipv4")).toBe(
-      false,
+    expect(scan(text).filter((f) => f.ruleId.startsWith("pii-ipv4"))).toEqual(
+      [],
     );
   });
 
-  it("does not flag 172.32.x.x (outside private range)", () => {
-    expect(scan("host: 172.32.1.1").some((f) => f.ruleId === "pii-ipv4")).toBe(
-      false,
-    );
+  // The public rule is untouched by that, in both directions.
+  it("a public address with a label is still PII", () => {
+    expect(
+      scan("the client IP address is 8.8.8.8").some(
+        (f) => f.ruleId === "pii-ipv4-public",
+      ),
+    ).toBe(true);
   });
 
-  it("does not flag a public IPv4 address", () => {
-    const findings = scan("server: 8.8.8.8");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(false);
+  it("a public address without a label is not", () => {
+    expect(
+      scan("server: 8.8.8.8").some((f) => f.ruleId === "pii-ipv4-public"),
+    ).toBe(false);
   });
 });
 
@@ -976,17 +972,6 @@ describe("detections that quieting the rules had removed", () => {
     expect(hits(text)).toContain("pii-email");
   });
 
-  // Requiring a label lost every bare address, which is most of a log line.
-  it.each([
-    "192.168.1.50",
-    "ip=10.1.2.3",
-    "X-Forwarded-For: 10.0.0.5",
-    "remote_addr=10.0.0.5",
-    "2024-01-01 login from 10.1.2.3",
-  ])("%s is still a private address", (text) => {
-    expect(hits(text)).toContain("pii-ipv4");
-  });
-
   // Anchoring the rule to the start of a line lost the shapes people type.
   it.each([
     `DB_PASSWORD='${R}'`,
@@ -1032,6 +1017,178 @@ describe("detections that quieting the rules had removed", () => {
 // Shapes a review found wrong after the last round of rule changes: a keyword
 // that is a substring of an ordinary word, a command with flags between it and
 // its host, and a token boundary written in a different alphabet from the token.
+const ruleIds = (text: string): string[] => scan(text).map((f) => f.ruleId);
+
+// Half of a realistic `.env.example` was blocked on its contents, which defeats
+// the point of exempting the name: the file exists to be committed and read.
+describe("a value written to be replaced", () => {
+  it.each([
+    "DB_PASSWORD=your-password-here",
+    "API_TOKEN=REPLACE_ME_WITH_REAL",
+    "GITHUB_TOKEN=your_token_here",
+    "SECRET_KEY=django-insecure-CHANGE-THIS-IN-PRODUCTION",
+    "DATABASE_URL=postgres://user:password@localhost:5432/db",
+    "TOKEN=<your-token>",
+    "API_KEY=${SOME_OTHER_VAR}",
+    "CLIENT_SECRET=xxxxxxxxxxxxxxxx",
+  ])("%s is a placeholder", (line) => {
+    expect(scan(line)).toHaveLength(0);
+  });
+
+  // The list is deliberately short of `example`: AWS documents a key that ends
+  // in it, and that key is still a key.
+  it.each([
+    "key=AKIAIOSFODNN7EXAMPLE",
+    "aws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
+    "POSTGRES_PASSWORD: Sup3rS3cretDbPassw0rd",
+    "export GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    "DB_PASSWORD=hunter2xyzabc",
+    "postgres://admin:s3cr3tP4ss@db.corp.internal/app",
+  ])("%s is not", (line) => {
+    expect(scan(line).length).toBeGreaterThan(0);
+  });
+
+  // Only secret rules consult the list. An address is not a placeholder because
+  // somebody named a mailbox after a marker word.
+  it.each([
+    "contact todo@analytical-engines.org",
+    "write to placeholder@analytical-engines.org",
+  ])("%s is still an address", (line) => {
+    expect(ruleIds(line)).toContain("pii-email");
+  });
+});
+
+// Formats confirmed against each vendor's own documentation, after a survey
+// found the rules here were written to shapes those vendors do not issue.
+describe("credential formats", () => {
+  // Every branch of the card rule, in both directions. Luhn gates all of them,
+  // so each number below is Luhn-valid and none is published test data.
+  it.each([
+    ["36123456789013", "Diners, 14 digits"],
+    ["6011000991300009", "Discover 6011"],
+    ["6450000000000002", "Discover 644-658"],
+    ["3530111333300000", "JCB 3528-3589"],
+    ["2223003122003222", "Mastercard 2-series"],
+    ["6221260000000000", "UnionPay 62"],
+    ["8171990000000008", "UnionPay 81"],
+  ])("%s is a card (%s)", (number) => {
+    expect(ruleIds(`card ${number}`)).toContain("pii-credit-card");
+  });
+
+  // Discover's published range stops at 658. Treating "65" as a two-digit
+  // prefix claims 659, which belongs to nobody here.
+  it("659 is not a Discover range", () => {
+    expect(ruleIds("card 6591111111111116")).not.toContain("pii-credit-card");
+  });
+
+  // Token rotation introduced xoxe-; xapp- is app-level; xwfp- is a workflow
+  // token. The character class held only b, a, p, r and s.
+  it.each(["xoxb", "xoxp", "xoxe", "xapp", "xwfp"])(
+    "a Slack %s- token is found",
+    (prefix) => {
+      expect(ruleIds(`${prefix}-1-${"a".repeat(40)}`)).toContain("slack-token");
+    },
+  );
+
+  it.each([
+    "glpat",
+    "glrt",
+    "gldt",
+    "gloas",
+    "glcbt",
+    "glptt",
+    "glimt",
+    "glagent",
+  ])("a GitLab %s- token is found", (prefix) => {
+    expect(ruleIds(`${prefix}-${"a".repeat(20)}`)).toContain("gitlab-pat");
+  });
+
+  it.each([
+    [`sk_live_${"a".repeat(24)}`, "a secret key"],
+    [`rk_live_${"a".repeat(24)}`, "a restricted key"],
+    [`sk_org_${"a".repeat(24)}`, "an organization key"],
+    [`whsec_${"a".repeat(32)}`, "a webhook signing secret"],
+  ])("%s is a Stripe secret (%s)", (token) => {
+    expect(ruleIds(token)).toContain("stripe-secret-key");
+  });
+
+  // Mapbox documents the token as header.payload.signature where the header is
+  // the literal pk, sk or tk — two dots, not three. Requiring three matched
+  // nothing Mapbox issues.
+  it.each(["pk", "sk", "tk"])("a Mapbox %s. token is found", (prefix) => {
+    expect(ruleIds(`${prefix}.eyJ1IjoiYWJjIn0.${"a".repeat(22)}`)).toContain(
+      "mapbox-token",
+    );
+  });
+
+  // sentry-cli splits the token on underscores and requires exactly three
+  // parts. The rule was written for dots.
+  it("a Sentry org token is underscore-separated", () => {
+    expect(ruleIds(`sntrys_eyJpYXQiOjEuMH0=_${"c".repeat(43)}`)).toContain(
+      "sentry-org-token",
+    );
+  });
+});
+
+// D.M. 23 dicembre 1976 art. 6: when two people would share the first fifteen
+// characters, digits are replaced from the right with 0=L 1=M 2=N 3=P 4=Q 5=R
+// 6=S 7=T 8=U 9=V. Every such code belongs to a real person, and the rule
+// required digits at exactly the positions that get replaced.
+describe("codice fiscale omocodia", () => {
+  it.each([
+    ["RSSMRA85T10A562S", "no substitution"],
+    ["RSSMRA85T10A56NH", "one, from the right"],
+    ["RSSMRA85T10ARSNO", "three"],
+    ["RSSMRAURTMLARSNL", "all seven"],
+  ])("%s is a codice fiscale (%s)", (code) => {
+    expect(ruleIds(`CF ${code}`)).toContain("pii-codice-fiscale-it");
+  });
+
+  // Widening those positions to letters lets ordinary upper-case text reach the
+  // pattern; the check character is what keeps it quiet.
+  it.each(["MAXBUFFERSIZELIM", "CONTENTSECURITYPO", "SHELLKEYWORDTOKEN"])(
+    "%s is not one",
+    (word) => {
+      expect(ruleIds(word)).not.toContain("pii-codice-fiscale-it");
+    },
+  );
+});
+
+// A word anywhere within forty characters suppressed the address. The suppression
+// belongs to the operand position: `ssh user@host` is a host, `rsync failed,
+// notify alice@corp.io` is an address. The host:path forms of scp and rsync are
+// already handled by the trailing colon.
+describe("an address near a remote-shell command", () => {
+  it.each([
+    "rsync failed, notify alice@acmecorp.io",
+    "# sftp creds, ask carol@acmecorp.io",
+    "See ssh(1). Maintainer: bob@acmecorp.io",
+    "the ssh key belongs to dave@acmecorp.io",
+    "scp is slow; email erin@acmecorp.io",
+  ])("%s is an address", (text) => {
+    expect(ruleIds(text)).toContain("pii-email");
+  });
+
+  // An address is never an argument on the way to another address: without that,
+  // the first host swallows the second one's exemption.
+  it("only the host is exempt, not what follows it", () => {
+    expect(
+      ruleIds("ssh deploy@bastion.acmecorp.io admin@acmecorp.io"),
+    ).toContain("pii-email");
+  });
+
+  it.each([
+    "ssh deploy@bastion.acmecorp.io",
+    "ssh -i ~/.ssh/id_ed25519 deploy@bastion.acmecorp.io",
+    "ssh -o StrictHostKeyChecking=no deploy@bastion.acmecorp.io",
+    "scp build.tar ops@files.acmecorp.io:/srv/",
+    "rsync -a ops@files.acmecorp.io:/srv/ .",
+    "sftp ops@files.acmecorp.io",
+  ])("%s is a host", (text) => {
+    expect(ruleIds(text)).not.toContain("pii-email");
+  });
+});
+
 describe("keywords and boundaries are read as words, not substrings", () => {
   const flags = (t: string): string[] => scan(t).map((f) => f.ruleId);
   const V = "Xk9mP2qR7vL4nW1s";
@@ -1066,10 +1223,19 @@ describe("keywords and boundaries are read as words, not substrings", () => {
     expect(flags(text)).toContain("pii-email");
   });
 
-  // The token is base64url and the boundary was standard base64, so a token
-  // followed by `_` matched its first sixty characters.
-  it("a Square token running into more base64url is not one", () => {
-    expect(flags(`EAAA${"b".repeat(60)}_more`)).not.toContain(
+  // Square's own contract puts the maximum at 1024, so a token longer than the
+  // sixty seen in the wild is a token, not a false positive. Pinning the length
+  // at exactly sixty let every longer one through.
+  it.each([64, 128, 512])("a %i-character Square token is one", (length) => {
+    expect(flags(`EAAA${"b".repeat(length - 4)}`)).toContain(
+      "square-access-token",
+    );
+  });
+
+  // The boundary still has work to do: a longer standard-base64 blob that opens
+  // with these four characters is not a token.
+  it("a standard-base64 blob beginning EAAA is not one", () => {
+    expect(flags(`data:${"EAAA" + "b".repeat(60)}/x+y=`)).not.toContain(
       "square-access-token",
     );
   });
@@ -1100,7 +1266,6 @@ describe("what must still be a finding", () => {
     ["-----BEGIN ENCRYPTED PRIVATE KEY-----", "a private key header"],
     ["card 4532015112830366", "a card that is not a published test number"],
     ["the client IP address is 8.8.8.8", "a public address with a label"],
-    ["client 10.0.0.1 connected", "a private address next to a person"],
   ])("%s is a finding (%s)", (text) => {
     expect(scan(text).length).toBeGreaterThan(0);
   });
@@ -1146,11 +1311,13 @@ describe("every rule catches something", () => {
     "connection-string": "postgres://admin:hunter2xyz@db.internal/app",
     "mapbox-token": `pk.eyJ${"a".repeat(20)}.${"b".repeat(20)}.${"c".repeat(20)}`,
     "sentry-user-token": `sntryu_${"a".repeat(64)}`,
-    "sentry-org-token": `sntrys_eyJ${"a".repeat(20)}.${"b".repeat(20)}.${"c".repeat(20)}`,
+    "sentry-org-token": `sntrys_eyJpYXQiOjEuMH0=_${"c".repeat(43)}`,
     "atlassian-token": `ATATT3${"a".repeat(180)}`,
     "linear-key": `lin_api_${"a".repeat(40)}`,
     "postman-key": `PMAK-${"a".repeat(24)}-${"b".repeat(34)}`,
     "azure-storage-key": `AccountKey=${"a".repeat(86)}==`,
+    "azure-sas-key": `SharedAccessKey=${"a".repeat(43)}=`,
+    "google-oauth-secret": "GOCSPX-aBcD1234eFgH5678iJkL",
     "flyio-token": `FlyV1 fm2_${"a".repeat(50)}`,
     "databricks-token": `dapi${"0123456789abcdef".repeat(2)}`,
     "vault-token": `hvs.${"A".repeat(30)}`,
@@ -1162,7 +1329,6 @@ describe("every rule catches something", () => {
     "env-assignment": "DB_PASSWORD=Xk9mP2qR7vL4nW1sYj3cBz8d",
     "pii-email": "contact alice@analytical-engines.org",
     "pii-credit-card": "card 4532015112830366",
-    "pii-ipv4": "192.168.1.50",
     "pii-ipv4-public": "the client IP address is 8.8.8.8",
     "pii-ipv6": "ipv6: 2001:4860:4860::8888",
     "pii-ssn": "SSN 123-45-6789",
@@ -1229,11 +1395,12 @@ describe("the reserved IPv4 boundary", () => {
 });
 
 describe("the shipped rules", () => {
-  it("are exactly these seventy-three", () => {
+  it("are exactly these seventy-four", () => {
     expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
       "anthropic-key",
       "atlassian-token",
       "aws-access-key",
+      "azure-sas-key",
       "azure-storage-key",
       "connection-string",
       "databricks-token",
@@ -1247,6 +1414,7 @@ describe("the shipped rules", () => {
       "github-fine-grained",
       "github-pat",
       "gitlab-pat",
+      "google-oauth-secret",
       "grafana-token",
       "groq-key",
       "huggingface-token",
@@ -1267,7 +1435,6 @@ describe("the shipped rules", () => {
       "pii-credit-card",
       "pii-dni-nie-es",
       "pii-email",
-      "pii-ipv4",
       "pii-ipv4-public",
       "pii-ipv6",
       "pii-mynumber-jp",
@@ -1307,12 +1474,12 @@ describe("the shipped rules", () => {
     ]);
   });
 
-  it("are split as the README says: 48 secret, 25 PII", () => {
+  it("are split as the README says: 50 secret, 24 PII", () => {
     const byCategory = DEFAULT_RULES.reduce<Record<string, number>>(
       (acc, r) => ({ ...acc, [r.category]: (acc[r.category] ?? 0) + 1 }),
       {},
     );
-    expect(byCategory).toEqual({ secret: 48, pii: 25 });
+    expect(byCategory).toEqual({ secret: 50, pii: 24 });
   });
 
   it("each declare the fields the loader needs", () => {
@@ -1735,9 +1902,8 @@ describe("scan — public IPs", () => {
     expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(false);
   });
 
-  it("still flags a private IPv4 via the private-range rule", () => {
-    const findings = scan("client 192.168.1.1 connected");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
+  it("does not flag a private IPv4 at all", () => {
+    expect(scan("client 192.168.1.1 connected")).toEqual([]);
   });
 
   it("detects an IPv6 with context", () => {

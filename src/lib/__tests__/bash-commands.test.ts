@@ -317,6 +317,19 @@ describe("a substitution among the operands", () => {
   });
 });
 
+describe("eval", () => {
+  // `eval 'cat secrets'` is a command line in a single word. Stepping past
+  // `eval` found that word as the command name, which classifies as nothing.
+  it.each([
+    "eval cat secrets.txt",
+    `eval 'cat secrets.txt'`,
+    `eval "cat secrets.txt"`,
+    `eval "cd /tmp && cat secrets.txt"`,
+  ])("%s names the file", (command) => {
+    expect(paths(command)).toContain("secrets.txt");
+  });
+});
+
 describe("git log -L", () => {
   // `-L` prints the lines themselves, and the file is written inside the range
   // spec after the last `:`, where neither the flag branch nor the operand

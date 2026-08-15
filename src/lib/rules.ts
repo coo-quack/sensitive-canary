@@ -217,7 +217,19 @@ const CF_ODD_VALUES: Record<string, number> = {
 
 export function validateCodiceFiscale(input: string): boolean {
   const cf = input.toUpperCase().replace(/\s/g, "");
-  if (!/^[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]$/.test(cf)) return false;
+  // Omocodia: when two people would share the first fifteen characters, the
+  // Agenzia delle Entrate substitutes letters for digits from the right,
+  // 0=L 1=M 2=N 3=P 4=Q 5=R 6=S 7=T 8=U 9=V, over the seven numeric
+  // positions. Requiring digits there rejected every substituted code — all
+  // of them issued to real people. The check character below needs no change:
+  // it is defined over the substituted fifteen, and the odd/even tables
+  // already carry letters.
+  if (
+    !/^[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$/.test(
+      cf,
+    )
+  )
+    return false;
 
   let sum = 0;
   for (let i = 0; i < 15; i++) {
@@ -235,7 +247,14 @@ export function validateCodiceFiscale(input: string): boolean {
 }
 
 // German Steuer-Identifikationsnummer (IdNr.): 11 digits, first digit non-zero.
-// Uses ISO/IEC 7064 MOD 11,10. Spec: Bundeszentralamt für Steuern.
+// The procedure is ISO/IEC 7064 MOD 11,10, though the tax administration's own
+// specification states it as code rather than by that name.
+//
+// Deliberately not enforced: the digit-composition rule. Since 2016 it reads
+// "exactly one digit occurs twice or three times in positions 1-10", replacing
+// an older "exactly twice". Adding the older form as a tightening would reject
+// valid current numbers.
+// Spec: ELSTER, Prüfung der Steuer- und Steueridentifikationsnummer, §2.2.
 export function validateGermanIdNr(input: string): boolean {
   const cleaned = input.replace(/\s/g, "");
   if (!/^[1-9]\d{10}$/.test(cleaned)) return false;
@@ -254,7 +273,13 @@ export function validateGermanIdNr(input: string): boolean {
 // Spanish DNI (8 digits + letter) and NIE (X/Y/Z + 7 digits + letter). The
 // control letter is selected from TRWAGMYFPDXBNJZSQVHLCKE by the number mod 23.
 // NIE leading letters map X→0, Y→1, Z→2 before the mod.
-// Spec: Ministerio del Interior, Orden INT/2058/2008.
+// The X/Y/Z mapping and the mod-23 alphabet are what every implementation uses,
+// but they were not confirmed against a Spanish government source here — the
+// Interior page that documents them was unreachable. The governing decree is
+// Real Decreto 255/2025, which repealed RD 1553/2005 on 2025-04-02, and it
+// specifies neither digit count nor separator; the Agencia Tributaria describes
+// the number as "ocho dígitos ... más una letra de control", with no separator.
+// Hyphens are stripped above so both the official and the common form are read.
 const NIF_LETTERS = "TRWAGMYFPDXBNJZSQVHLCKE";
 
 export function validateSpanishNIF(input: string): boolean {
@@ -278,9 +303,14 @@ export function validateSpanishNIF(input: string): boolean {
 // Korean Resident Registration Number (RRN, 주민등록번호): 13 digits.
 // Checksum is (11 - (weighted sum mod 11)) mod 10 with weights
 // 2,3,4,5,6,7,8,9,2,3,4,5 over the first 12 digits.
-// Note: numbers issued after Oct 2020 randomize digits 8-13, so the checksum
-// may not pass for valid recent numbers (false negatives possible).
-// Spec: 주민등록 사무편람 (Ministry of the Interior and Safety).
+// Numbers newly issued or changed on or after 2020-10-05 randomize digits 8-13,
+// and the check digit is the 13th — so it is inside the randomized block and the
+// weighted sum above holds only by chance, roughly one time in ten. Treat a pass
+// as evidence, never as a requirement. 주민등록법 시행규칙 제2조 (행정안전부령
+// 제204호) now reads "생년월일ㆍ성별 등을 표시할 수 있는 13자리의 숫자", with the
+// 지역 (region) term of the older text removed. No rule ever specified the check
+// digit, so no rule announces its end either.
+// Spec: 주민등록법 시행규칙 제2조; 주민등록 사무편람 (Ministry of the Interior and Safety).
 export function validateKoreanRRN(input: string): boolean {
   const s = input.replace(/[-\s]/g, "");
   if (!/^\d{13}$/.test(s)) return false;
@@ -409,6 +439,33 @@ export function isReservedIpv6(ip: string): boolean {
   if ((groups[0] ?? 0) === 0x2001 && (groups[1] ?? 0) === 0x0db8) return true;
 
   return false;
+}
+
+// A value written to be replaced. Half of a realistic `.env.example` was being
+// blocked on its contents, which is the block most likely to get the tool turned
+// off — the file is meant to be committed and read.
+//
+// Only secret rules consult this. "todo@company.com" is a real address, and
+// AWS's own documented key ends in EXAMPLE and is still a key, so `example` is
+// deliberately absent from the list.
+export function isPlaceholder(value: string): boolean {
+  if (/^[Xx]+$/.test(value)) return true;
+  if (/x{8,}/i.test(value)) return true;
+  // `<your-token>`, `${TOKEN}`, `{{ token }}` — a value nobody typed.
+  if (/[<{][^>}]*[>}]/.test(value)) return true;
+  // A connection string whose user and password are both the words for them.
+  // `root:secret@` is not one of these: `secret` alone is a password people
+  // actually set, and `root` is a real account.
+  if (
+    /\/\/(?:your)?(?:user|username)(?:name)?:(?:your)?(?:password|passwd|pwd)@/i.test(
+      value,
+    )
+  )
+    return true;
+  if (/^your[_-]/i.test(value)) return true;
+  return /\b(?:changeme|change[_-]me|placeholder|dummy|fixme|todo|insecure|replace[_-](?:me|this|with)|your[_-][a-z])/i.test(
+    value,
+  );
 }
 
 // Shannon entropy (bits per character; ≈0–8 for byte-sized alphabets)
@@ -730,6 +787,7 @@ export function scan(
         rule.secretGroup != null ? match[rule.secretGroup] : match[0];
 
       if (!secretValue) continue;
+      if (rule.category === "secret" && isPlaceholder(secretValue)) continue;
       if (
         rule.entropyThreshold != null &&
         entropy(secretValue) < rule.entropyThreshold

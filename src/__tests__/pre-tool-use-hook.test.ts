@@ -189,8 +189,15 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
     expect(blocked).toBe(true);
   });
 
-  it("blocks a file containing a private IP", () => {
+  // A private address is not personal data, and an inventory full of them is
+  // the file this tool is most often pointed at.
+  it("allows a file of private IPs", () => {
     const p = writeFixture("infra.txt", "server: client 192.168.1.100\n");
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
+  it("blocks a file containing a labelled public IP", () => {
+    const p = writeFixture("access.log", "client IP address 8.8.8.8\n");
     const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
@@ -466,14 +473,53 @@ describe("pre-tool-use-hook — .env templates", () => {
   // Every way of not reading a template falls back on its name. Filling the byte
   // budget first was a way past the guard, and so was a FIFO with a template
   // name — the contents are what the exemption relies on.
+  // Named outright, so the ordering that puts literals before patterns does not
+  // rescue it: the padding really is read first and really does spend the
+  // budget, which is the case this guards.
   it("a template reached after the byte budget is blocked", () => {
     const dir = writeFixture.path();
     const pad = "the quick brown fox ".repeat(55_000);
-    for (let i = 0; i < 70; i++) writeFixture(`pad${i}.log`, pad);
-    writeFixture(".env.late.example", "TOKEN=changeme\n");
+    const names: string[] = [];
+    for (let i = 0; i < 70; i++) {
+      names.push(writeFixture(`pad${i}.log`, pad));
+    }
+    const template = writeFixture(".env.late.example", "TOKEN=changeme\n");
+    expect(runBashHook(`cat ${names.join(" ")} ${template}`).exitCode).toBe(2);
+    expect(dir.length).toBeGreaterThan(0);
+  });
+
+  // The name-based fallback has three gates and a precondition, and deleting any
+  // of the four left the suite green.
+  it("a template that does not exist is not blocked", () => {
+    const absent = writeFixture.path(".env.absent.example");
+    expect(runBashHook(`cat ${absent}`).exitCode).toBe(0);
+  });
+
+  it("the fallback is off when secrets are not a category", () => {
+    const fifo = writeFixture.path(".env.cat.fifo");
+    execFileSync("mkfifo", [fifo]);
     expect(
-      runBashHook(`cat ${dir}/pad*.log ${dir}/.env.late.example`).exitCode,
-    ).toBe(2);
+      runHook("Read", fifo, { env: { SENSITIVE_CANARY_CATEGORIES: "pii" } })
+        .exitCode,
+    ).toBe(0);
+  });
+
+  it("the fallback honours an allow tag", () => {
+    const fifo = writeFixture.path(".env.tag.fifo");
+    execFileSync("mkfifo", [fifo]);
+    expect(
+      runHook("Read", fifo, {
+        transcriptPath: writeTranscript(["[allow-secret] read it"]),
+      }).exitCode,
+    ).toBe(0);
+  });
+
+  // `.env.` with the dot: without it `.environment` reads as an environment
+  // file, and only a path that is never read shows the difference.
+  it("a fifo named .environment is not an env file", () => {
+    const fifo = writeFixture.path(".environment");
+    execFileSync("mkfifo", [fifo]);
+    expect(runHook("Read", fifo).exitCode).toBe(0);
   });
 
   it("a fifo with a template name is blocked", () => {

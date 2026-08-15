@@ -34,7 +34,7 @@
     {
       "id": "gitlab-pat",
       "description": "GitLab Personal Access Token",
-      "regex": "glpat-[A-Za-z0-9_=-]{20,22}",
+      "regex": "gl(?:pat|dt|rt|cbt|imt|agent|oas|ptt|soat|ffct)-[A-Za-z0-9_=-]{20,}",
       "category": "secret"
     },
     {
@@ -46,7 +46,7 @@
     {
       "id": "slack-token",
       "description": "Slack Token",
-      "regex": "xox[baprs]-[0-9a-zA-Z-]{10,72}",
+      "regex": "(?:xox[abeprs]|xapp|xwfp)-[0-9a-zA-Z-]{10,72}",
       "category": "secret"
     },
     {
@@ -94,7 +94,7 @@
     {
       "id": "stripe-secret-key",
       "description": "Stripe Secret Key",
-      "regex": "sk_(live|test)_[0-9a-zA-Z]{24}",
+      "regex": "(?:(?:sk|rk)_(?:live|test)|sk_org)_[0-9a-zA-Z]{24}|whsec_[0-9a-zA-Z]{32,}",
       "category": "secret"
     },
     {
@@ -167,13 +167,13 @@
     {
       "id": "square-access-token",
       "description": "Square Access Token",
-      "regex": "(?<![A-Za-z0-9+/])EAAA[a-zA-Z0-9\\-_+=]{60}(?![A-Za-z0-9+/=_-])",
+      "regex": "(?<![A-Za-z0-9+/])EAAA[a-zA-Z0-9\\-_+=]{60,}(?![A-Za-z0-9+/=_-])",
       "category": "secret"
     },
     {
       "id": "mapbox-token",
       "description": "Mapbox Token",
-      "regex": "(?:pk|sk)\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "regex": "\\b(?:pk|sk|tk)\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
       "category": "secret"
     },
     {
@@ -185,7 +185,7 @@
     {
       "id": "sentry-org-token",
       "description": "Sentry Organization Auth Token",
-      "regex": "sntrys_eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "regex": "sntrys_[A-Za-z0-9+/=]{10,}_[A-Za-z0-9]{43}",
       "category": "secret"
     },
     {
@@ -245,13 +245,13 @@
     {
       "id": "pii-email",
       "description": "Email Address",
-      "regex": "(?<!\\b(?:ssh|scp|rsync|sftp)\\b[^@\\n]{0,40})\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
+      "regex": "(?<!\\b(?:ssh|scp|rsync|sftp)\\b(?:[ \\t]+[^\\s@,;()]+){0,2}[ \\t]+)\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
       "category": "pii"
     },
     {
       "id": "pii-credit-card",
       "description": "Credit Card Number",
-      "regex": "\\b(?:4[0-9]{3}(?:[\\s-]?[0-9]{4}){3}|5[1-5][0-9]{2}(?:[\\s-]?[0-9]{4}){3}|3[47][0-9]{2}[\\s-]?[0-9]{6}[\\s-]?[0-9]{5}|6(?:011|5[0-9]{2})[0-9](?:[\\s-]?[0-9]{4}){3})\\b",
+      "regex": "\\b(?:4[0-9]{3}(?:[\\s-]?[0-9]{4}){3}|5[1-5][0-9]{2}(?:[\\s-]?[0-9]{4}){3}|2(?:22[1-9]|2[3-9][0-9]|[3-6][0-9]{2}|7[01][0-9]|720)(?:[\\s-]?[0-9]{4}){3}|3[47][0-9]{2}[\\s-]?[0-9]{6}[\\s-]?[0-9]{5}|6(?:011|4[4-9][0-9]|5[0-8][0-9])(?:[\\s-]?[0-9]{4}){3}|35(?:2[89]|[3-8][0-9])(?:[\\s-]?[0-9]{4}){3}|3(?:0[0-5]|[689][0-9])[0-9](?:[\\s-]?[0-9]{4}){3}|3(?:0[0-5]|[68][0-9])[0-9][\\s-]?[0-9]{6}[\\s-]?[0-9]{4}|(?:62|81)[0-9]{2}(?:[\\s-]?[0-9]{4}){3})\\b",
       "category": "pii",
       "validate": "luhn"
     },
@@ -280,42 +280,6 @@
       "category": "pii"
     },
     {
-      "id": "pii-ipv4",
-      "description": "IPv4 Address (private range)",
-      "regex": "\\b(10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b(?!:\\d)",
-      "category": "pii",
-      "excludeContext": [
-        "ping",
-        "curl",
-        "wget",
-        "ssh",
-        "scp",
-        "telnet",
-        "nc",
-        "netcat",
-        "redis",
-        "psql",
-        "mysql",
-        "mongo",
-        "kubectl",
-        "docker",
-        "port",
-        "forward",
-        "bind",
-        "listen",
-        "cidr",
-        "netmask",
-        "subnet",
-        "route",
-        "gateway",
-        "dns",
-        "nslookup",
-        "dig",
-        "traceroute",
-        "iptables"
-      ]
-    },
-    {
       "id": "pii-mynumber-jp",
       "description": "Japanese Individual Number (My Number)",
       "regex": "\\b\\d{12}\\b",
@@ -333,7 +297,7 @@
     {
       "id": "pii-codice-fiscale-it",
       "description": "Italian Codice Fiscale",
-      "regex": "\\b[A-Z]{6}\\d{2}[A-Z]\\d{2}[A-Z]\\d{3}[A-Z]\\b",
+      "regex": "\\b[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]\\b",
       "category": "pii",
       "validate": "codice-fiscale-it"
     },
@@ -574,6 +538,18 @@
       "id": "notion-token",
       "description": "Notion Integration Token",
       "regex": "\\bntn_[A-Za-z0-9]{40,}",
+      "category": "secret"
+    },
+    {
+      "id": "azure-sas-key",
+      "description": "Azure Shared Access Key (Service Bus, Event Hubs, IoT Hub)",
+      "regex": "SharedAccessKey=[A-Za-z0-9+/]{43}=",
+      "category": "secret"
+    },
+    {
+      "id": "google-oauth-secret",
+      "description": "Google OAuth Client Secret",
+      "regex": "\\bGOCSPX-[A-Za-z0-9_-]{20,}",
       "category": "secret"
     }
   ]

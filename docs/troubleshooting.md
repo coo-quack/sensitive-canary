@@ -25,7 +25,7 @@ If legitimate content is being blocked:
 
 ## .env file blocking
 
-This is by design. `.env` and `.env.*` files are blocked by filename, regardless of their contents, but only while the `secret` category is enabled (the default). `[allow-secret]` or `[allow-all]` will lift this block if you need Claude to read an `.env` file intentionally. `[allow-pii]` will not: the block is a secret guard.
+This is by design. `.env` and its siblings are blocked by filename, but only while the `secret` category is enabled (the default). Template names (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults`) are exempt from the name guard and scanned on their contents instead, so an ordinary template reads fine and one holding a live key does not. `[allow-secret]` or `[allow-all]` will lift this block if you need Claude to read an `.env` file intentionally. `[allow-pii]` will not: the block is a secret guard.
 
 ## Plugin not found after marketplace registration
 
