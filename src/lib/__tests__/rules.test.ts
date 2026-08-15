@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +15,7 @@ import {
   type RuleConfig,
   redact,
   scan,
+  VALIDATOR_NAMES,
   validateChineseID,
   validateCodiceFiscale,
   validateFrenchNIR,
@@ -1075,6 +1078,19 @@ describe("a value written to be replaced", () => {
 describe("a scan cannot be made to hang", () => {
   const MEGABYTE = 1024 * 1024;
 
+  // Measured against a baseline taken in the same run, not against a clock. The
+  // defect this guards was a hundred seconds where a tenth of one was normal —
+  // three orders of magnitude — so a generous multiple still catches it, and a
+  // machine running the suite alongside other work does not turn it red.
+  const timeScan = (text: string): number => {
+    const startedAt = Date.now();
+    scan(text);
+    return Date.now() - startedAt;
+  };
+
+  const baseline = (): number =>
+    Math.max(timeScan("const x = foo(bar);\n".repeat(MEGABYTE / 20)), 1);
+
   it.each([
     ["a repeated JWT header", "eyJ".repeat(MEGABYTE / 3)],
     [
@@ -1091,21 +1107,16 @@ describe("a scan cannot be made to hang", () => {
     ],
     ["one long run", "a".repeat(MEGABYTE)],
     ["digits", "1234567890".repeat(MEGABYTE / 10)],
-    // `env-assignment` was the rule this guard missed: its value capture was
-    // open-ended and backtracked, and a megabyte took six minutes.
+    // `env-assignment` was the rule the first pass at this guard missed: its
+    // value capture was open-ended and backtracked, and a megabyte took six
+    // minutes.
     ["repeated assignments", `${"TOKEN=".repeat(48000)}${"v".repeat(711999)}<`],
     [
       "assignments and a long value",
       `${"TOKEN=".repeat(87000)}${"v".repeat(524288)}<`,
     ],
-    // Five seconds, not two: this guards against the hundred-second behaviour
-    // that got the hook killed, and a machine running the suite in parallel with
-    // other work should not turn that guard red. Everything here measures well
-    // under a second when the machine is idle.
-  ])("a megabyte of %s scans well inside the budget", (_label, text) => {
-    const startedAt = Date.now();
-    scan(text);
-    expect(Date.now() - startedAt).toBeLessThan(5000);
+  ])("a megabyte of %s costs no more than ordinary text", (_label, text) => {
+    expect(timeScan(text)).toBeLessThan(baseline() * 30 + 500);
   });
 
   // The bound must not cost the detection it exists for.
@@ -1277,6 +1288,95 @@ describe("numbers that are not people", () => {
       expect(ruleIds(line)).toContain("pii-phone-jp");
     },
   );
+});
+
+// A single rule cannot be interrupted from inside the scan loop, so one bad
+// pattern from a config file used to hang the hook — and a hook killed by the
+// timeout does not block. The interrupt is on the V8 side now, which is why this
+// runs the hook rather than calling `scan`: the rules are built at import time.
+describe("a single rule cannot hang the scan", () => {
+  it("a catastrophic pattern is cut off rather than run to completion", () => {
+    const dir = mkdtempSync(join(tmpdir(), "canary-redos-"));
+    const config = join(dir, "config.json");
+    writeFileSync(
+      config,
+      JSON.stringify({
+        rules: [
+          { id: "boom", description: "x", regex: "(a+)+$", category: "secret" },
+        ],
+      }),
+      "utf8",
+    );
+    const target = join(dir, "target.txt");
+    writeFileSync(target, `${"a".repeat(40)}!\n`, "utf8");
+
+    const startedAt = Date.now();
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        fileURLToPath(new URL("../../pre-tool-use-hook.ts", import.meta.url)),
+      ],
+      {
+        input: JSON.stringify({
+          tool_name: "Read",
+          tool_input: { file_path: target },
+        }),
+        env: { ...process.env, SENSITIVE_CANARY_CONFIG: config },
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    rmSync(dir, { recursive: true, force: true });
+
+    // Unbounded, this pattern runs for hours; a killed hook does not block.
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("the check could not complete");
+    expect(Date.now() - startedAt).toBeLessThan(40_000);
+  }, 90_000);
+});
+
+// Both documents name every validator the registry offers. `phone-jp` was added
+// and named in neither, so a user writing a rule could not know it existed.
+describe("the documents and the registry agree", () => {
+  const docText = (name: string): string =>
+    readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
+  const readmeText = docText("../../../README.md");
+  const rulesDocText = docText("../../../docs/rules.md");
+
+  it("every validator is named in both documents", () => {
+    const undocumented = VALIDATOR_NAMES.filter(
+      (name: string) =>
+        !readmeText.includes(`\`${name}\``) ||
+        !rulesDocText.includes(`\`${name}\``),
+    );
+    expect(undocumented).toEqual([]);
+  });
+
+  // A configuration can switch a rule off without warning, in ways somebody
+  // would write on purpose. Validation accepts all of them — deliberately, since
+  // each is legitimate somewhere — so the documentation is what has to warn, and
+  // this is what holds it to that.
+  it.each([
+    ["entropyThreshold` above 8", { entropyThreshold: 100 }],
+    ["flags` containing `y`", { flags: "gy" }],
+    ["secretGroup` pointing at a group", { secretGroup: 7 }],
+  ])("%s compiles, and the documentation says what it costs", (note, extra) => {
+    expect(() =>
+      compileRule({
+        id: "aws-access-key",
+        description: "AWS",
+        regex: "\\b(AKIA)[A-Z0-9]{16}\\b",
+        category: "secret",
+        ...extra,
+      }),
+    ).not.toThrow();
+    expect(rulesDocText).toContain(note);
+  });
+
+  it("and that section exists to be found", () => {
+    expect(rulesDocText).toContain("goes quiet without saying so");
+  });
 });
 
 // Formats confirmed against each vendor's own documentation, after a survey

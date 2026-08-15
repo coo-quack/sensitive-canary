@@ -58,7 +58,15 @@ Install in two commands from inside a Claude Code session:
 /plugin install sensitive-canary@coo-quack
 ```
 
-Done. The hooks are enabled automatically.
+The hooks are enabled for every session started after this. A session that was
+already running does not pick them up — it reports the plugin as enabled and
+checks nothing — so start a new one.
+
+**Then check that it blocks.** An installation that checks nothing looks exactly
+like one that works, and only exit 2 stops a tool call, so a hook that fails to
+start is silent. Write a file holding `AKIA` followed by `IOSFODNN7EXAMPLE` and
+ask Claude to read it. It should refuse and say why. If it shows you the key, the
+hooks are not running.
 
 > **Keeping up to date:** Third-party marketplaces have auto-update disabled by default. To receive automatic updates, run `/plugin` → **Marketplaces** tab → select the marketplace → **Enable auto-update**. You can also update manually from the same tab. See [Discover and install plugins](https://docs.anthropic.com/en/docs/claude-code/discover-plugins) for details.
 
@@ -324,13 +332,13 @@ User rules support the same fields as built-in rules:
 | `excludeContext` | string[] | Words that, found nearby, say the match is not what the rule is after — the mirror of `contextWords` |
 | `contextWindow` | number | Override the global context window (default: 3 tokens) |
 | `entropyThreshold` | number | Skip matches below this Shannon entropy |
-| `secretGroup` | number | Capture group index containing the secret (default: 0 = full match) |
+| `secretGroup` | number | Capture group holding the secret. Omit for the whole match — writing `0` is not the same as omitting it, see [Detection Rules](https://coo-quack.github.io/sensitive-canary/rules.html) |
 | `validate` | string | Name of a built-in checksum validator (see below) |
-| `flags` | string | Regex flags (default: `"g"`) |
+| `flags` | string | Regex flags. `g` is added if left out; `y` makes a rule match only at the very start of the text |
 
 Available validators (referenced by name in the `validate` field):
 
-`luhn`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`
+`luhn`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`
 
 ### Overriding the context window globally
 
@@ -541,7 +549,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 
 ## Allow Tags (detailed)
 
-Allow tags filter the scan results — the scan still runs. The `.env`/`.env.*` name block is the only exception: when an allow tag is present, the file is passed through immediately without scanning.
+Allow tags filter the scan results — the scan still runs, including for a `.env` file whose name guard a tag has lifted. Lifting the name guard is not the same as skipping the check: `[allow-secret]` on a `.env` holding an email address still blocks on the address.
 
 ### Mask tags
 

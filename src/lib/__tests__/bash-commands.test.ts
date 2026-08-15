@@ -65,6 +65,8 @@ const FILE_READ_EXPECTED = [
   "tail",
   "unexpand",
   "uniq",
+  "view",
+  "vimdiff",
   "xxd",
   "xzcat",
   "xzless",

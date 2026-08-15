@@ -14,7 +14,7 @@ Install with two commands inside a Claude Code session:
 /plugin install sensitive-canary@coo-quack
 ```
 
-After installation, the hooks are active immediately. No restart or additional configuration needed.
+The hooks are active in every session started after the install. A session that was already running keeps going without them — it will say the plugin is enabled and check nothing — so restart before relying on it, and confirm with the check in [Installation](/install).
 
 For alternative installation methods (pnpm global, manual git clone), see the [Installation](/install) page.
 
@@ -36,7 +36,7 @@ When sensitive data is detected, the action is blocked and the terminal shows wh
 | `[allow-pii]` | Allow PII through for this prompt |
 | `[allow-all]` | Bypass all sensitive-canary checks for this prompt |
 
-Tags apply only to the message they appear in. They do not persist across turns. For PreToolUse hooks, allow tags are single-use — they are consumed by the first tool call. If Claude needs to perform multiple tool calls for the same request, you may need to include the tag again.
+Tags apply only to the message they appear in, and do not persist across turns. For PreToolUse hooks a tag stops applying once a tool result is recorded after it — so tool calls Claude issues together, before any of their results come back, are all covered by one tag. Include the tag again for later calls in the same request.
 
 ## Configuration
 

@@ -9,9 +9,11 @@ import {
   applyAllowTags,
   dedupeFindings,
   findingsToLines,
+  forOutput,
   type Message,
   parseAllowTags,
   randomBird,
+  userTypedText,
 } from "./lib/inspector.ts";
 import { enabledCategoriesFromEnv, type Finding, scan } from "./lib/rules.ts";
 import {
@@ -150,49 +152,6 @@ function currentDirectoryOrRoot(): string {
 }
 
 // ── Transcript ────────────────────────────────────────────────────────────────
-
-// Claude Code writes things the user did not type into the transcript as user
-// messages with plain string content: the output of a `!` command, the name and
-// arguments of a slash command, and system reminders. A tag anywhere in one of
-// those used to lift the guard for the next tool call — so `grep -r allow-all`,
-// or a README mentioning the tag, switched the protection off.
-const SYNTHETIC_ELEMENT_NAMES =
-  "local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-output|bash-stdout|bash-stderr|system-reminder";
-
-const SYNTHETIC_USER_ELEMENTS = new RegExp(
-  `<(${SYNTHETIC_ELEMENT_NAMES})>[\\s\\S]*?<\\/\\1>`,
-  "g",
-);
-
-// An opening tag with nothing closing it takes the rest of the message with it.
-// Pairs alone would have left an unclosed one — a truncated capture, or output
-// that happens to contain the tag — reading as the user speaking.
-const UNCLOSED_SYNTHETIC_ELEMENT = new RegExp(
-  `<(?:${SYNTHETIC_ELEMENT_NAMES})>[\\s\\S]*$`,
-  "g",
-);
-
-// Text inside a fence is being quoted, not issued: a pasted log or diff that
-// happens to contain the tag is not the user asking for it.
-//
-// Backticks around a single word are not the same thing. The documentation here
-// writes the tags that way — `[allow-secret]` — so stripping them refused the
-// form the project itself teaches, and refused it silently: the block that
-// followed advised adding the tag it had just ignored.
-const FENCED_CODE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
-
-// What the user actually typed, with the above taken out.
-function userTypedText(msg: Message): string {
-  const blocks =
-    typeof msg.content === "string"
-      ? [msg.content]
-      : msg.content.filter((b) => b.type === "text").map((b) => b.text ?? "");
-  return blocks
-    .join("\n")
-    .replace(SYNTHETIC_USER_ELEMENTS, " ")
-    .replace(UNCLOSED_SYNTHETIC_ELEMENT, " ")
-    .replace(FENCED_CODE, " ");
-}
 
 // Returns true when the message carries text the user typed. A message that is
 // only tool results, or only the machinery above, is not user input.
@@ -362,7 +321,7 @@ function block(
   const bird = randomBird();
   const terminalMessage = [
     "",
-    `${bird} sensitive-canary: blocked — ${source}`,
+    `${bird} sensitive-canary: blocked — ${forOutput(source)}`,
     "",
     ...detectionLines,
     "",
@@ -381,7 +340,7 @@ function block(
   }
 
   const reasonLines = [
-    `${bird} sensitive-canary blocked: ${source}`,
+    `${bird} sensitive-canary blocked: ${forOutput(source)}`,
     "",
     ...detectionLines,
     "",
@@ -571,7 +530,7 @@ function blockUnreadEnvFile(filePath: string, allowTags: Set<string>): void {
       "",
       "Its contents were not read — it is not a regular file, or the scan for this call had already stopped — so the name is what decides.",
     ],
-    buildAllowHints(`please read ${filePath}`, [], true),
+    buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
   );
 }
 
@@ -580,9 +539,8 @@ function scanEnvironment(names: string[], allowTags: Set<string>): void {
   for (const varName of names) {
     const value = process.env[varName];
     if (!value) continue;
-    const findings = applyAllowTags(
-      dedupeFindings(scan(value, ENABLED_CATEGORIES)),
-      allowTags,
+    const findings = dedupeFindings(
+      applyAllowTags(scan(value, ENABLED_CATEGORIES), allowTags),
     );
     if (findings.length === 0) continue;
     block(
@@ -698,7 +656,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       block(
         filePath,
         [ENV_BLOCK_REASON],
-        buildAllowHints(`please read ${filePath}`, [], true),
+        buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
       );
     }
   }
@@ -727,6 +685,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   }
 
   let content: string;
+  let tailContent = "";
   let readWasPartial = false;
   try {
     // The buffer is the cap, not the reported size. Sizing it from `stat` made
@@ -741,13 +700,40 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     const buf = Buffer.alloc(MAX_FILE_SCAN_BYTES);
     const fd = fs.openSync(filePath, "r");
     let raw: Buffer;
+    let tail: Buffer | null = null;
     try {
       const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
       raw = buf.subarray(0, bytesRead);
+      // The end as well as the beginning, when there is more than the cap
+      // between them. `tail -2 app.log` prints the last two lines and the cap
+      // reads the first megabyte, so on a large log the scan looked at exactly
+      // the part that was not shown — and the last lines of a log are where a
+      // failure has just printed a connection string.
+      const size = fs.fstatSync(fd).size;
+      if (size > MAX_FILE_SCAN_BYTES) {
+        const end = Buffer.alloc(MAX_FILE_SCAN_BYTES);
+        const read = fs.readSync(
+          fd,
+          end,
+          0,
+          end.length,
+          size - MAX_FILE_SCAN_BYTES,
+        );
+        tail = end.subarray(0, read);
+      }
     } finally {
       fs.closeSync(fd);
     }
     bytesScanned += raw.length;
+    if (tail !== null) {
+      bytesScanned += tail.length;
+      const tailUtf16 = detectUtf16(tail);
+      const text = (tailUtf16 ?? tail).toString(tailUtf16 ? "utf16le" : "utf8");
+      // Past the last NUL rather than up to the first: this window is the end of
+      // the file, so what follows a separator is the part that gets printed.
+      const nul = text.lastIndexOf("\0");
+      tailContent = nul === -1 ? text : text.slice(nul + 1);
+    }
     // UTF-16 puts a NUL in every other byte, so the rule below stopped after one
     // character and the file went through unread. PowerShell 5.1 writes UTF-16LE
     // by default, which makes `Get-Something > creds.txt` a file this tool did
@@ -794,15 +780,37 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
         "",
         "This one is named as a template, which is normally read. It could not be read whole — it holds a NUL byte or runs past the scan limit — so the name is what decides.",
       ],
-      buildAllowHints(`please read ${filePath}`, [], true),
+      buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
     );
+  }
+
+  // A second window over the same file, judged on its own: a finding in either
+  // end is a finding.
+  if (tailContent.length > 0) {
+    const tailFindings = dedupeFindings(
+      applyAllowTags(scan(tailContent, ENABLED_CATEGORIES), allowTags),
+    );
+    if (tailFindings.length > 0) {
+      block(
+        filePath,
+        [
+          "🚫 Blocked: file contains sensitive data",
+          "",
+          ...findingsToLines(tailFindings),
+        ],
+        buildAllowHints(`please read ${forOutput(filePath)}`, tailFindings),
+      );
+    }
   }
 
   if (content.length === 0) return;
 
-  const findings = applyAllowTags(
-    dedupeFindings(scan(content, ENABLED_CATEGORIES)),
-    allowTags,
+  // Allow first, then dedupe. The other way round, a value that a secret rule
+  // and a PII rule both match loses the PII finding to deduplication before the
+  // tag is consulted, and `[allow-secret]` then removes the secret finding too —
+  // so the tag lifted a PII block, which the README says it cannot.
+  const findings = dedupeFindings(
+    applyAllowTags(scan(content, ENABLED_CATEGORIES), allowTags),
   );
   if (findings.length === 0) return;
 
@@ -813,7 +821,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       "",
       ...findingsToLines(findings),
     ],
-    buildAllowHints(`please read ${filePath}`, findings),
+    buildAllowHints(`please read ${forOutput(filePath)}`, findings),
   );
 }
 
@@ -825,6 +833,10 @@ process.stdin.on("data", (chunk: string) => (raw += chunk));
 process.stdin.on("end", () => {
   let data: HookInput;
   try {
+    // Empty stdin is nothing to check. Bytes that do not parse are a check that
+    // could not read its input, which is not the same as safe: two characters
+    // missing from the end of a payload used to pass a key through.
+    if (raw.trim().length === 0) process.exit(0);
     const parsed: unknown = JSON.parse(raw);
     // `JSON.parse("null")` succeeds and returns null, which then threw on the
     // first field read. A payload that is not an object names nothing, so
@@ -832,8 +844,10 @@ process.stdin.on("end", () => {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
       process.exit(0);
     data = parsed as HookInput;
-  } catch {
-    process.exit(0);
+  } catch (error) {
+    // The check never started, so it vouches for nothing. Everything else that
+    // cannot finish stops the call; input that will not parse is the same case.
+    failClosed(error);
   }
 
   const tool = typeof data.tool_name === "string" ? data.tool_name : "";
@@ -921,9 +935,8 @@ process.stdin.on("end", () => {
 
     scanEnvironment(envVarNames, allowTags);
 
-    const cmdFindings = applyAllowTags(
-      dedupeFindings(scan(command, ENABLED_CATEGORIES)),
-      allowTags,
+    const cmdFindings = dedupeFindings(
+      applyAllowTags(scan(command, ENABLED_CATEGORIES), allowTags),
     );
     if (cmdFindings.length > 0) {
       block(

@@ -93,6 +93,30 @@ describe("user-prompt-submit-hook — how much of the prompt is scanned", () => 
 // the block above, which asks for the block. What is left here is what really
 // has nothing to scan.
 // The same contract on the other hook.
+// The same contract on this hook, which had the order right and must keep it.
+describe("user-prompt-submit-hook — a tag lifts only its own category", () => {
+  const BOTH = "API_TOKEN=alice.dupont@realcompany.co.jp";
+  const run = (text: string): number => {
+    const result = spawnSync(process.execPath, [...NODE_FLAGS, HOOK], {
+      input: JSON.stringify({ prompt: text }),
+      encoding: "utf8",
+    });
+    return result.status ?? -1;
+  };
+
+  it.each([
+    ["no tag", BOTH],
+    ["[allow-secret]", `[allow-secret] ${BOTH}`],
+    ["[allow-pii]", `[allow-pii] ${BOTH}`],
+  ])("%s does not let it through", (_label, text) => {
+    expect(run(text)).toBe(2);
+  });
+
+  it("[allow-all] does", () => {
+    expect(run(`[allow-all] ${BOTH}`)).toBe(0);
+  });
+});
+
 describe("user-prompt-submit-hook — an unforeseen error", () => {
   const raw = (payload: string) =>
     spawnSync(process.execPath, ["--experimental-strip-types", HOOK], {
@@ -103,10 +127,15 @@ describe("user-prompt-submit-hook — an unforeseen error", () => {
   // A payload that is not an object carries no prompt, so there is nothing to
   // scan and nothing to stop. The handler is for a check that started and could
   // not finish, which the other hook's tests cover through the scan budget.
-  it.each(["not json", "", "{}", "null", "42", "[]"])(
-    "%s is still allowed",
+  it.each(["", "   ", "{}"])("%s is still allowed", (payload) => {
+    expect(raw(payload).status).toBe(0);
+  });
+
+  // Input the check could not read is not input the check approved.
+  it.each(["not json", '{"prompt":"x"', "{"])(
+    "%s stops the call",
     (payload) => {
-      expect(raw(payload).status).toBe(0);
+      expect(raw(payload).status).toBe(2);
     },
   );
 
@@ -371,12 +400,14 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 });
 
 describe("user-prompt-submit-hook — malformed input", () => {
-  it("exits 0 on invalid JSON", () => {
-    const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
+  // Bytes that do not parse mean the check could not read its input, which is
+  // not the same as nothing being there.
+  it("stops the call on invalid JSON", () => {
+    const result = spawnSync(process.execPath, [...NODE_FLAGS, HOOK], {
       input: "not json",
       encoding: "utf8",
     });
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(2);
   });
 });
 
