@@ -1047,6 +1047,122 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
 
 // ── malformed input ───────────────────────────────────────────────────────────
 
+// Only exit 2 blocks. An unforeseen error exits 1, which passes — so a crash
+// anywhere in the hook silently switched the protection off. It now stops the
+// call instead, since an unfinished check vouches for nothing.
+// Claude Code writes what the user did not type into the transcript as user
+// messages: the output of a `!` command, slash-command names, system reminders.
+// A tag in any of those lifted the guard for the next tool call, so `grep -r
+// allow-all` switched the protection off.
+describe("pre-tool-use-hook — where an allow tag may come from", () => {
+  const writeFixture = useFixtureDir("tag-source");
+
+  const withTranscript = (content: string): number => {
+    const secret = writeFixture("leak.txt", `key=${AWS_KEY}`);
+    return runHook("Read", secret, {
+      transcriptPath: writeTranscript([content]),
+    }).exitCode;
+  };
+
+  it("a tag the user typed lifts the guard", () => {
+    expect(withTranscript("[allow-all] please read it")).toBe(0);
+  });
+
+  it.each([
+    "local-command-stdout",
+    "local-command-stderr",
+    "command-name",
+    "command-args",
+    "bash-stdout",
+    "system-reminder",
+  ])("a tag inside <%s> does not", (element) => {
+    expect(
+      withTranscript(`<${element}>saw [allow-all] in there</${element}>`),
+    ).toBe(2);
+  });
+
+  // Quoted, not issued: a pasted log or diff is not the user asking.
+  it.each([
+    "here is a log:\n```\n2026-01-01 saw [allow-all]\n```\nplease read it",
+    "the README says `[allow-all]` bypasses it",
+    "~~~\n[allow-all]\n~~~",
+  ])("a tag inside a fence does not", (content) => {
+    expect(withTranscript(content)).toBe(2);
+  });
+
+  // The wrapper must not swallow the rest of the message.
+  it("a tag beside synthetic content still lifts the guard", () => {
+    expect(
+      withTranscript(
+        "<local-command-stdout>output</local-command-stdout>\n[allow-all] now read it",
+      ),
+    ).toBe(0);
+  });
+});
+
+// A file whose every other byte is NUL used to stop the scan after one
+// character. PowerShell 5.1 writes UTF-16LE by default.
+describe("pre-tool-use-hook — UTF-16", () => {
+  const writeFixture = useFixtureDir("utf16");
+
+  const writeBytes = (name: string, bytes: Buffer): string => {
+    const p = writeFixture.path(name);
+    writeFileSync(p, bytes);
+    return p;
+  };
+
+  const utf16le = (text: string): Buffer => Buffer.from(text, "utf16le");
+
+  it.each([
+    ["little-endian", (t: string) => utf16le(t)],
+    ["big-endian", (t: string) => Buffer.from(utf16le(t)).swap16()],
+    [
+      "with a byte-order mark",
+      (t: string) => Buffer.concat([Buffer.from([0xff, 0xfe]), utf16le(t)]),
+    ],
+  ])("a secret in a %s file is found", (label, encode) => {
+    const p = writeBytes(
+      `${label.replace(/\W/g, "")}.txt`,
+      encode(`key=${AWS_KEY}\n`),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a clean UTF-16 file is allowed", () => {
+    const p = writeBytes("clean.txt", utf16le("hello, nothing here\n"));
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
+  it("a genuinely binary file is not decoded as text", () => {
+    const p = writeBytes(
+      "blob.bin",
+      Buffer.from([0, 1, 2, 3, 0, 255, 0, 7, 9, 0, 0, 0]),
+    );
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+});
+
+describe("pre-tool-use-hook — an unforeseen error", () => {
+  it("a payload that is not an object stops the call", () => {
+    expect(runHookWithRawInput("null").exitCode).toBe(2);
+  });
+
+  it("the message says the check failed, not that something was found", () => {
+    const { stderr } = runHookWithRawInput("null");
+    expect(stderr).toContain("the check could not complete");
+    expect(stderr).not.toContain("sensitive data detected");
+  });
+
+  // Input the hook does understand is unaffected: this must not become a hook
+  // that blocks everything.
+  it.each(["not json", "", "{}", "[]", '{"tool_name":"Read"}'])(
+    "%s is still allowed",
+    (payload) => {
+      expect(runHookWithRawInput(payload).exitCode).toBe(0);
+    },
+  );
+});
+
 describe("pre-tool-use-hook — malformed input", () => {
   it("exits 0 on invalid JSON", () => {
     const { exitCode } = runHookWithRawInput("not json");

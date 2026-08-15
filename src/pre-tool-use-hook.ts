@@ -22,8 +22,34 @@ import {
 import {
   collectPathFields,
   isWritingTool,
+  normalizeFieldName,
   TOOLS_WITHOUT_FILE_OUTPUT,
 } from "./lib/tool-inputs.ts";
+
+// A hook that crashes exits 1, and only exit 2 blocks — so until now any
+// unforeseen error was a silent pass, which is the failure this whole tool
+// exists to prevent. What went wrong is unknown at this point, and "unknown" is
+// not "safe": the check did not finish, so the call is stopped rather than let
+// through. `[allow-all]` gets past it, and the message says the check failed
+// rather than claiming a finding.
+function failClosed(error: unknown): never {
+  try {
+    process.stderr.write(
+      `\n🐤 sensitive-canary: the check could not complete — ${
+        error instanceof Error ? error.message : String(error)
+      }\n\n` +
+        "  Nothing was scanned, so nothing can be vouched for. Stopping rather\n" +
+        "  than passing it through. Add [allow-all] to your prompt to proceed\n" +
+        "  anyway, and please report this.\n",
+    );
+  } catch {
+    // A closed stderr must not turn the block back into a pass.
+  }
+  process.exit(2);
+}
+
+process.on("uncaughtException", failClosed);
+process.on("unhandledRejection", failClosed);
 
 interface HookInput {
   transcript_path?: string;
@@ -108,11 +134,39 @@ let baseDirectory = process.cwd();
 
 // ── Transcript ────────────────────────────────────────────────────────────────
 
-// Returns true when the message contains at least one text content block
-// (or is a plain string). Tool-result-only messages are not real user input.
+// Claude Code writes things the user did not type into the transcript as user
+// messages with plain string content: the output of a `!` command, the name and
+// arguments of a slash command, and system reminders. A tag anywhere in one of
+// those used to lift the guard for the next tool call — so `grep -r allow-all`,
+// or a README mentioning the tag, switched the protection off.
+const SYNTHETIC_USER_ELEMENTS =
+  /<(local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-stdout|bash-stderr|system-reminder)>[\s\S]*?<\/\1>/g;
+
+// Text inside a fence is being quoted, not issued. A pasted log or diff that
+// happens to contain the tag is not the user asking for it.
+const FENCED_OR_INLINE_CODE = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
+
+// What the user actually typed, with the above taken out.
+function userTypedText(msg: Message): string {
+  const blocks =
+    typeof msg.content === "string"
+      ? [msg.content]
+      : msg.content.filter((b) => b.type === "text").map((b) => b.text ?? "");
+  return blocks
+    .join("\n")
+    .replace(SYNTHETIC_USER_ELEMENTS, " ")
+    .replace(FENCED_OR_INLINE_CODE, " ");
+}
+
+// Returns true when the message carries text the user typed. A message that is
+// only tool results, or only the machinery above, is not user input.
 function hasTextContent(msg: Message): boolean {
-  if (typeof msg.content === "string") return true;
-  return msg.content.some((b) => b.type === "text");
+  if (
+    typeof msg.content !== "string" &&
+    !msg.content.some((b) => b.type === "text")
+  )
+    return false;
+  return userTypedText(msg).trim().length > 0;
 }
 
 // Load allow tags from the Claude Code session transcript.
@@ -168,7 +222,11 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
   }
 
   if (!lastUserMessage || toolResultAfterLastText) return new Set();
-  return parseAllowTags([lastUserMessage]);
+  // Parsed from the typed text, not the raw content, so the two agree about
+  // what counts as the user speaking.
+  return parseAllowTags([
+    { role: "user", content: userTypedText(lastUserMessage) },
+  ]);
 }
 
 // ── .env pattern ──────────────────────────────────────────────────────────────
@@ -390,9 +448,7 @@ function collectCommandFields(
   if (depth > MAX_COMMAND_FIELD_DEPTH) return [];
   const found: string[] = [];
   for (const [key, value] of Object.entries(input)) {
-    const named = COMMAND_FIELD_NAMES.has(
-      key.toLowerCase().replace(/[-_]/g, ""),
-    );
+    const named = COMMAND_FIELD_NAMES.has(normalizeFieldName(key));
     if (named && typeof value === "string") {
       found.push(value);
     } else if (named && Array.isArray(value)) {
@@ -513,6 +569,34 @@ function scanPathsLiteralsFirst(
   }
 }
 
+// The bytes as little-endian UTF-16, or null when the file is not UTF-16.
+// Only the prefix is examined: the question is which byte of each pair is the
+// NUL, and a few hundred pairs settle it.
+function detectUtf16(raw: Buffer): Buffer | null {
+  if (raw.length < 4) return null;
+  // Swapping is done on a copy: `raw` is a view into the shared read buffer.
+  if (raw[0] === 0xff && raw[1] === 0xfe) return raw;
+  if (raw[0] === 0xfe && raw[1] === 0xff)
+    return Buffer.from(raw)
+      .subarray(0, raw.length & ~1)
+      .swap16();
+  const pairs = Math.min(raw.length >> 1, 512);
+  let evenNuls = 0;
+  let oddNuls = 0;
+  for (let i = 0; i < pairs; i++) {
+    if (raw[i * 2] === 0) evenNuls++;
+    if (raw[i * 2 + 1] === 0) oddNuls++;
+  }
+  // Text in either encoding is almost all ASCII, so one side of every pair is
+  // NUL and the other is not. A file that is merely binary has no such split.
+  if (oddNuls > pairs * 0.9 && evenNuls === 0) return raw;
+  if (evenNuls > pairs * 0.9 && oddNuls === 0)
+    return Buffer.from(raw)
+      .subarray(0, raw.length & ~1)
+      .swap16();
+  return null;
+}
+
 function scanFile(filePath: string, allowTags: Set<string>): void {
   if (shouldBlockEnvFile(filePath)) {
     // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
@@ -578,17 +662,31 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     } finally {
       fs.closeSync(fd);
     }
-    // Binary files: scan only the text prefix before the first NUL byte
     bytesScanned += raw.length;
-    const nulIndex = raw.indexOf(0);
-    // Whether the file was read to its end. Recorded here and acted on below,
-    // outside the catch: `block` exits the process, and anything it threw on the
-    // way — a closed stderr, say — would be swallowed by the `catch` and turn a
-    // block into a pass.
-    readWasPartial = nulIndex !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
-    content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(
-      "utf8",
-    );
+    // UTF-16 puts a NUL in every other byte, so the rule below stopped after one
+    // character and the file went through unread. PowerShell 5.1 writes UTF-16LE
+    // by default, which makes `Get-Something > creds.txt` a file this tool did
+    // not look at. Detected by the byte-order mark, or by NULs falling on one
+    // side of every pair through the prefix.
+    const utf16 = detectUtf16(raw);
+    if (utf16 !== null) {
+      const text = utf16.toString("utf16le").replace(/^\uFEFF/, "");
+      const nul = text.indexOf("\0");
+      readWasPartial = nul !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
+      content = nul === -1 ? text : text.slice(0, nul);
+      // Falls through to the same guards and the same scan below.
+    } else {
+      // Binary files: scan only the text prefix before the first NUL byte
+      const nulIndex = raw.indexOf(0);
+      // Whether the file was read to its end. Recorded here and acted on below,
+      // outside the catch: `block` exits the process, and anything it threw on the
+      // way — a closed stderr, say — would be swallowed by the `catch` and turn a
+      // block into a pass.
+      readWasPartial = nulIndex !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
+      content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(
+        "utf8",
+      );
+    }
   } catch {
     return;
   }
@@ -659,12 +757,18 @@ process.stdin.on("end", () => {
     : new Set<string>();
 
   if (tool === "Read") {
-    const target = typeof input.file_path === "string" ? input.file_path : "";
     // Through the same expansion as everything else: this branch resolved
     // nothing, so a relative `file_path`, a `~`, a `file://` URI and a pattern
     // all named something that is not on disk.
-    for (const candidate of expandCandidate(target)) {
-      scanFile(candidate, allowTags);
+    //
+    // And through the same collector, so a `file_path` that is not a string is
+    // read rather than dropped. Coercing it to "" exited 0 here while every
+    // other tool name reached `collectPathFields` and blocked — the same shape,
+    // two answers.
+    for (const target of collectPathFields(input)) {
+      for (const candidate of expandCandidate(target)) {
+        scanFile(candidate, allowTags);
+      }
     }
     process.exit(0);
   }

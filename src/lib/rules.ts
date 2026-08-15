@@ -24,10 +24,9 @@ interface Rule {
   category: Category;
   contextWords?: string[];
   requireContext?: boolean;
-  // Words that, found near a match, say it is not what the rule is looking for.
-  // The mirror of contextWords: `ssh deploy@host` and `git clone git@github.com`
-  // are addresses by shape and hostnames by use, and the command in front of
-  // them is the only thing that says which.
+  // Words that, found near a match, say it is not what the rule is looking for —
+  // the mirror of contextWords. The postal-code rule uses it: `65536 bytes` and
+  // `max 3` are five-digit numbers beside a word that says they are not places.
   excludeContext?: string[];
   contextWindow?: number;
 }
@@ -46,10 +45,7 @@ export interface RuleConfig {
   category: Category;
   contextWords?: string[];
   requireContext?: boolean;
-  // Words that, found near a match, say it is not what the rule is looking for.
-  // The mirror of contextWords: `ssh deploy@host` and `git clone git@github.com`
-  // are addresses by shape and hostnames by use, and the command in front of
-  // them is the only thing that says which.
+  // See Rule.excludeContext.
   excludeContext?: string[];
   contextWindow?: number;
 }
@@ -105,9 +101,17 @@ const TEST_CARD_NUMBERS = new Set([
   "3566002020360505",
 ]);
 
+// A card number that is not published test data and passes the checksum. This
+// is what the `luhn` validator resolves to: `luhn` alone answers a narrower
+// question, and having one function answer both meant it returned false for
+// numbers that do pass the checksum.
+export function isRealCardNumber(str: string): boolean {
+  if (TEST_CARD_NUMBERS.has(str.replace(/\D/g, ""))) return false;
+  return luhn(str);
+}
+
 export function luhn(str: string): boolean {
   const digits = str.replace(/\D/g, "");
-  if (TEST_CARD_NUMBERS.has(digits)) return false;
   if (digits.length === 0) return false;
   let sum = 0;
   let double = false;
@@ -448,23 +452,47 @@ export function isReservedIpv6(ip: string): boolean {
 // Only secret rules consult this. "todo@company.com" is a real address, and
 // AWS's own documented key ends in EXAMPLE and is still a key, so `example` is
 // deliberately absent from the list.
-export function isPlaceholder(value: string): boolean {
-  if (/^[Xx]+$/.test(value)) return true;
-  if (/x{8,}/i.test(value)) return true;
-  // `<your-token>`, `${TOKEN}`, `{{ token }}` — a value nobody typed.
-  if (/[<{][^>}]*[>}]/.test(value)) return true;
-  // A connection string whose user and password are both the words for them.
-  // `root:secret@` is not one of these: `secret` alone is a password people
-  // actually set, and `root` is a real account.
-  if (
-    /\/\/(?:your)?(?:user|username)(?:name)?:(?:your)?(?:password|passwd|pwd)@/i.test(
-      value,
-    )
-  )
-    return true;
-  if (/^your[_-]/i.test(value)) return true;
-  return /\b(?:changeme|change[_-]me|placeholder|dummy|fixme|todo|insecure|replace[_-](?:me|this|with)|your[_-][a-z])/i.test(
-    value,
+// A word that only ever appears in a value nobody typed.
+const PLACEHOLDER_MARKERS =
+  /^(?:changeme|change|me|replace|with|real|this|your|my|here|todo|tbd|fixme|dummy|placeholder|insecure|sample|value|xxx+)$/i;
+
+// A word that can make up the rest of such a value, but never marks one alone.
+const PLACEHOLDER_FILLER =
+  /^(?:api|key|token|secret|password|passwd|pwd|pass|url|uri|host|hostname|name|user|username|id|in|production|development|the|a|of|for|and|[0-9]+)$/i;
+
+export function isPlaceholder(value: string, following = ""): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  // Filler on its own: `xxxxxxxxxxxx`.
+  if (/^[Xx]+$/.test(v)) return true;
+  // A slot rather than a value: `<your-token>`, `${TOKEN}`, `{{ token }}`.
+  if (/^[<{[]/.test(v) && /[>}\]]$/.test(v)) return true;
+  // The default the django template generates, which ships in every new project.
+  if (/^django-insecure-/i.test(v)) return true;
+  // A connection string where the user, the password and the host are all the
+  // words for them. Each of the three matters: `root:secret@` is a password
+  // people set, and `user:password@prod.corp.internal` names real infrastructure.
+  // The rule that finds these stops at the `@`, so the host arrives as the text
+  // that follows rather than as part of the value.
+  const GENERIC_CREDENTIALS =
+    /\w+:\/\/(?:your[_-]?)?(?:user|username)(?:name)?:(?:your[_-]?)?(?:password|passwd|pwd)@/i;
+  const GENERIC_HOST =
+    /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host|hostname|db|database|example\.(?:com|org|net))\b/i;
+  const afterAt = v.match(GENERIC_CREDENTIALS)
+    ? v.slice(
+        (v.match(GENERIC_CREDENTIALS)?.index ?? 0) +
+          (v.match(GENERIC_CREDENTIALS)?.[0].length ?? 0),
+      )
+    : null;
+  if (afterAt !== null && GENERIC_HOST.test(afterAt || following)) return true;
+  // Otherwise every part of the value has to be one of these words, and at
+  // least one has to be a marker. Testing whether the value *contains* a marker
+  // was a way through: `changeme_` in front of a live key disabled the rule.
+  const parts = v.split(/[-_.\s]+/).filter(Boolean);
+  if (parts.length === 0) return false;
+  if (!parts.some((part) => PLACEHOLDER_MARKERS.test(part))) return false;
+  return parts.every(
+    (part) => PLACEHOLDER_MARKERS.test(part) || PLACEHOLDER_FILLER.test(part),
   );
 }
 
@@ -524,7 +552,7 @@ function hasNearbyContextWord(
 // these validators or omit `validate` entirely.
 
 const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
-  luhn,
+  luhn: isRealCardNumber,
   "mynumber-jp": validateMyNumber,
   "nir-fr": validateFrenchNIR,
   "codice-fiscale-it": validateCodiceFiscale,
@@ -774,20 +802,56 @@ export function redact(str: string): string {
   return `${str.slice(0, 4)}****${str.slice(-4)}`;
 }
 
+// Longer than any honest scan and far shorter than the hook timeout. One rule
+// that backtracks badly used to take minutes on a megabyte, and a hook killed by
+// the timeout does not block — so the damage was silent. Bounding the patterns
+// fixed the two that did it; this is here so the next one of that shape is
+// caught rather than repeating the same failure. The check sits between rules
+// because a single `matchAll` cannot be interrupted.
+export const SCAN_BUDGET_MS = 10_000;
+
+export class ScanBudgetExceeded extends Error {
+  constructor(ruleId: string, elapsed: number) {
+    super(
+      `the scan passed ${SCAN_BUDGET_MS}ms (${elapsed}ms at rule "${ruleId}")`,
+    );
+    this.name = "ScanBudgetExceeded";
+  }
+}
+
 export function scan(
   text: string,
   categories: ReadonlySet<Category> = ALL_CATEGORIES,
 ): Finding[] {
   const findings: Finding[] = [];
+  const startedAt = Date.now();
 
   for (const rule of RULES) {
     if (!categories.has(rule.category)) continue;
+    const elapsed = Date.now() - startedAt;
+    // Thrown rather than returned: a partial result is indistinguishable from a
+    // clean one, and the hooks stop the call on an error they cannot explain.
+    if (elapsed > SCAN_BUDGET_MS)
+      throw new ScanBudgetExceeded(rule.id, elapsed);
     for (const match of text.matchAll(rule.regex)) {
       const secretValue =
         rule.secretGroup != null ? match[rule.secretGroup] : match[0];
 
       if (!secretValue) continue;
-      if (rule.category === "secret" && isPlaceholder(secretValue)) continue;
+      // Both the captured value and the whole match: a rule with a
+      // `secretGroup` captures only part of what it matched, and the
+      // connection-string rule stops at the `@`, so the host — the one thing
+      // that separates `user:password@localhost` from `user:password@` in front
+      // of real infrastructure — is outside the capture.
+      const matchStart = match.index ?? 0;
+      const matchEnd = matchStart + match[0].length;
+      const following = text.slice(matchEnd, matchEnd + 64);
+      if (
+        rule.category === "secret" &&
+        (isPlaceholder(secretValue, following) ||
+          (rule.secretGroup != null && isPlaceholder(match[0], following)))
+      )
+        continue;
       if (
         rule.entropyThreshold != null &&
         entropy(secretValue) < rule.entropyThreshold
@@ -795,8 +859,6 @@ export function scan(
         continue;
       if (rule.validate != null && !rule.validate(secretValue)) continue;
 
-      const matchStart = match.index ?? 0;
-      const matchEnd = matchStart + match[0].length;
       const hasContext =
         !rule.contextWords || rule.contextWords.length === 0
           ? true

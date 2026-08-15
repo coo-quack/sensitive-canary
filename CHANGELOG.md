@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.8.0 (2026-08-14)
+## v0.8.0 (2026-08-15)
 
 ### Features
 
@@ -185,14 +185,53 @@
   - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` and
     `.env.defaults` are not blocked by name. Their contents are still scanned, so
     a template with a real key in it is still caught — by what is in it
-- **Private IPv4 addresses are no longer detected.** An RFC 1918 address is
-  non-routable and identifies nothing outside the network it belongs to, and the
-  rule spent its time on ansible inventories, ssh configs, Kubernetes manifests
-  and docker-compose files — five such files, all blocked before, all quiet now.
-  Public addresses are unchanged and still require a nearby label. Anyone who
-  wants the old behaviour can add the rule back through the config file; the
-  `excludeContext` field it used is documented now and still serves the postal
-  code rule. 75 rules to 74
+- **A megabyte of `eyJ` used to kill the hook, and a killed hook does not
+  block.** Two rules were shaped `{n,}` followed by a literal that may never
+  come, which makes the engine retry the whole tail from every start position.
+  `eyJ` recurs every three characters, so one 400 KiB file was enough to spend
+  the PreToolUse timeout and take the rest of the call with it — including the
+  `.env` name guard, by naming the padding first. A JWT begins at a token
+  boundary, and saying so leaves one start instead of a third of a million: a
+  megabyte went from 104 seconds to 27 milliseconds. The Mapbox, Sentry and
+  Square patterns had the same shape and are bounded too
+- A scan that runs past ten seconds now stops the call rather than finishing
+  quietly. Bounding those patterns fixed the two rules that could do it; this is
+  so the next rule of that shape is caught instead of repeating it. The check
+  sits between rules, since a single match cannot be interrupted
+- **An allow tag could be issued by something other than the user.** Claude Code
+  records the output of a `!` command, slash-command names and system reminders
+  as user messages, so `[allow-all]` appearing in any of them lifted the guard
+  for the next tool call — `grep -r allow-all` was enough. A tag inside a code
+  fence no longer counts either: a pasted log is quoting the tag, not asking for
+  it
+- **A UTF-16 file was not scanned at all.** Every other byte is NUL, and the
+  scan stops at the first one, so the contents came to one character. PowerShell
+  5.1 writes UTF-16LE by default, which makes redirecting a command's output to
+  a file a way past this. Little-endian, big-endian and byte-order-marked files
+  are all read now; genuinely binary files are still left alone
+- `Read` with a `file_path` that is not a string exited 0, while the same shape
+  under any other tool name reached the shared collector and blocked
+- **A crash no longer passes the call through.** Only exit 2 blocks, and an
+  unforeseen error exits 1 — so any bug anywhere in a hook silently switched the
+  protection off, which is the failure this tool exists to prevent. Both hooks
+  now stop the call instead, with a message saying the check did not finish
+  rather than claiming a finding. Input the hooks do understand is unaffected;
+  `[allow-all]` gets past it
+- **A prompt that is not a string is read rather than dropped.** Not throwing on
+  `{"prompt":{"text":"…"}}` was only half the fix: coercing it to the empty
+  string exited 0, which is the same silence the exception produced. Every
+  string inside the value is collected now, to a bounded depth, so object,
+  array and content-block prompts are scanned like a plain one
+- A field named `command.line` or `command line` was walked past while
+  `file.path` was read correctly — the two collectors normalised field names
+  with a regex each, and the one for commands dropped only `-` and `_`
+- The placeholder recognition added above could be used to smuggle a live
+  credential: it asked whether a value *contained* a placeholder word, so
+  `changeme_` in front of a real key switched the rule off. The whole value has
+  to be placeholder now
+- Widening the Stripe and OpenAI rules swallowed two rules whole:
+  `stripe-restricted-key` became a strict subset of `stripe-secret-key`, and
+  `openai-project-key` stopped being reported at all. Both fire again
 - **Private IPv4 addresses are no longer detected.** An RFC 1918 address is
   non-routable and identifies nothing outside the network it belongs to, and the
   rule spent its time on ansible inventories, ssh configs, Kubernetes manifests
@@ -288,7 +327,7 @@
   `cat <(echo hi) secrets` left `secrets` in a segment of its own, where it was
   read as a command name; the comment at that line said the only cost was
   reaching the inner command twice
-- Bound the work of one tool call at 8 MiB across every file it reads, and skip a
+- Bound the work of one tool call at 64 MiB across every file it reads, and skip a
   file already read. A glob naming three hundred large files took half a minute,
   and five overlapping globs read the same files five times
 - Lift the `.env` name block only for a tag that allows secrets. `parseAllowTags`

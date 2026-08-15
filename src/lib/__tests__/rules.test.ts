@@ -1058,6 +1058,54 @@ describe("a value written to be replaced", () => {
   });
 });
 
+// A rule shaped `{n,}` then a literal that may never come retries the whole tail
+// from every start. `eyJ` recurs every three characters, so a megabyte of it took
+// a hundred seconds — past the hook timeout, and a killed hook does not block.
+describe("a scan cannot be made to hang", () => {
+  const MEGABYTE = 1024 * 1024;
+
+  it.each([
+    ["a repeated JWT header", "eyJ".repeat(MEGABYTE / 3)],
+    [
+      "repeated Square prefixes",
+      `${("-EAAA" + "a".repeat(20)).repeat(MEGABYTE / 25)}/`,
+    ],
+    [
+      "repeated Mapbox prefixes",
+      ("pk.eyJ" + "a".repeat(12)).repeat(MEGABYTE / 18),
+    ],
+    [
+      "repeated Sentry prefixes",
+      ("sntrys_" + "a".repeat(12)).repeat(MEGABYTE / 19),
+    ],
+    ["one long run", "a".repeat(MEGABYTE)],
+    ["digits", "1234567890".repeat(MEGABYTE / 10)],
+  ])("a megabyte of %s scans in under two seconds", (_label, text) => {
+    const startedAt = Date.now();
+    scan(text);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+  });
+
+  // The bound must not cost the detection it exists for.
+  it("a JWT with a large payload is still found", () => {
+    const segment = (value: object): string =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    const token = [
+      segment({ alg: "HS256", typ: "JWT" }),
+      segment({ sub: "1", scope: "a".repeat(3000) }),
+      "s".repeat(43),
+    ].join(".");
+    expect(ruleIds(token)).toContain("jwt");
+  });
+
+  // A boundary is what removes the quadratic, so it has to stay meaningful.
+  it("a JWT header inside a longer token is not a JWT", () => {
+    expect(
+      ruleIds(`x${"eyJhbGciOiJIUzI1NiJ9"}.eyJhIjoxfQ.abcdefghij`),
+    ).not.toContain("jwt");
+  });
+});
+
 // Formats confirmed against each vendor's own documentation, after a survey
 // found the rules here were written to shapes those vendors do not issue.
 describe("credential formats", () => {
@@ -1103,9 +1151,16 @@ describe("credential formats", () => {
     expect(ruleIds(`${prefix}-${"a".repeat(20)}`)).toContain("gitlab-pat");
   });
 
+  // A restricted key has a rule of its own; widening the secret-key rule to
+  // cover `rk_` too left that rule unable to fire.
+  it("a restricted key is the restricted-key rule, not the secret-key one", () => {
+    expect(ruleIds(`rk_live_${"a".repeat(24)}`)).toEqual([
+      "stripe-restricted-key",
+    ]);
+  });
+
   it.each([
     [`sk_live_${"a".repeat(24)}`, "a secret key"],
-    [`rk_live_${"a".repeat(24)}`, "a restricted key"],
     [`sk_org_${"a".repeat(24)}`, "an organization key"],
     [`whsec_${"a".repeat(32)}`, "a webhook signing secret"],
   ])("%s is a Stripe secret (%s)", (token) => {
