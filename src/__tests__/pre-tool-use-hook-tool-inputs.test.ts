@@ -357,6 +357,34 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       );
     });
 
+    // An argv array is a command line with the spaces taken out. Deleting this
+    // branch entirely left every test passing.
+    it("a command given as an argv array is scanned", () => {
+      const file = writeFixture("argv.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__shell__exec", {
+        command: ["cat", file],
+      });
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("an argv array joins into one line rather than one token", () => {
+      const result = runToolHook(
+        "mcp__shell__exec",
+        { command: ["echo", "$LEAKED"] },
+        {
+          env: { PATH: process.env["PATH"] ?? "", LEAKED: AWS_KEY },
+          replaceEnv: true,
+        },
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("an argv array of non-strings is not a command", () => {
+      expect(
+        runToolHook("mcp__shell__exec", { command: [1, 2, 3] }).exitCode,
+      ).toBe(0);
+    });
+
     // A field that is not one of those names is not run through the parser.
     it("a query field is not read as a command", () => {
       const file = writeFixture("queryfield.txt", `key=${AWS_KEY}`);

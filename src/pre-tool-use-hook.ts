@@ -201,10 +201,12 @@ function isEnvName(filePath: string): boolean {
   return base === ".env" || base.startsWith(".env.");
 }
 
+// The same names, minus the templates. Stated in terms of `isEnvName` rather
+// than repeating the test: the two answered the question separately, so a change
+// to one silently disagreed with the other.
 function isBlockedEnvFile(filePath: string): boolean {
-  if (!filePath) return false;
+  if (!isEnvName(filePath)) return false;
   const base = path.basename(filePath);
-  if (base !== ".env" && !base.startsWith(".env.")) return false;
   return !ENV_TEMPLATE_SUFFIXES.some((suffix) => base.endsWith(suffix));
 }
 
