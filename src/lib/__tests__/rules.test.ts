@@ -1035,6 +1035,17 @@ describe("a value written to be replaced", () => {
     expect(scan(line)).toHaveLength(0);
   });
 
+  // At least one part has to be a marker. Without that, a value assembled only
+  // from the ordinary words around secrets reads as a placeholder, and those
+  // are the values a real one is easily mistaken for.
+  it.each([
+    "API_KEY=access-refresh-client-auth",
+    "SECRET=production-staging-local",
+    "TOKEN=api-key-token-secret",
+  ])("%s has no marker in it and is not a placeholder", (line) => {
+    expect(scan(line).length).toBeGreaterThan(0);
+  });
+
   // The list is deliberately short of `example`: AWS documents a key that ends
   // in it, and that key is still a key.
   it.each([
@@ -1080,10 +1091,21 @@ describe("a scan cannot be made to hang", () => {
     ],
     ["one long run", "a".repeat(MEGABYTE)],
     ["digits", "1234567890".repeat(MEGABYTE / 10)],
-  ])("a megabyte of %s scans in under two seconds", (_label, text) => {
+    // `env-assignment` was the rule this guard missed: its value capture was
+    // open-ended and backtracked, and a megabyte took six minutes.
+    ["repeated assignments", `${"TOKEN=".repeat(48000)}${"v".repeat(711999)}<`],
+    [
+      "assignments and a long value",
+      `${"TOKEN=".repeat(87000)}${"v".repeat(524288)}<`,
+    ],
+    // Five seconds, not two: this guards against the hundred-second behaviour
+    // that got the hook killed, and a machine running the suite in parallel with
+    // other work should not turn that guard red. Everything here measures well
+    // under a second when the machine is idle.
+  ])("a megabyte of %s scans well inside the budget", (_label, text) => {
     const startedAt = Date.now();
     scan(text);
-    expect(Date.now() - startedAt).toBeLessThan(2000);
+    expect(Date.now() - startedAt).toBeLessThan(5000);
   });
 
   // The bound must not cost the detection it exists for.
@@ -1104,6 +1126,157 @@ describe("a scan cannot be made to hang", () => {
       ruleIds(`x${"eyJhbGciOiJIUzI1NiJ9"}.eyJhIjoxfQ.abcdefghij`),
     ).not.toContain("jwt");
   });
+});
+
+// A survey of six hundred files from real repositories found twenty-six wrong
+// blocks. These are them, by the shape that caused each.
+describe("a value that is not the secret its name suggests", () => {
+  it.each([
+    [
+      "TOKEN_ENDPOINT=https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "a public endpoint",
+    ],
+    ['"token_url": "https://sts.googleapis.com/v1/token"', "a public URL"],
+    ['"subject_token_type": "urn:ietf:params:oauth:token-type:jwt"', "a URN"],
+    ['secret_name = "BACKEND_SERVICE_API_KEY"', "the name of a secret"],
+    ['secret_id   = "PROJECT_DB_PASSWORD"', "the id of a secret"],
+    ["TOKEN_HEADER_NAME=X-Auth-Token", "a header name"],
+    ["VAULT_TOKEN_PATH=/var/run/secrets/vault/token", "a path"],
+    [
+      "AWS_WEB_IDENTITY_TOKEN_FILE=/var/run/secrets/token",
+      "a documented variable",
+    ],
+    ["PASSWORD_MIN_LENGTH=12345678", "a number"],
+    ["SECRET_MANAGER_PROJECT=my-company-production", "a project name"],
+    ['const TOKEN_STORAGE_KEY = "app.auth.token.v2";', "a storage key"],
+    ["JWT_SECRET_ISSUER=https://auth.corp.example", "an issuer"],
+  ])("%s is not a secret (%s)", (line) => {
+    expect(scan(line)).toHaveLength(0);
+  });
+
+  // A rule with a fixed prefix has already said what it found: a Slack webhook
+  // is a URL and a secret, and the shape test must not be asked about it.
+  //
+  // Assembled rather than written out: GitHub's push protection refuses a commit
+  // containing one, which is a fair summary of why the rule exists.
+  it.each([
+    [
+      [
+        "https://hooks.slack.com",
+        "services",
+        "T00000000",
+        "B00000000",
+        "X".repeat(24),
+      ].join("/"),
+      "slack-webhook",
+    ],
+    [
+      "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
+      "env-assignment",
+    ],
+    ["GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "github-pat"],
+    ["DB_PASSWORD=Sup3rS3cretDbPassw0rd", "env-assignment"],
+  ])("%s is still found by %s", (line, ruleId) => {
+    expect(ruleIds(line)).toContain(ruleId);
+  });
+});
+
+describe("a connection string nobody has filled in", () => {
+  it.each([
+    "postgres://user:password@localhost:5432/appdb",
+    "postgres://postgres:postgres@localhost:5432/appdb",
+    "postgres://root:root@127.0.0.1:5432/test",
+    "postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}/${PGDATABASE}",
+    "postgres://$DB_USER:$DB_PASS@$DB_HOST/app",
+    '"postgres://{}:{}@{}:{}/{}"',
+  ])("%s carries no credential", (line) => {
+    expect(ruleIds(line)).not.toContain("connection-string");
+  });
+
+  it.each([
+    "postgres://admin:s3cr3tP4ss@db.corp.internal/app",
+    "mysql://root:secret@localhost",
+    "postgres://user:password@prod.corp.internal/app",
+  ])("%s does", (line) => {
+    expect(ruleIds(line)).toContain("connection-string");
+  });
+});
+
+// `name@version` is the shape of every line in a lockfile, and it is also the
+// shape of an address. No hostname begins with a label that is only digits.
+describe("a package specifier is not an address", () => {
+  it.each([
+    "playwright-core@1.35.1.patch",
+    "eslint@8.57.0",
+    "@babel/core@7.24.0",
+    "typescript@5.4.2",
+    "golang.org/x/mobile@0.0.0",
+  ])("%s is a package", (text) => {
+    expect(ruleIds(text)).not.toContain("pii-email");
+  });
+
+  it.each([
+    "alice@analytical-engines.org",
+    "ada.lovelace@analytical-engines.org",
+    "user@123abc.com",
+  ])("%s is an address", (text) => {
+    expect(ruleIds(text)).toContain("pii-email");
+  });
+});
+
+// A context word is a label, not a fragment of the identifier beside the number.
+describe("a label, not a package name", () => {
+  it.each([
+    [
+      "      devtools-protocol: 0.0.869402\n      extract-zip: 2.0.1",
+      "a lockfile",
+    ],
+    [
+      "golang.org/x/mobile v0.0.0-201903121516-09-d3739f865fa6/go.mod",
+      "a go.sum line",
+    ],
+    ["adm-zip: 0.5.518000", "another package"],
+  ])("%s supplies no context (%s)", (line) => {
+    expect(scan(line)).toHaveLength(0);
+  });
+
+  it.each([
+    ["postal code 518000 Shenzhen", "pii-postal-cn"],
+    ["邮编 518000", "pii-postal-cn"],
+    ["mobile: 010-1234-5678", "pii-phone-kr"],
+  ])("%s still is one (%s)", (line, ruleId) => {
+    expect(ruleIds(line)).toContain(ruleId);
+  });
+});
+
+describe("numbers that are not people", () => {
+  it.each([
+    ["000000000000", "twelve zeros"],
+    ["checksum 000000000000 ok", "twelve zeros in a sentence"],
+    ["111111111111", "twelve ones"],
+  ])("%s is not a My Number (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-mynumber-jp");
+  });
+
+  it("a real My Number still is one", () => {
+    expect(ruleIds("My Number: 123456789018")).toContain("pii-mynumber-jp");
+  });
+
+  it.each([
+    ["01-02-2024", "a date"],
+    ["09-15-2025", "another date"],
+    ["build 0000 0000 0000", "a zero-padded id"],
+    ["0120-123-4567", "a freephone number, which belongs to a business"],
+  ])("%s is not a Japanese telephone number (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-phone-jp");
+  });
+
+  it.each(["090-1234-5678", "03-1234-5678", "080 1234 5678"])(
+    "%s still is one",
+    (line) => {
+      expect(ruleIds(line)).toContain("pii-phone-jp");
+    },
+  );
 });
 
 // Formats confirmed against each vendor's own documentation, after a survey

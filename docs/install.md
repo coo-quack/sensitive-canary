@@ -45,9 +45,21 @@ Update to the latest version:
 pnpm update -g @coo-quack/sensitive-canary
 ```
 
-**2. Register hooks**
+**2. Find where pnpm put it**
 
-Add the following to `~/.claude/settings.json`:
+`pnpm root -g` does not name the directory the package ends up in — on pnpm 10
+and later it returns a versioned root with no `node_modules` under it, and a
+hook wired to that path fails to start. A hook that fails to start exits 1, and
+only exit 2 blocks, so the mistake is silent. Ask where the file actually is:
+
+```bash
+find "$(pnpm root -g)" -path '*@coo-quack/sensitive-canary/dist/pre-tool-use-hook.js' 2>/dev/null
+```
+
+**3. Register hooks**
+
+Put the directory that command prints — everything up to and including `dist` —
+in place of `<dist>` below, in `~/.claude/settings.json`:
 
 ```json
 {
@@ -58,7 +70,7 @@ Add the following to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "node $(pnpm root -g)/@coo-quack/sensitive-canary/dist/pre-tool-use-hook.js"
+            "command": "node <dist>/pre-tool-use-hook.js"
           }
         ]
       }
@@ -68,7 +80,7 @@ Add the following to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "node $(pnpm root -g)/@coo-quack/sensitive-canary/dist/user-prompt-submit-hook.js"
+            "command": "node <dist>/user-prompt-submit-hook.js"
           }
         ]
       }
@@ -77,7 +89,26 @@ Add the following to `~/.claude/settings.json`:
 }
 ```
 
-> **Note:** These point at the compiled JavaScript the package ships. Node refuses to strip types from a `.ts` file inside `node_modules`, and a hook that fails to start exits non-zero without blocking — so an installation wired to `src/` looks installed and checks nothing. The plugin install uses the `.ts` sources, which sit outside `node_modules` and work.
+These point at the compiled JavaScript the package ships. Node refuses to strip
+types from a `.ts` file inside `node_modules`, and a hook that fails to start
+exits non-zero without blocking — so an installation wired to `src/` looks
+installed and checks nothing. The plugin install uses the `.ts` sources, which
+sit outside `node_modules` and work.
+
+**4. Check that it blocks**
+
+An installation that checks nothing looks exactly like one that works, so this
+step is not optional. Run the hook by hand and read the exit code:
+
+```bash
+printf 'key=AKIA''IOSFODNN7EXAMPLE\n' > /tmp/canary-check.txt
+printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/canary-check.txt"}}' \
+  | node <dist>/pre-tool-use-hook.js; echo "exit=$?"
+```
+
+`exit=2` means it is working. Anything else — 0, 1, or a module-not-found error
+— means the path is wrong and nothing is being checked.
+
 
 ## Manual Setup (git clone)
 

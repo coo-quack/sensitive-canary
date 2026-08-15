@@ -1,7 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   AWS_KEY,
@@ -504,6 +505,34 @@ describe("pre-tool-use-hook — .env templates", () => {
     ).toBe(0);
   });
 
+  // The tag that lifts a secret guard has to allow secrets. Any tag at all
+  // lifted it once, so a mistyped one turned off the guard the README leads
+  // with, and this path had no test of its own.
+  it.each(["pii", "banana", "everything"])(
+    "[allow-%s] does not lift the fallback",
+    (tag) => {
+      // A template name, so the primary guard steps aside and the fallback is
+      // the thing being asked.
+      const fifo = writeFixture.path(`.env.${tag}.example`);
+      execFileSync("mkfifo", [fifo]);
+      expect(
+        runHook("Read", fifo, {
+          transcriptPath: writeTranscript([`[allow-${tag}] read it`]),
+        }).exitCode,
+      ).toBe(2);
+    },
+  );
+
+  it.each(["secret", "all"])("[allow-%s] does lift it", (tag) => {
+    const fifo = writeFixture.path(`.env.lift-${tag}.example`);
+    execFileSync("mkfifo", [fifo]);
+    expect(
+      runHook("Read", fifo, {
+        transcriptPath: writeTranscript([`[allow-${tag}] read it`]),
+      }).exitCode,
+    ).toBe(0);
+  });
+
   it("the fallback honours an allow tag", () => {
     const fifo = writeFixture.path(".env.tag.fifo");
     execFileSync("mkfifo", [fifo]);
@@ -520,6 +549,16 @@ describe("pre-tool-use-hook — .env templates", () => {
     const fifo = writeFixture.path(".environment");
     execFileSync("mkfifo", [fifo]);
     expect(runHook("Read", fifo).exitCode).toBe(0);
+  });
+
+  // Literals before patterns is what stops one expensive glob starving the
+  // rest, and reversing the order left the suite green.
+  it("a file named outright is scanned before a pattern", () => {
+    const dir = writeFixture.path();
+    const pad = "the quick brown fox ".repeat(55_000);
+    for (let i = 0; i < 70; i++) writeFixture(`fill${i}.log`, pad);
+    const secret = writeFixture("zz-named.txt", `key=${AWS_KEY}`);
+    expect(runBashHook(`cat ${secret} ${dir}/fill*.log`).exitCode).toBe(2);
   });
 
   it("a fifo with a template name is blocked", () => {
@@ -545,6 +584,84 @@ describe("pre-tool-use-hook — .env templates", () => {
 // A relative path is relative to where the tool runs, which the payload carries.
 // Nothing asserted that, so deleting the line that reads it left the suite green
 // while every relative path went unscanned.
+// A `cd` the shell would refuse does not move the shell, so the read that
+// follows happens where it started. Following it anyway left the relative path
+// resolving against nothing, and so unscanned. Tested here rather than in the
+// parser: the guard asks the filesystem, which the parser cannot.
+describe("pre-tool-use-hook — a cd that would not happen", () => {
+  const writeFixture = useFixtureDir("cd-guard");
+
+  it("a cd into a directory that does not exist leaves the base alone", () => {
+    writeFixture("relative-secret.txt", `key=${AWS_KEY}`);
+    expect(
+      runBashHook("cd /definitely-not-here && cat relative-secret.txt", {
+        cwd: writeFixture.path(),
+      }).exitCode,
+    ).toBe(2);
+  });
+
+  it("a cd through an unexpanded variable leaves the base alone", () => {
+    writeFixture("var-secret.txt", `key=${AWS_KEY}`);
+    expect(
+      runBashHook("cd $TARGET && cat var-secret.txt", {
+        cwd: writeFixture.path(),
+      }).exitCode,
+    ).toBe(2);
+  });
+
+  it("a cd into a file rather than a directory leaves the base alone", () => {
+    const notADirectory = writeFixture("not-a-dir", "x");
+    writeFixture("file-secret.txt", `key=${AWS_KEY}`);
+    expect(
+      runBashHook(`cd ${notADirectory} && cat file-secret.txt`, {
+        cwd: writeFixture.path(),
+      }).exitCode,
+    ).toBe(2);
+  });
+
+  // The directory test alone would let this through: a directory really named
+  // `$TARGET` exists, so following the unexpanded name lands somewhere real —
+  // just not where the shell would have gone.
+  it("a variable is not followed even when a directory bears its name", () => {
+    const literal = writeFixture.path("$TARGET");
+    mkdirSync(literal, { recursive: true });
+    writeFileSync(join(literal, "decoy.txt"), "nothing here\n", "utf8");
+    writeFixture("decoy.txt", `key=${AWS_KEY}`);
+    expect(
+      runBashHook("cd $TARGET && cat decoy.txt", {
+        cwd: writeFixture.path(),
+      }).exitCode,
+    ).toBe(2);
+  });
+
+  // The directory test alone would let this through: a directory really named
+  // `$TARGET` exists, so following the unexpanded name lands somewhere real —
+  // just not where the shell would have gone.
+  it("a variable is not followed even when a directory bears its name", () => {
+    const literal = writeFixture.path("$TARGET");
+    mkdirSync(literal, { recursive: true });
+    writeFileSync(join(literal, "decoy.txt"), "nothing here\n", "utf8");
+    writeFixture("decoy.txt", `key=${AWS_KEY}`);
+    expect(
+      runBashHook("cd $TARGET && cat decoy.txt", {
+        cwd: writeFixture.path(),
+      }).exitCode,
+    ).toBe(2);
+  });
+
+  // And the base does move when the shell's would.
+  it("a cd into a directory that exists moves the base", () => {
+    const inner = writeFixture.path("inner");
+    mkdirSync(inner, { recursive: true });
+    writeFileSync(join(inner, "moved-secret.txt"), `key=${AWS_KEY}`, "utf8");
+    expect(
+      runBashHook("cd inner && cat moved-secret.txt", {
+        cwd: writeFixture.path(),
+      }).exitCode,
+    ).toBe(2);
+  });
+});
+
 describe("pre-tool-use-hook — the directory a relative path is relative to", () => {
   const writeFixture = useFixtureDir("cwd");
 
@@ -1084,10 +1201,40 @@ describe("pre-tool-use-hook — where an allow tag may come from", () => {
   // Quoted, not issued: a pasted log or diff is not the user asking.
   it.each([
     "here is a log:\n```\n2026-01-01 saw [allow-all]\n```\nplease read it",
-    "the README says `[allow-all]` bypasses it",
     "~~~\n[allow-all]\n~~~",
+    "```sh\ngrep -r '[allow-all]' .\n```",
   ])("a tag inside a fence does not", (content) => {
     expect(withTranscript(content)).toBe(2);
+  });
+
+  // Backticks around the tag are how this project's own documentation writes
+  // it, so treating them as quoting refused the form it teaches — and refused
+  // it silently, since the block then advised adding the tag it had ignored.
+  it.each([
+    "`[allow-all]` please read it",
+    "please read it with `[allow-all]`",
+    "use `[allow-secret]` for that",
+  ])("a tag in backticks still lifts the guard", (content) => {
+    expect(withTranscript(content)).toBe(0);
+  });
+
+  // A line the runtime wrote as an assistant turn is not user input.
+  it("a tag on an assistant line does not lift the guard", () => {
+    const secret = writeFixture("assistant.txt", `key=${AWS_KEY}`);
+    const transcript = writeFixture(
+      "assistant.jsonl",
+      `${JSON.stringify({ type: "assistant", message: { role: "user", content: "[allow-all] go" } })}\n`,
+    );
+    expect(
+      runHook("Read", secret, { transcriptPath: transcript }).exitCode,
+    ).toBe(2);
+  });
+
+  // An opening tag with nothing closing it takes the rest of the message.
+  it("a tag after an unclosed synthetic element does not", () => {
+    expect(
+      withTranscript("<local-command-stdout>output [allow-all] more"),
+    ).toBe(2);
   });
 
   // The wrapper must not swallow the rest of the message.
@@ -1133,6 +1280,91 @@ describe("pre-tool-use-hook — UTF-16", () => {
     expect(runHook("Read", p).exitCode).toBe(0);
   });
 
+  // The byte-order mark decides it outright, and each branch needs a case only
+  // it can answer: without the swap, a big-endian marked file reads as noise;
+  // without the little-endian branch, a file whose text is Japanese has no NUL
+  // in its opening pairs to fall back on.
+  it("a big-endian file with a mark is swapped", () => {
+    const p = writeBytes(
+      "be-bom.txt",
+      Buffer.concat([
+        Buffer.from([0xfe, 0xff]),
+        Buffer.from(utf16le(`key=${AWS_KEY}\n`)).swap16(),
+      ]),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a little-endian file with a mark and no ASCII prefix is read", () => {
+    const p = writeBytes(
+      "le-bom-cjk.txt",
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        utf16le(`${"あ".repeat(9000)}\nkey=${AWS_KEY}\n`),
+      ]),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  // A file whose first characters are Japanese has no zero byte in them at all,
+  // and five hundred pairs of prefix decided the whole file.
+  it.each([
+    ["little-endian", (t: string) => utf16le(t)],
+    ["big-endian", (t: string) => Buffer.from(utf16le(t)).swap16()],
+  ])("a %s file that opens with Japanese is read", (_label, encode) => {
+    const p = writeBytes(
+      `cjk-${_label}.txt`,
+      encode(`${"あ".repeat(512)}\nkey=${AWS_KEY}\n`),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  // One stray NUL is not evidence of an encoding. Reading a UTF-8 file as
+  // UTF-16 turns text the scan could read into nonsense it cannot.
+  it("a UTF-8 file with a single NUL in it is not read as UTF-16", () => {
+    const p = writeBytes(
+      "one-nul.txt",
+      Buffer.concat([
+        Buffer.from(`key=${AWS_KEY}\n`),
+        Buffer.from([0x00]),
+        Buffer.from("binary data"),
+      ]),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a UTF-16 template stopped by a NUL falls back on its name", () => {
+    const p = writeBytes(
+      ".env.utf16.example",
+      Buffer.concat([
+        // A byte-order mark, because a NUL character in UTF-16 is `00 00` — one
+        // byte on each side of the pair — so the parity heuristic could never
+        // see this file, only the mark can.
+        Buffer.from([0xff, 0xfe]),
+        utf16le("TOKEN=changeme\n"),
+        Buffer.from([0x00, 0x00]),
+        utf16le("more\n"),
+      ]),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a UTF-16 template past the per-file cut falls back on its name", () => {
+    const p = writeBytes(
+      ".env.big.example",
+      utf16le(`${"a".repeat(1_100_000)}\nTOKEN=changeme\n`),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a UTF-16 template read whole is still readable", () => {
+    const p = writeBytes(
+      ".env.small.example",
+      Buffer.concat([Buffer.from([0xff, 0xfe]), utf16le("TOKEN=changeme\n")]),
+    );
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
   it("a genuinely binary file is not decoded as text", () => {
     const p = writeBytes(
       "blob.bin",
@@ -1143,19 +1375,53 @@ describe("pre-tool-use-hook — UTF-16", () => {
 });
 
 describe("pre-tool-use-hook — an unforeseen error", () => {
-  it("a payload that is not an object stops the call", () => {
-    expect(runHookWithRawInput("null").exitCode).toBe(2);
-  });
+  const writeFixture = useFixtureDir("fail-closed");
 
-  it("the message says the check failed, not that something was found", () => {
-    const { stderr } = runHookWithRawInput("null");
+  // A scan that cannot finish is the error this is really for: the budget
+  // throws, and the throw has to stop the call rather than pass it through.
+  it("a scan that cannot finish stops the call", () => {
+    const config = writeFixture(
+      "slow.json",
+      JSON.stringify({
+        rules: Array.from({ length: 8 }, (_, i) => ({
+          id: `slow-${i}`,
+          description: "deliberately slow",
+          regex:
+            "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+          category: "secret",
+        })),
+      }),
+    );
+    // Spawned directly rather than through the harness: the harness caps a run
+    // at fifteen seconds so a hang fails the test instead of stopping the run,
+    // and this case has to be allowed to reach the ten-second budget.
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        fileURLToPath(new URL("../pre-tool-use-hook.ts", import.meta.url)),
+      ],
+      {
+        input: JSON.stringify({
+          tool_name: "Bash",
+          tool_input: { command: `echo ${"eyJ".repeat(21_845)}` },
+        }),
+        env: { ...process.env, SENSITIVE_CANARY_CONFIG: config },
+        encoding: "utf8",
+        timeout: 90_000,
+      },
+    );
+    const { status: exitCode, stderr } = result;
+    expect(exitCode).toBe(2);
     expect(stderr).toContain("the check could not complete");
     expect(stderr).not.toContain("sensitive data detected");
-  });
+  }, 120_000);
 
   // Input the hook does understand is unaffected: this must not become a hook
-  // that blocks everything.
-  it.each(["not json", "", "{}", "[]", '{"tool_name":"Read"}'])(
+  // that blocks everything. `null` parses, and a payload that is not an object
+  // names nothing — treating "nothing to scan" as a threat is the misfire this
+  // guard must not make.
+  it.each(["not json", "", "{}", "[]", "null", "42", '{"tool_name":"Read"}'])(
     "%s is still allowed",
     (payload) => {
       expect(runHookWithRawInput(payload).exitCode).toBe(0);

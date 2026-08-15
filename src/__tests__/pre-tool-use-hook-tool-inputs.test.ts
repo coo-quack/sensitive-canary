@@ -415,6 +415,20 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(runToolHook("Read", { file_path: shape(file) }).exitCode).toBe(2);
     });
 
+    // A tool wraps its arguments, so the search goes into them. Only the top
+    // level had a test, and the depth limit could be set to zero unnoticed.
+    it.each([
+      [1, { args: { command: "cat FILE" } }],
+      [2, { params: { args: { command: "cat FILE" } } }],
+      [3, { a: { b: { c: { command: "cat FILE" } } } }],
+    ])("a command nested %i deep is scanned", (_depth, shape) => {
+      const file = writeFixture("nested.txt", `key=${AWS_KEY}`);
+      const input = JSON.parse(
+        JSON.stringify(shape).replace("cat FILE", `cat ${file}`),
+      ) as Record<string, unknown>;
+      expect(runToolHook("mcp__shell__run", input).exitCode).toBe(2);
+    });
+
     // A field that is not one of those names is not run through the parser.
     it("a query field is not read as a command", () => {
       const file = writeFixture("queryfield.txt", `key=${AWS_KEY}`);

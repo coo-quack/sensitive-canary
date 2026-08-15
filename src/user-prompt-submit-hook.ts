@@ -63,7 +63,12 @@ process.stdin.on("data", (chunk: string) => (raw += chunk));
 process.stdin.on("end", () => {
   let data: HookInput;
   try {
-    data = JSON.parse(raw) as HookInput;
+    const parsed: unknown = JSON.parse(raw);
+    // `JSON.parse("null")` succeeds and returns null, which then threw on the
+    // first field read. A payload that is not an object carries no prompt.
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+      process.exit(0);
+    data = parsed as HookInput;
   } catch {
     process.exit(0);
   }

@@ -2,12 +2,23 @@
   "name": "@coo-quack/sensitive-canary",
   "version": "0.8.0",
   "description": "Claude Code hooks that block secrets and PII before they reach the Anthropic API",
-  "homepage": "https://coo-quack.github.io/sensitive-canary/",
-  "type": "module",
+  "license": "MIT",
+  "author": "coo-quack",
+  "keywords": [
+    "security",
+    "secrets",
+    "pii",
+    "hooks"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/coo-quack/sensitive-canary.git"
   },
+  "homepage": "https://coo-quack.github.io/sensitive-canary/",
+  "bugs": {
+    "url": "https://github.com/coo-quack/sensitive-canary/issues"
+  },
+  "type": "module",
   "files": [
     "src/",
     "!src/**/__tests__/**",

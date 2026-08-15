@@ -230,7 +230,7 @@
     {
       "id": "env-assignment",
       "description": ".env style secret assignment",
-      "regex": "(?:(?:^|\\n)[ \\t-]{0,64}[\"']?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|(?<![A-Za-z])PASS(?![A-Za-z])|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[\"']?[ \\t]*:|\\b[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|(?<![A-Za-z])PASS(?![A-Za-z])|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[ \\t]*=)[ \\t]*[\"']?(?!\\$)([^\\s\"'\\[\\]{}();,<>]{8,})(?=$|[\\s\"';,)\\]}])",
+      "regex": "(?:(?:^|\\n)[ \\t-]{0,64}[\"']?[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|(?<![A-Za-z])PASS(?![A-Za-z])|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[\"']?[ \\t]*:|\\b[A-Za-z0-9_]{0,64}(?:SECRET|PASSWORD|PASSWD|(?<![A-Za-z])PASS(?![A-Za-z])|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Za-z0-9_]{0,64}[ \\t]*=)[ \\t]*[\"']?(?!\\$)(?=([^\\s\"'\\[\\]{}();,<>]{8,4096}))\\1(?:(?=$|[\\s\"';,)\\]}])|(?=[^\\s\"'\\[\\]{}();,<>]))",
       "flags": "gi",
       "category": "secret",
       "secretGroup": 1,
@@ -245,7 +245,7 @@
     {
       "id": "pii-email",
       "description": "Email Address",
-      "regex": "(?<!\\b(?:ssh|scp|rsync|sftp)\\b(?:[ \\t]+[^\\s@,;()]+){0,2}[ \\t]+)\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
+      "regex": "(?<!\\b(?:ssh|scp|rsync|sftp)\\b(?:[ \\t]+[^\\s@,;()]+){0,2}[ \\t]+)\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?![0-9]+\\.)(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
       "category": "pii"
     },
     {
@@ -271,7 +271,8 @@
       "id": "pii-phone-jp",
       "description": "Japanese Phone Number",
       "regex": "\\b0\\d{1,4}[\\s-]\\d{1,4}[\\s-]\\d{4}\\b",
-      "category": "pii"
+      "category": "pii",
+      "validate": "phone-jp"
     },
     {
       "id": "pii-postal-jp",

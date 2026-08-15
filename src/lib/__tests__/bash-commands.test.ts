@@ -317,6 +317,36 @@ describe("a substitution among the operands", () => {
   });
 });
 
+// A `)` inside quotes does not close a substitution. Ending the segment there
+// lost the rest of the command, and with it whatever it read.
+describe("a substitution containing a quoted bracket", () => {
+  it.each([
+    'echo $(cat ")" secrets.txt)',
+    "echo $(cat ')' secrets.txt)",
+    'echo $(grep -e ")" secrets.txt)',
+    'echo $(cat "(" secrets.txt)',
+  ])("%s still names the file", (command) => {
+    expect(paths(command)).toContain("secrets.txt");
+  });
+});
+
+describe("cd", () => {
+  // `cd` into somewhere that is not there does not move the shell, so the read
+  // that follows happens where it started. Following it anyway left relative
+  // paths resolving against a directory that does not exist, and so unscanned.
+  it("a cd into a directory that does not exist does not move the base", () => {
+    expect(paths("cd /definitely-not-here && cat secrets.txt")).toContain(
+      "secrets.txt",
+    );
+  });
+
+  // An unexpanded variable names an unknown directory, so the base is unknown
+  // too. Guessing it is the same failure in a different place.
+  it("a cd through a variable does not move the base", () => {
+    expect(paths("cd $TARGET && cat secrets.txt")).toContain("secrets.txt");
+  });
+});
+
 describe("eval", () => {
   // `eval 'cat secrets'` is a command line in a single word. Stepping past
   // `eval` found that word as the command name, which classifies as nothing.
