@@ -88,6 +88,14 @@ export function isWritingTool(tool: string): boolean {
 // here, but `filepath` was not, and neither was `filename` or `source_path`.
 // Normalising is a rule where a list of spellings is a list of the ones someone
 // happened to think of.
+// A field name with the punctuation taken out, so `file_path`, `file-path`,
+// `filePath`, `file.path` and `file path` are one name. Both collectors here
+// share it: they had a regex each, and the one used for command fields dropped
+// only `-` and `_`, so a field called `command.line` was walked past.
+export function normalizeFieldName(key: string): string {
+  return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+}
+
 export const PATH_FIELD_NAMES = new Set([
   "filepath",
   "filename",
@@ -103,7 +111,7 @@ export const PATH_FIELD_NAMES = new Set([
 
 // `file_path`, `filePath`, `FILE_PATH` and `filepath` are one name here.
 function isPathFieldName(key: string): boolean {
-  return PATH_FIELD_NAMES.has(key.replace(/[^A-Za-z0-9]/g, "").toLowerCase());
+  return PATH_FIELD_NAMES.has(normalizeFieldName(key));
 }
 
 // A value that names a path whatever its field is called. The list above can

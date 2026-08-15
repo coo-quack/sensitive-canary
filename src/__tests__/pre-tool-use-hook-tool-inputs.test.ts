@@ -385,6 +385,36 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       ).toBe(0);
     });
 
+    // One normalization for both collectors. The command side dropped only
+    // `-` and `_`, so a field called `command.line` was walked past while the
+    // path side read `file.path` correctly.
+    it.each([
+      "command",
+      "command_line",
+      "command-line",
+      "commandLine",
+      "command.line",
+      "command line",
+      "COMMAND LINE",
+    ])("a field called %s is a command", (key) => {
+      const file = writeFixture("named.txt", `key=${AWS_KEY}`);
+      expect(
+        runToolHook("mcp__shell__run", { [key]: `cat ${file}` }).exitCode,
+      ).toBe(2);
+    });
+
+    // Every other tool name reached the shared collector and blocked; the Read
+    // branch coerced a non-string to "" and exited 0. The same shape, two
+    // answers.
+    it.each([
+      ["an array", (p: string) => [p]],
+      ["an object", (p: string) => ({ inner: p })],
+      ["an array of objects", (p: string) => [{ path: p }]],
+    ])("Read with a file_path that is %s is still read", (_label, shape) => {
+      const file = writeFixture("readshape.txt", `key=${AWS_KEY}`);
+      expect(runToolHook("Read", { file_path: shape(file) }).exitCode).toBe(2);
+    });
+
     // A field that is not one of those names is not run through the parser.
     it("a query field is not read as a command", () => {
       const file = writeFixture("queryfield.txt", `key=${AWS_KEY}`);

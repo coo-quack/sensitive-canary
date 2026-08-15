@@ -157,7 +157,7 @@ What the bounds cost, stated rather than implied:
 
 - **`pii-email`**: an address with 65 or more `[A-Za-z0-9_]` characters in an unbroken run before the `@`. Every other character the local part allows — `.`, `%`, `+`, `-` — is a non-word character, so the word boundary restarts at it and a long address containing one is still found (measured: 65 letters is missed, 65 with a `%` in the middle is not); 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
 - **`env-assignment`**: a name with 65 or more capitals in a run on either side of the keyword — `AAA…SECRET=` and `SECRET…AAA=` alike. `_` is a word character, so `A×65_SECRET=` is lost too, since the boundary does not restart at the underscore.
-- **`connection-string`**: a user or a password longer than 256 characters.
+- **`connection-string`**: a user or a password longer than 1024 characters.
 
 None of these is a spelling anyone writes. All of them are a way to write one this tool will not see, which is the honest way to hold both facts.
 
@@ -283,7 +283,7 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 
 | Name | Algorithm |
 |------|-----------|
-| `luhn` | Luhn checksum (credit cards) |
+| `luhn` | Luhn checksum, and not a card number the payment gateways publish as test data |
 | `mynumber-jp` | Japanese Individual Number (My Number) |
 | `nir-fr` | French NIR / Social Security Number |
 | `codice-fiscale-it` | Italian Codice Fiscale |

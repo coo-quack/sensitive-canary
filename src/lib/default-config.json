@@ -94,7 +94,7 @@
     {
       "id": "stripe-secret-key",
       "description": "Stripe Secret Key",
-      "regex": "(?:(?:sk|rk)_(?:live|test)|sk_org)_[0-9a-zA-Z]{24}|whsec_[0-9a-zA-Z]{32,}",
+      "regex": "(?:sk_(?:live|test|org))_[0-9a-zA-Z]{24}|whsec_[0-9a-zA-Z]{32,}",
       "category": "secret"
     },
     {
@@ -167,13 +167,13 @@
     {
       "id": "square-access-token",
       "description": "Square Access Token",
-      "regex": "(?<![A-Za-z0-9+/])EAAA[a-zA-Z0-9\\-_+=]{60,}(?![A-Za-z0-9+/=_-])",
+      "regex": "(?<![A-Za-z0-9+/])EAAA[a-zA-Z0-9\\-_+=]{60,1024}(?![A-Za-z0-9+/=_-])",
       "category": "secret"
     },
     {
       "id": "mapbox-token",
       "description": "Mapbox Token",
-      "regex": "\\b(?:pk|sk|tk)\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "regex": "(?<![A-Za-z0-9_-])(?:pk|sk|tk)\\.eyJ[A-Za-z0-9_-]{10,1024}\\.[A-Za-z0-9_-]{10,1024}",
       "category": "secret"
     },
     {
@@ -185,7 +185,7 @@
     {
       "id": "sentry-org-token",
       "description": "Sentry Organization Auth Token",
-      "regex": "sntrys_[A-Za-z0-9+/=]{10,}_[A-Za-z0-9]{43}",
+      "regex": "(?<![A-Za-z0-9_-])sntrys_[A-Za-z0-9+/=]{10,1024}_[A-Za-z0-9]{43}",
       "category": "secret"
     },
     {
@@ -215,7 +215,7 @@
     {
       "id": "jwt",
       "description": "JSON Web Token (JWT)",
-      "regex": "(?<!sntrys_|pk\\.|sk\\.)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "regex": "(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,4096}\\.eyJ[A-Za-z0-9_-]{10,4096}\\.[A-Za-z0-9_-]{10,4096}",
       "category": "secret"
     },
     {
@@ -489,7 +489,7 @@
     {
       "id": "openai-service-key",
       "description": "OpenAI Service Account / Admin Key",
-      "regex": "sk-(?:svcacct|admin|proj)-[A-Za-z0-9_-]{20,}",
+      "regex": "sk-(?:svcacct|admin)-[A-Za-z0-9_-]{20,}",
       "category": "secret"
     },
     {

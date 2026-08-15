@@ -1,7 +1,13 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { AWS_KEY } from "./hook-harness.ts";
 
-const HOOK = new URL("../user-prompt-submit-hook.ts", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a checkout under a path with a space in
+// it comes back percent-encoded from the latter and the spawn fails.
+const HOOK = fileURLToPath(
+  new URL("../user-prompt-submit-hook.ts", import.meta.url),
+);
 const NODE_FLAGS = ["--experimental-strip-types"];
 
 function runHook(prompt: string, opts?: { env?: Record<string, string> }) {
@@ -20,6 +26,45 @@ function runHook(prompt: string, opts?: { env?: Record<string, string> }) {
 // Every case in this file used a one-line prompt, so a cap on how much of it is
 // scanned would not have shown up. A pasted log or `.env` is the case the hook
 // exists for, and it is long.
+// A prompt that is not a string used to throw; not throwing left it coerced to
+// the empty string, which exits 0 — the same silence as never running.
+describe("user-prompt-submit-hook — the shapes a prompt arrives in", () => {
+  const run = (payload: unknown): number => {
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", HOOK],
+      { input: JSON.stringify(payload), encoding: "utf8" },
+    );
+    return result.status ?? -1;
+  };
+
+  it.each([
+    ["a string", { prompt: `key=${AWS_KEY}` }],
+    ["an object", { prompt: { text: `key=${AWS_KEY}` } }],
+    ["an array", { prompt: [`key=${AWS_KEY}`] }],
+    ["content blocks", { prompt: [{ type: "text", text: `key=${AWS_KEY}` }] }],
+    ["nested", { prompt: { a: { b: `key=${AWS_KEY}` } } }],
+  ])("a secret in %s is blocked", (_label, payload) => {
+    expect(run(payload)).toBe(2);
+  });
+
+  it.each([
+    ["a clean string", { prompt: "ls -la" }],
+    ["null", { prompt: null }],
+    ["a number", { prompt: 42 }],
+    ["nothing", {}],
+  ])("%s is allowed", (_label, payload) => {
+    expect(run(payload)).toBe(0);
+  });
+
+  // The walk is bounded, so a deep value cannot make the hook chase a tree.
+  it("a prompt nested past the bound is not walked", () => {
+    let deep: unknown = `key=${AWS_KEY}`;
+    for (let i = 0; i < 8; i++) deep = { next: deep };
+    expect(run({ prompt: deep })).toBe(0);
+  });
+});
+
 describe("user-prompt-submit-hook — how much of the prompt is scanned", () => {
   const KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
 
@@ -41,8 +86,32 @@ describe("user-prompt-submit-hook — how much of the prompt is scanned", () => 
   });
 });
 
-// A prompt that is not a string used to throw, and exit 1 does not block, so
-// `{"prompt":{"text":"<a key>"}}` went through unscanned.
+// A prompt that is not a string used to throw. Not throwing was only half the
+// fix: these tests asked for exit 0, and exit 0 on a payload holding a key is
+// the same silence the exception produced. The cases that carry a key moved to
+// the block above, which asks for the block. What is left here is what really
+// has nothing to scan.
+// The same contract on the other hook.
+describe("user-prompt-submit-hook — an unforeseen error", () => {
+  const raw = (payload: string) =>
+    spawnSync(process.execPath, ["--experimental-strip-types", HOOK], {
+      input: payload,
+      encoding: "utf8",
+    });
+
+  it("a payload that is not an object stops the call", () => {
+    expect(raw("null").status).toBe(2);
+  });
+
+  it("the message says the check failed", () => {
+    expect(raw("null").stderr).toContain("the check could not complete");
+  });
+
+  it.each(["not json", "", "{}"])("%s is still allowed", (payload) => {
+    expect(raw(payload).status).toBe(0);
+  });
+});
+
 describe("user-prompt-submit-hook — a prompt of the wrong type", () => {
   const raw = (payload: string) => {
     const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
@@ -54,11 +123,12 @@ describe("user-prompt-submit-hook — a prompt of the wrong type", () => {
 
   it.each([
     '{"prompt":12345}',
-    '{"prompt":{"text":"AKIAIOSFODNN7EXAMPLE"}}',
-    '{"prompt":["AKIAIOSFODNN7EXAMPLE"]}',
     '{"prompt":true}',
+    '{"prompt":null}',
+    '{"prompt":[]}',
+    '{"prompt":{}}',
     "{}",
-  ])("%s does not crash", (payload) => {
+  ])("%s is allowed and does not crash", (payload) => {
     expect(raw(payload)).toBe(0);
   });
 });

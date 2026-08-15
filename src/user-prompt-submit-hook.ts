@@ -10,8 +10,49 @@ import {
 } from "./lib/inspector.ts";
 import { enabledCategoriesFromEnv, scan } from "./lib/rules.ts";
 
+// A hook that crashes exits 1, and only exit 2 blocks — so until now any
+// unforeseen error was a silent pass, which is the failure this whole tool
+// exists to prevent. What went wrong is unknown at this point, and "unknown" is
+// not "safe": the check did not finish, so the call is stopped rather than let
+// through. `[allow-all]` gets past it, and the message says the check failed
+// rather than claiming a finding.
+function failClosed(error: unknown): never {
+  try {
+    process.stderr.write(
+      `\n🐤 sensitive-canary: the check could not complete — ${
+        error instanceof Error ? error.message : String(error)
+      }\n\n` +
+        "  Nothing was scanned, so nothing can be vouched for. Stopping rather\n" +
+        "  than passing it through. Add [allow-all] to your prompt to proceed\n" +
+        "  anyway, and please report this.\n",
+    );
+  } catch {
+    // A closed stderr must not turn the block back into a pass.
+  }
+  process.exit(2);
+}
+
+process.on("uncaughtException", failClosed);
+process.on("unhandledRejection", failClosed);
+
 interface HookInput {
-  prompt?: string;
+  prompt?: unknown;
+}
+
+// Depth at which a prompt stops being searched. The bound is here so a deeply
+// nested value cannot make the hook walk an arbitrary tree before every prompt.
+const MAX_PROMPT_DEPTH = 4;
+
+function collectStrings(value: unknown, depth = 0): string[] {
+  if (typeof value === "string") return [value];
+  if (depth >= MAX_PROMPT_DEPTH) return [];
+  if (Array.isArray(value))
+    return value.flatMap((item) => collectStrings(item, depth + 1));
+  if (value !== null && typeof value === "object")
+    return Object.values(value as Record<string, unknown>).flatMap((item) =>
+      collectStrings(item, depth + 1),
+    );
+  return [];
 }
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
@@ -27,10 +68,12 @@ process.stdin.on("end", () => {
     process.exit(0);
   }
 
-  // Whatever the runtime sends. A prompt that is not a string used to throw, and
-  // an exception exits 1, which does not block — so `{"prompt":{"text":"…"}}` went
-  // through unscanned.
-  const prompt = typeof data.prompt === "string" ? data.prompt : "";
+  // Whatever the runtime sends. Not throwing on a prompt that is not a string
+  // was only half of it: coercing to "" made the hook exit 0 on the shapes it
+  // could not read, which is the same silence as never running. Every string
+  // inside the value is collected instead, to a bounded depth, so
+  // `{"prompt":{"text":"…"}}` and `{"prompt":["…"]}` are read like a prompt.
+  const prompt = collectStrings(data.prompt).join("\n");
 
   const allFindings = scan(prompt, ENABLED_CATEGORIES);
 
