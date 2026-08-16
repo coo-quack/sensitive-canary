@@ -1554,6 +1554,46 @@ describe("pre-tool-use-hook — UTF-16", () => {
     );
     expect(runHook("Read", p).exitCode).toBe(0);
   });
+
+  // Without a mark the encoding is a guess, and the counts it rests on read a
+  // UTF-8 file carrying a few NULs the same as a page of Japanese. Eight pairs
+  // of them in front — sixteen bytes — decoded the rest of the file into
+  // characters no rule matches, which is the whole of the tool switched off per
+  // file. Both readings are scanned now, so the guess costs a pass and hides
+  // nothing.
+  it.each([1, 7, 8, 64, 300])(
+    "a UTF-8 secret behind %i NUL pairs is still found",
+    (pairs) => {
+      const p = writeBytes(
+        `nul-prefix-${pairs}.txt`,
+        Buffer.concat([
+          Buffer.from("A\0".repeat(pairs), "binary"),
+          Buffer.from(`key=${AWS_KEY}\n`),
+        ]),
+      );
+      expect(runHook("Read", p).exitCode).toBe(2);
+    },
+  );
+
+  // The other side of the same guess. Japanese is full of U+xx00 characters —
+  // `一` is U+4E00 — so one per line puts thirty NULs on the minority side of a
+  // thirty-line document. Capping that side at a small count read the file as
+  // something other than UTF-16, and an ASCII key sitting in it was scanned only
+  // as the mojibake its bytes make in UTF-8.
+  it("a UTF-16 document whose text is Japanese is read as UTF-16", () => {
+    const line = "設定ファイルです。認証情報の一覧。\n";
+    const p = writeBytes(
+      "ja-no-bom.txt",
+      utf16le(`${line.repeat(30)}AWS_KEY=${AWS_KEY}\n`),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("the same Japanese document without a secret is allowed", () => {
+    const line = "設定ファイルです。認証情報は含みません。\n";
+    const p = writeBytes("ja-clean.txt", utf16le(line.repeat(30)));
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
 });
 
 describe("pre-tool-use-hook — an unforeseen error", () => {
