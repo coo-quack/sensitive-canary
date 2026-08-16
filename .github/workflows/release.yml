@@ -6,9 +6,17 @@ on:
 
 permissions: {}
 
+# Two pushes to `main` in quick succession would otherwise run this twice at
+# once, and the two runs would race over the tag and the npm publish. Nothing is
+# cancelled: a release half-way through is worse than a release that waits.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -20,19 +28,71 @@ jobs:
       - id: check
         run: |
           VERSION=$(node -p "require('./package.json').version")
+
+          # This value is interpolated into later `run:` scripts through `env:`,
+          # and is written to $GITHUB_OUTPUT. Both are ways for a crafted
+          # package.json to reach a shell or invent a second output line, so the
+          # shape is checked here, at the point of capture, before either
+          # happens. The anchors are the whole point: the same test elsewhere in
+          # this file carried `^` without `$`, which accepts anything at all
+          # after a valid prefix.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::package.json declares an unusable version: '$VERSION'"
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if git ls-remote --tags origin "v$VERSION" | grep -q "v$VERSION"; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          elif npm view "@coo-quack/sensitive-canary@$VERSION" version 2>/dev/null; then
+
+          # npm is the only authority on whether this version is released.
+          #
+          # The tag used to be consulted too, and that made the job unable to
+          # recover from a partial run: publish came before the tag, so a failed
+          # tag push left the version on npm with no tag, and a re-run saw the
+          # npm entry and declined to act. Reversing the order alone would have
+          # moved the same trap to the tag. Tagging is idempotent and now runs
+          # first, so a failure anywhere after it re-runs cleanly.
+          if npm view "@coo-quack/sensitive-canary@$VERSION" version >/dev/null 2>&1; then
+            echo "$VERSION is already on npm — nothing to release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # What `/plugin install` serves is the marketplace entry's `ref`, and with
+      # no `ref` that is the default branch — which here is `develop`. Every
+      # gate in this file guards `main` and npm; none of them are on the path a
+      # plugin user installs from. The entry is in another repository, so this
+      # is the only place the two can be held together.
+      - name: the marketplace entry serves a released branch
+        run: |
+          set -uo pipefail
+          catalog=$(curl -fsSL --retry 3 --retry-delay 2 \
+            https://raw.githubusercontent.com/coo-quack/claude-code-marketplace/develop/.claude-plugin/marketplace.json) || {
+            echo "::error::could not read the marketplace catalog."
+            exit 1
+          }
+          printf '%s' "$catalog" | node -e '
+            const chunks = [];
+            process.stdin.on("data", (c) => chunks.push(c));
+            process.stdin.on("end", () => {
+              const catalog = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              const entry = (catalog.plugins ?? []).find((p) => p.name === "sensitive-canary");
+              if (!entry) throw new Error("the catalog lists no sensitive-canary entry");
+              const ref = entry.source?.ref;
+              if (ref !== "main") {
+                throw new Error(
+                  `the catalog serves ref ${JSON.stringify(ref)}, not "main" — ` +
+                  "plugin users would receive unreleased commits",
+                );
+              }
+              console.log("the catalog pins sensitive-canary to main");
+            });
+          '
+
   release:
     needs: check
     if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       id-token: write
@@ -59,7 +119,7 @@ jobs:
           pkg=$(node -p "require('./package.json').version")
           plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
           for value in "$pkg" "$plugin"; do
-            if ! printf '%s' "$value" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            if ! [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
               echo "::error::a manifest declares no usable version — package.json is '$pkg', .claude-plugin/plugin.json is '$plugin'."
               exit 1
             fi
@@ -155,6 +215,11 @@ jobs:
           printf 'TOKEN=your-token-here\n' > /tmp/smoke-env/.env.example
           check 0 "a clean command must be allowed" dist/pre-tool-use-hook.js \
             '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+          # Without this, every assertion made of the prompt hook was that it
+          # exits 2, and a hook that exits 2 unconditionally would have shipped
+          # green — blocking every prompt the user types.
+          check 0 "a clean prompt must be allowed" dist/user-prompt-submit-hook.js \
+            '{"prompt":"list the files in this directory"}'
           check 0 "a clean file must be allowed" dist/pre-tool-use-hook.js \
             '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-clean.txt"}}'
           check 2 "a secret in a prompt must be blocked" dist/user-prompt-submit-hook.js \
@@ -172,39 +237,56 @@ jobs:
             '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-env/.env.example"}}'
           exit "$fail"
 
-      - name: Publish to npm
-        run: pnpm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
+      # Before the publish, not after. npm refuses to republish a version, so a
+      # publish that lands and is then followed by a failing step cannot be
+      # retried — the tag it never created can only be made by hand. Tagging
+      # first costs nothing when a later step fails: the tag is already what
+      # this commit should carry, and the step skips an existing one.
       - name: Create git tag
+        env:
+          VERSION: v${{ needs.check.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          VERSION="v${{ needs.check.outputs.version }}"
-          if git ls-remote --tags origin "$VERSION" | grep -q "$VERSION"; then
+          if git ls-remote --tags origin "$VERSION" | grep -q "refs/tags/$VERSION\$"; then
             echo "Tag $VERSION already exists, skipping"
           else
             git tag "$VERSION"
             git push origin "$VERSION"
           fi
 
+      - name: Publish to npm
+        run: pnpm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Every step below reads the version from the environment rather than
+      # splicing `${{ }}` into the script. The expression is substituted before
+      # bash parses the line, so a version carrying a quote or a semicolon would
+      # otherwise be read as shell — and `main` is where a release runs.
       - name: Extract changelog
         id: changelog
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
-          VERSION="${{ needs.check.outputs.version }}"
-          NOTES=$(awk "/^## v${VERSION}/{found=1; next} found && /^## v/{exit} found{print}" CHANGELOG.md)
+          # A literal prefix rather than a regex: the version went into an awk
+          # pattern before, where every `.` in it matched any character.
+          NOTES=$(awk -v v="## v$VERSION" '
+            $0 == v || index($0, v " ") == 1 { found = 1; next }
+            found && /^## v/ { exit }
+            found { print }
+          ' CHANGELOG.md)
           if [ -z "$NOTES" ]; then
             NOTES="Release v${VERSION}"
           fi
-          echo "$NOTES" > /tmp/release-notes.md
+          printf '%s\n' "$NOTES" > /tmp/release-notes.md
 
       - name: Create GitHub Release
         id: gh_release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ needs.check.outputs.version }}
         run: |
-          VERSION="v${{ needs.check.outputs.version }}"
           if gh release view "$VERSION" >/dev/null 2>&1; then
             echo "Release $VERSION already exists, skipping"
           else
@@ -231,8 +313,9 @@ jobs:
         if: steps.gh_release.outputs.created == 'true'
         env:
           GH_TOKEN: ${{ steps.marketplace-token.outputs.token }}
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           gh api repos/coo-quack/claude-code-marketplace/dispatches \
             -f event_type=plugin-released \
             -f 'client_payload[plugin]=sensitive-canary' \
-            -f 'client_payload[version]=${{ needs.check.outputs.version }}'
+            -f "client_payload[version]=$VERSION"

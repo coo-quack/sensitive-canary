@@ -588,18 +588,6 @@ export function getDefaultContextWindow(): number {
   return effectiveContextWindow;
 }
 
-// Split on whitespace and Unicode punctuation. A cheap tokenizer with no NLP
-// dependency, sufficient for matching context labels (phone, ZIP, etc.) in
-// Latin-script text. Japanese PII rules rely on prefixes (〒) or required
-// separators rather than context words, so this tokenizer not needing to
-// handle Japanese word segmentation is acceptable.
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[\s\p{P}]+/u)
-    .filter(Boolean);
-}
-
 // Words as they were written, with only the punctuation around them removed.
 // Splitting on punctuation made `extract-zip` supply "zip" and
 // `golang.org/x/mobile` supply "mobile", so a version number beside either read

@@ -804,9 +804,7 @@ describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {
     expect(reason).toContain("aws-access-key");
   });
 
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional literal — testing ${VAR} bash syntax
   it("blocks ${TOKEN} brace syntax", () => {
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional literal — the string is passed as a bash command
     const { exitCode } = runBashHook("curl -H 'Auth: ${API_TOKEN}'", {
       env: { API_TOKEN: "AKIAIOSFODNN7EXAMPLE" },
     });

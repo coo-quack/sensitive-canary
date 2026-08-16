@@ -82,6 +82,30 @@
   mentions `.env` via `cat > deploy.sh <<EOF` is not a read. Known limitation: a
   heredoc that feeds commands to a remote shell (`ssh host <<EOF`) is not caught,
   written up under "② PreToolUse hook" in the README
+- Detect a PEM private key that has been base64-encoded, under the new
+  `private-key-base64` rule. `-----BEGIN` never appears in the text, so
+  `client-key-data` in a kubeconfig, `tls.key` in a Kubernetes Secret and a key
+  held in Terraform state were all invisible to the plaintext rule. Three bytes
+  encode to four characters, so the header looks different depending on where it
+  sits relative to that boundary: the rule carries all three forms, since
+  matching one would find one key in three. Swept over 986 real files on a
+  developer machine, it found four keys in a kubeconfig and nothing else
+- Detect credentials in the userinfo half of an http(s) URL, under the new
+  `url-basic-auth` rule — a git remote, a `.netrc`, a private registry, a `curl`
+  invocation. RFC 3986 §3.2.1 deprecates the form for the same reason. The
+  placeholder machinery already covers the near neighbours, so
+  `https://user:password@localhost`, `https://x-access-token:${GH_TOKEN}@…` and
+  `https://USERNAME:PASSWORD@example.com` stay quiet; the same sweep of 986 real
+  files flagged none of them
+- Count the hash in a Telegram bot token loosely. The pattern asked for exactly
+  33 characters after `AA` — not a minimum, an exact count — so a 32-character
+  token and a 35-character one were both invisible, and the bot id was capped at
+  ten digits. Now 6–12 digits and 30–40 characters, with word boundaries at
+  either end
+- Read `mongodb+srv://` as a connection string. The rule listed `mongodb` but
+  not the SRV scheme, which is the one MongoDB Atlas hands out
+- Recognise the AWS key prefixes `ABIA`, `ACCA`, `APKA` and `ASCA` alongside the
+  nine already listed
 
 ### Fixes
 
@@ -530,6 +554,41 @@
 - Run CI on pushes to `main` and `develop`, not only on pull requests. The
   commit a merge makes belongs to no PR, so nothing built it: two branches that
   are green apart can still be red together
+- Fail the release when the marketplace catalog does not pin this plugin to
+  `main`. `/plugin install` serves the entry's `ref`, and with no `ref` that is
+  the repository's default branch — `develop`. Every gate in `release.yml`
+  guards `main` and npm, and none of them was on the path a plugin user installs
+  from, so a merge into `develop` reached users directly
+- Anchor the version shape test at both ends, in `ci.yml` and `release.yml`
+  alike. `^[0-9]+\.[0-9]+\.[0-9]+` with no `$` accepts anything at all after a
+  valid prefix, and `release.yml` splices that value into four `run:` scripts:
+  `0.8.0"; curl … | sh; echo "`, `0.8.0 && rm -rf /` and `0.8.0$(id)` were all
+  accepted by the old test and are all rejected by the new one. The version is
+  now validated in the job that captures it, before it reaches `$GITHUB_OUTPUT`,
+  and every step that uses it reads it from `env:` rather than by interpolation
+- Create the git tag before publishing to npm, and let npm alone decide whether
+  a version is released. npm refuses to republish, so a publish that landed and
+  was followed by a failing step could not be retried — the tag it never created
+  had to be made by hand, and the release job declined to act on a re-run
+- Give `release.yml` a `concurrency` group, so two pushes to `main` in quick
+  succession cannot race over the tag and the publish. Nothing is cancelled: a
+  release half-way through is worse than one that waits
+- Put a `timeout-minutes` on every job in both workflows. A hung step otherwise
+  holds a runner for the six-hour default
+- Assert that the published `UserPromptSubmit` hook allows a clean prompt. Every
+  assertion made of it was that it exits 2, so a hook that exits 2
+  unconditionally — blocking every prompt the user types — would have shipped
+  green
+- Install with `--frozen-lockfile` in CI. A lockfile CI is allowed to rewrite is
+  a lockfile CI does not check
+- Fail the lint on warnings, and check `docs/.vitepress/` the way `src/` is
+  checked. `biome lint` exits 0 on a warning, so the dead `tokenize` in
+  `src/lib/rules.ts` — superseded by `contextTokens`, and carrying a comment
+  describing the behaviour that replaced it — sat in the tree reported and
+  ignored. Two rules are turned off rather than obeyed: `useLiteralKeys`
+  contradicts this project's `noPropertyAccessFromIndexSignature`, and applying
+  it broke the typecheck; `noTemplateCurlyInString` is off for the test tree,
+  which cannot test `${VAR}` handling without writing one
 
 ---
 

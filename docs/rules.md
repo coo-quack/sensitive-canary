@@ -78,6 +78,8 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `jwt` | JSON Web Token (three Base64URL segments separated by `.`) |
 | `private-key` | PEM Private Key header (`-----BEGIN … PRIVATE KEY-----`) |
+| `private-key-base64` | PEM private key that has been base64-encoded — how one appears in a kubeconfig, a Kubernetes Secret or a Terraform state, where the `-----BEGIN` header never shows in the text |
+| `url-basic-auth` | Credentials in the userinfo field of an http(s) URL — a git remote, a `.netrc`, a private registry, a `curl` invocation. RFC 3986 deprecates the form for this reason |
 | `connection-string` | Database connection string with embedded credentials; each half of the credentials is bounded at 1024 characters — see the note below the tables |
 
 ### SaaS / Developer Tools
@@ -115,6 +117,19 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `env-assignment` | Assignments whose name carries `SECRET`, `PASSWORD`, `PASSWD`, `PASS`, `TOKEN`, `API_KEY`, `ACCESS_KEY` or `PRIVATE_KEY`, written with `=` anywhere or with `:` at the start of a line. `PASS` must stand on its own — `COMPASS` and `BYPASS` are not passwords. The value must be a value: eight characters or more, no brackets or separators in it, and not a `$VAR` reference | 3.0 |
 
 The entropy threshold filters out low-entropy values that are unlikely to be real secrets — `API_KEY=aaaaaaaa` scores 0 and is dropped. It is a weak filter, not a classifier: `placeholder` scores 3.096 and clears the 3.0 threshold, so `API_KEY=placeholder` is reported. Entropy is the Shannon entropy of the value.
+
+### Why `private-key-base64` carries three prefixes
+
+Base64 encodes three bytes at a time, so what `-----BEGIN ` looks like once
+encoded depends on where it sits relative to that boundary. A key encoded whole
+— `client-key-data` in a kubeconfig, `tls.key` in a Kubernetes Secret, a
+`base64 -w0 < key.pem` — starts at offset 0 and produces `LS0tLS1CRUdJTi`. A key
+that begins one or two bytes into what was encoded produces `0tLS0tQkVHSU4g` or
+`tLS0tLUJFR0lOI` instead, and the rule lists all three: matching only the first
+would find one PEM in three. Offsets beyond two repeat the cycle.
+
+The plaintext `private-key` rule is unaffected either way — it reads the header
+itself.
 
 ## PII
 

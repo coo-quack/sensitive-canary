@@ -4,7 +4,7 @@
     {
       "id": "aws-access-key",
       "description": "AWS Access Key ID",
-      "regex": "\\b(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\\b",
+      "regex": "\\b(A3T[A-Z0-9]|AKIA|ABIA|ACCA|APKA|ASCA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\\b",
       "category": "secret"
     },
     {
@@ -64,7 +64,7 @@
     {
       "id": "telegram-bot-token",
       "description": "Telegram Bot Token",
-      "regex": "[0-9]{8,10}:AA[0-9A-Za-z_-]{33}",
+      "regex": "\\b[0-9]{6,12}:AA[0-9A-Za-z_-]{30,40}\\b",
       "category": "secret"
     },
     {
@@ -239,7 +239,7 @@
     {
       "id": "connection-string",
       "description": "Database Connection String with credentials",
-      "regex": "(mongodb|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]{1,1024}:[^@\\s]{1,1024}@",
+      "regex": "(mongodb(?:\\+srv)?|mysql|postgres|postgresql|redis):\\/\\/[^:\\s]{1,1024}:[^@\\s]{1,1024}@",
       "category": "secret"
     },
     {
@@ -551,6 +551,18 @@
       "id": "google-oauth-secret",
       "description": "Google OAuth Client Secret",
       "regex": "\\bGOCSPX-[A-Za-z0-9_-]{20,}",
+      "category": "secret"
+    },
+    {
+      "id": "private-key-base64",
+      "description": "PEM Private Key, base64-encoded",
+      "regex": "(?:LS0tLS1CRUdJTi|0tLS0tQkVHSU4g|tLS0tLUJFR0lOI)[A-Za-z0-9+/=]{40,}",
+      "category": "secret"
+    },
+    {
+      "id": "url-basic-auth",
+      "description": "Credentials embedded in an http(s) URL",
+      "regex": "\\bhttps?://[A-Za-z0-9._~%+-]{1,64}:[^@/\\s\\\"'`<>]{3,256}@[A-Za-z0-9.-]+",
       "category": "secret"
     }
   ]

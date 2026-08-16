@@ -874,6 +874,11 @@ describe("scan — adversarial inputs", () => {
       "base64 alphabet": "aA0+/".repeat(51_200),
       "assignments with no value": "key = ".repeat(42_666),
       "url credentials with no host": "mongodb://a:".repeat(21_333),
+      // `url-basic-auth` bounds its two halves at 64 and 256 characters and
+      // then wants an `@`. Each run here is as long as those bounds allow and
+      // the `@` never comes, so every start position pays the full retreat.
+      "https urls that never reach an @":
+        `https://${"a".repeat(64)}:${"b".repeat(256)}`.repeat(778),
     };
 
     // Every rule is linear or better on these. The slowest pair measured is
@@ -1095,15 +1100,15 @@ describe("a scan cannot be made to hang", () => {
     ["a repeated JWT header", "eyJ".repeat(MEGABYTE / 3)],
     [
       "repeated Square prefixes",
-      `${("-EAAA" + "a".repeat(20)).repeat(MEGABYTE / 25)}/`,
+      `${(`-EAAA${"a".repeat(20)}`).repeat(MEGABYTE / 25)}/`,
     ],
     [
       "repeated Mapbox prefixes",
-      ("pk.eyJ" + "a".repeat(12)).repeat(MEGABYTE / 18),
+      `pk.eyJ${"a".repeat(12)}`.repeat(MEGABYTE / 18),
     ],
     [
       "repeated Sentry prefixes",
-      ("sntrys_" + "a".repeat(12)).repeat(MEGABYTE / 19),
+      `sntrys_${"a".repeat(12)}`.repeat(MEGABYTE / 19),
     ],
     ["one long run", "a".repeat(MEGABYTE)],
     ["digits", "1234567890".repeat(MEGABYTE / 10)],
@@ -1563,7 +1568,7 @@ describe("keywords and boundaries are read as words, not substrings", () => {
   // The boundary still has work to do: a longer standard-base64 blob that opens
   // with these four characters is not a token.
   it("a standard-base64 blob beginning EAAA is not one", () => {
-    expect(flags(`data:${"EAAA" + "b".repeat(60)}/x+y=`)).not.toContain(
+    expect(flags(`data:${`EAAA${"b".repeat(60)}`}/x+y=`)).not.toContain(
       "square-access-token",
     );
   });
@@ -1644,6 +1649,9 @@ describe("every rule catches something", () => {
     "linear-key": `lin_api_${"a".repeat(40)}`,
     "postman-key": `PMAK-${"a".repeat(24)}-${"b".repeat(34)}`,
     "azure-storage-key": `AccountKey=${"a".repeat(86)}==`,
+    "private-key-base64": `LS0tLS1CRUdJTi${"QUJDRA".repeat(9)}`,
+    "url-basic-auth":
+      "https://admin:s3cr3tP4ssw0rdX9@internal.corp.example.com",
     "azure-sas-key": `SharedAccessKey=${"a".repeat(43)}=`,
     "google-oauth-secret": "GOCSPX-aBcD1234eFgH5678iJkL",
     "flyio-token": `FlyV1 fm2_${"a".repeat(50)}`,
@@ -1723,7 +1731,7 @@ describe("the reserved IPv4 boundary", () => {
 });
 
 describe("the shipped rules", () => {
-  it("are exactly these seventy-four", () => {
+  it("are exactly these seventy-six", () => {
     expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
       "anthropic-key",
       "atlassian-token",
@@ -1784,6 +1792,7 @@ describe("the shipped rules", () => {
       "pii-steuer-id-de",
       "postman-key",
       "private-key",
+      "private-key-base64",
       "replicate-token",
       "sendgrid-key",
       "sentry-org-token",
@@ -1797,17 +1806,18 @@ describe("the shipped rules", () => {
       "supabase-key",
       "telegram-bot-token",
       "twilio-sid",
+      "url-basic-auth",
       "vault-token",
       "xai-key",
     ]);
   });
 
-  it("are split as the README says: 50 secret, 24 PII", () => {
-    const byCategory = DEFAULT_RULES.reduce<Record<string, number>>(
-      (acc, r) => ({ ...acc, [r.category]: (acc[r.category] ?? 0) + 1 }),
-      {},
-    );
-    expect(byCategory).toEqual({ secret: 50, pii: 24 });
+  it("are split as the README says: 52 secret, 24 PII", () => {
+    const byCategory: Record<string, number> = {};
+    for (const rule of DEFAULT_RULES) {
+      byCategory[rule.category] = (byCategory[rule.category] ?? 0) + 1;
+    }
+    expect(byCategory).toEqual({ secret: 52, pii: 24 });
   });
 
   it("each declare the fields the loader needs", () => {
@@ -1891,6 +1901,124 @@ describe("encrypted private key headers", () => {
         (f) => f.ruleId === "private-key",
       ),
     ).toBe(false);
+  });
+});
+
+// A survey of how five vendors actually format their credentials found five
+// shapes the rules did not see. Each is held here in both directions: the value
+// that must be found, and the near neighbour that must stay quiet. Widening a
+// pattern until it matches is easy, and a pattern that matches everything
+// protects nothing.
+describe("the credential shapes the rules used to miss", () => {
+  const hits = (text: string, ruleId: string): boolean =>
+    scan(text).some((f) => f.ruleId === ruleId);
+
+  describe("telegram-bot-token counts the hash loosely", () => {
+    // The pattern asked for exactly 33 characters after `AA`. Not at least 33 —
+    // exactly, so a 32-character token and a 35-character one were both
+    // invisible, and the length that did work was the one nobody writes down.
+    it.each([
+      ["32", "110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"],
+      ["35", "8012345678:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawXyz"],
+      ["a six-digit bot id", "123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"],
+    ])("%s characters after AA is a token", (_label, token) => {
+      expect(hits(token, "telegram-bot-token")).toBe(true);
+    });
+
+    it.each([
+      ["a bot id with no hash", "1234567890:AA"],
+      [
+        "too few digits before the colon",
+        "12345:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
+      ],
+    ])("%s is not", (_label, text) => {
+      expect(hits(text, "telegram-bot-token")).toBe(false);
+    });
+  });
+
+  it("connection-string reads the SRV scheme MongoDB Atlas hands out", () => {
+    expect(
+      hits(
+        "mongodb+srv://svc:Xk2p9QmR7t@cluster0.abcd.mongodb.net/db",
+        "connection-string",
+      ),
+    ).toBe(true);
+  });
+
+  describe("aws-access-key knows the prefixes it was missing", () => {
+    it.each(["ABIA", "ACCA", "APKA", "ASCA", "AKIA"])("%s", (prefix) => {
+      expect(hits(`${prefix}IOSFODNN7EXAMPLE`, "aws-access-key")).toBe(true);
+    });
+
+    it("a four-letter run that is not a prefix is not a key", () => {
+      expect(hits("AZZAIOSFODNN7EXAMPLE", "aws-access-key")).toBe(false);
+    });
+  });
+
+  describe("private-key-base64 at each base64 alignment", () => {
+    const pem = [
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "MIIEowIBAAKCAQEAwK3vJ9m5Q8xY2nB4dF6hL0pR7sT1uV3wX5yZ8aC2eG4iK6mO",
+      "-----END RSA PRIVATE KEY-----",
+      "",
+    ].join("\n");
+
+    // Three bytes encode to four characters, so where the header sits relative
+    // to that boundary decides what it looks like once encoded. Matching one
+    // alignment would find one key in three.
+    it.each([0, 1, 2])("%i bytes ahead of the header", (offset) => {
+      const encoded = Buffer.from("x".repeat(offset) + pem, "utf8").toString(
+        "base64",
+      );
+      expect(hits(`client-key-data: ${encoded}`, "private-key-base64")).toBe(
+        true,
+      );
+    });
+
+    it("the plaintext header is still the plaintext rule's to find", () => {
+      expect(hits(pem, "private-key")).toBe(true);
+      expect(hits(pem, "private-key-base64")).toBe(false);
+    });
+  });
+
+  describe("url-basic-auth", () => {
+    it.each([
+      [
+        "a private registry",
+        "https://deploy:Xk2p9QmR7tLw@registry.internal.example.com/v2/",
+      ],
+      [
+        "a git remote",
+        "git clone https://svcacct:ghp_A1b2C3d4E5f6G7h8@github.com/org/repo.git",
+      ],
+    ])("%s is a finding", (_label, text) => {
+      expect(hits(text, "url-basic-auth")).toBe(true);
+    });
+
+    // The rule captures no group, so the shape tests that need one do not run
+    // over it. `isPlaceholder` does — it is applied to every secret rule — and
+    // it is the whole of what keeps these quiet. Each was measured: without it
+    // all four are findings.
+    it.each([
+      [
+        "a generic pair against localhost",
+        "https://user:password@localhost:8080",
+      ],
+      [
+        "a reference the shell never expanded",
+        "https://x-access-token:${GH_TOKEN}@github.com/org/repo.git",
+      ],
+      [
+        "an environment variable",
+        "https://admin:$REGISTRY_PASSWORD@registry.example.com",
+      ],
+      [
+        "the words a document tells you to replace",
+        "https://USERNAME:PASSWORD@example.com/path",
+      ],
+    ])("%s is not", (_label, text) => {
+      expect(scan(text)).toEqual([]);
+    });
   });
 });
 
