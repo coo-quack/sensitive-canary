@@ -50,10 +50,16 @@ function parseTagsOfType(prefix: string, messages: Message[]): Set<string> {
 //
 // Claude Code writes things the user did not type into the transcript as user
 // messages with plain string content: the output of a `!` command, the name and
-// arguments of a slash command, and system reminders. A tag in any of those
-// switched the protection off — `grep -r allow-all` was enough.
+// arguments of a slash command, system reminders, and a background task
+// reporting back. A tag in any of those switches the protection off —
+// `grep -r allow-all` is enough, and so is a subagent whose report quotes the
+// documentation for these tags.
+//
+// A list of names is a list, and the runtime is free to add to it. The
+// transcript reader asks `origin.kind` instead, which answers the question
+// directly; this is what covers the same lines when the field is not there.
 export const SYNTHETIC_ELEMENT_NAMES =
-  "local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-output|bash-stdout|bash-stderr|system-reminder";
+  "local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-output|bash-stdout|bash-stderr|system-reminder|task-notification";
 
 const SYNTHETIC_USER_ELEMENTS = new RegExp(
   `<(${SYNTHETIC_ELEMENT_NAMES})>[\\s\\S]*?<\\/\\1>`,
@@ -75,7 +81,15 @@ const UNCLOSED_SYNTHETIC_ELEMENT = new RegExp(
 // writes the tags that way — `[allow-secret]` — so stripping them refused the
 // form the project itself teaches, and refused it silently: the block that
 // followed advised adding the tag it had just ignored.
-const FENCED_CODE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+//
+// From the first marker to the last, rather than marker one to marker two and
+// marker three to marker four. Pairing them off leaves the span between the
+// second and third readable as typed, and a pasted markdown document with a
+// code block inside it puts a quoted tag in exactly that span. Which markers
+// open and which close cannot be told apart here — a document quoting a fence
+// is the same characters as two documents — so the whole run counts as quoted.
+// A tag before the first fence or after the last still reads as typed.
+const FENCED_CODE = /(?:```|~~~)[\s\S]*(?:```|~~~)/g;
 
 // A fence that never closes takes the rest of the message with it, the way an
 // unclosed synthetic element does. Pairs alone let a truncated paste through:

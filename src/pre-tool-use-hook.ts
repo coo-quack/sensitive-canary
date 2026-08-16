@@ -77,7 +77,20 @@ interface TranscriptLine {
   // typed them: a compaction summary, and a meta line such as a skill body.
   isCompactSummary?: unknown;
   isMeta?: unknown;
+  // Where the line came from. `human` is someone at a keyboard; the other
+  // values name the runtime writing under the user's role.
+  origin?: { kind?: unknown } | null;
   message?: Message;
+}
+
+// Whether a transcript line records something a person typed.
+//
+// The field is only present on lines that have one, so a line without it is
+// left to the other tests rather than rejected: most user lines carry tool
+// results and have no origin, and an older runtime writes none at all.
+function wasTypedByAHuman(line: TranscriptLine): boolean {
+  const kind = line.origin?.kind;
+  return kind === undefined || kind === null || kind === "human";
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -232,16 +245,27 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
       // contradictory is fine: the field is rejected only when it names some
       // other kind of line.
       //
-      // `isCompactSummary` and `isMeta` are the two the runtime writes as the
-      // user without the user having typed them. A compaction summary is a
+      // `isCompactSummary` and `isMeta` are two the runtime writes as the user
+      // without the user having typed them. A compaction summary is a
       // re-injection of earlier turns, so a tag anyone discussed at any point in
       // the conversation comes back armed; a meta line carries skill bodies and
       // other file content, so writing a `SKILL.md` would be enough to lift
       // every check. Neither is someone asking for anything.
+      //
+      // `origin.kind` says outright which lines those are, and it is asked
+      // before any of the rest: a background task reporting back arrives as
+      // `task-notification`, carrying an agent's free-form prose under the
+      // user's role. Prose about these very tags is enough, so a report that
+      // quotes the documentation arms the guard it is describing.
+      //
+      // Only lines that carry the field are judged by it. Most do not — a tool
+      // result has no origin — and treating absent as non-human would ignore
+      // every transcript written by a runtime that predates it.
       if (
         (parsed.type === undefined || parsed.type === "user") &&
         parsed.isCompactSummary !== true &&
         parsed.isMeta !== true &&
+        wasTypedByAHuman(parsed) &&
         msg?.role === "user" &&
         msg.content !== undefined
       ) {
