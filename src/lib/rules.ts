@@ -391,12 +391,12 @@ export function redact(str: string): string {
   return `${head}****${tail}`;
 }
 
-// Longer than any honest scan and far shorter than the hook timeout. One rule
-// that backtracks badly used to take minutes on a megabyte, and a hook killed by
-// the timeout does not block — so the damage was silent. Bounding the patterns
-// fixed the two that did it; this is here so the next one of that shape is
-// caught rather than repeating the same failure. The check sits between rules
-// because a single `matchAll` cannot be interrupted.
+// Longer than any honest scan and far shorter than the hook timeout. A rule
+// that backtracks badly takes minutes on a megabyte, and a hook killed by the
+// timeout does not block, so the damage is silent. The patterns that did that
+// are bounded; this catches the next one of that shape rather than letting it
+// repeat. The check sits between rules because a single `matchAll` cannot be
+// interrupted.
 export const SCAN_BUDGET_MS = 10_000;
 
 export class ScanBudgetExceeded extends Error {

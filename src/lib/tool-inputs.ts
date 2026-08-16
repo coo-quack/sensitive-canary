@@ -25,12 +25,12 @@ export const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
 // tools (`mcp__<server>__<tool>`) only the tool component is matched — a server
 // named "editor" or "readwrite" must not exempt every read tool it offers.
 // The verb has to be the first word of the name, not a substring of it anywhere.
-// As a substring test this exempted reads: "update" sits inside `get_updates`,
-// and "write" inside `read_and_write_file` — a tool that returns contents was
-// treated as one that only writes. Word boundaries are the `_`/`-` in snake and
+// As a substring test this would exempt reads: "update" sits inside
+// `get_updates`, and "write" inside `read_and_write_file` — a tool that returns
+// contents read as one that only writes. Word boundaries are the `_`/`-` in snake and
 // kebab names and, in camelCase, a capital that follows a lowercase letter — so
 // `write_file`, `createPage` and `WRITE_FILE` all match while `overwrite_file`
-// and `readwrite` no longer do.
+// and `readwrite` do not.
 //
 // Erring this way costs a false block on a noun-first write tool (`file_write`),
 // which is the direction to fail in. The built-in write tools are named

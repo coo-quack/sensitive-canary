@@ -67,23 +67,24 @@ function searchesWithoutAPath(
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-// Maximum bytes scanned from the head of a file. readFileSync has no size
-// limit, so a file of any size was read whole and every rule run over all of
-// it — on a multi-GB log that is the hang this hook cannot afford, because a
-// killed hook does not block the call (see isRegularFile). A secret past the
-// cut is missed; the transcript read above makes the same trade for its tail.
+// Maximum bytes scanned from the head of a file. `readFileSync` has no size
+// limit, so without a cap a multi-GB log is read whole and every rule run over
+// all of it, which is the hang this hook cannot afford: a hook killed by the
+// PreToolUse timeout does not block the call (see isRegularFile). A secret past
+// the cut is missed, the same trade the transcript read makes for its tail.
 const MAX_FILE_SCAN_BYTES = 1_048_576; // 1 MiB
 
 // Total bytes one hook invocation will read across every file it scans. The
-// per-file cap bounds one file; nothing bounded the number of files, and a glob
-// naming three hundred of them took half a minute — long enough for the
-// PreToolUse timeout to kill the hook, which does not block the call.
+// per-file cap bounds one file and nothing else bounds the number of them: a
+// glob naming three hundred large files costs half a minute, which is long
+// enough for the PreToolUse timeout to kill the hook, and a killed hook does
+// not block the call.
 //
 // Files past the budget are not scanned, so the budget is also a way through:
-// eight files of a megabyte each, named before the one that matters, used to
-// spend it. Sixty-four megabytes is about two seconds of scanning here, which
-// keeps the hook well inside the timeout while making that trick need sixty-four
-// files rather than eight. It does not remove it — written up as a limitation.
+// enough large files named before the one that matters and it is spent.
+// Sixty-four megabytes is about two seconds of scanning here, which keeps the
+// hook well inside the timeout while making that trick need sixty-four files
+// rather than eight. It does not remove it — written up as a limitation.
 const MAX_TOTAL_SCAN_BYTES = 64 * 1_048_576; // 64 MiB
 
 // Input field names that carry something to run rather than something to read.
@@ -105,24 +106,25 @@ const MAX_COMMAND_FIELD_DEPTH = 4;
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
 // Mutable for one run of the process: what has been read, and what has already
-// been looked at. Overlapping globs named the same file five times over.
+// been looked at. Overlapping globs name the same file several times over, and
+// each of those is a file read and a scan.
 const scanned = new Set<string>();
 let bytesScanned = 0;
 
 // When this invocation has to stop reading files, whatever it has read.
 //
-// A byte budget bounds the reading and not the walking, and a pattern reaching
-// one level under a home directory took ten seconds — close enough to the
-// PreToolUse timeout to matter, and a hook killed by that timeout does not
-// block. This is checked between files, so it bounds the reading of many files
-// where a byte count would not. It does not bound a single `globSync` call,
-// which cannot be interrupted: a pattern several directories deep still costs
-// what the walk costs. Files after the deadline are not scanned, and a `.env`
-// name reached after it falls back on the name.
+// A byte budget bounds the reading and not the walking: a pattern reaching one
+// level under a home directory costs ten seconds, close enough to the PreToolUse
+// timeout to matter, and a hook killed by that timeout does not block. This is
+// checked between files, so it bounds the reading of many files where a byte
+// count would not. It does not bound a single `globSync` call, which cannot be
+// interrupted: a pattern several directories deep still costs what the walk
+// costs. Files after the deadline are not scanned, and a `.env` name reached
+// after it falls back on the name.
+//
 // Both clocks start when the payload arrives, not when the process does. The
-// wait for stdin is the runtime's, and counting it against the scan meant a
-// slow handover spent the whole allowance before a single file was read — five
-// seconds of it and nothing was scanned, on an exit code of 0.
+// wait for stdin belongs to the runtime, and counting it against the scan lets
+// a slow handover spend the whole allowance before a single file is read.
 let DEADLINE = Number.POSITIVE_INFINITY;
 
 function startTheClock(): void {
@@ -140,12 +142,12 @@ let baseDirectory = currentDirectoryOrRoot();
 
 // `process.cwd()` throws when the directory the hook was started in has been
 // removed, which a build script does every time it runs `rm -rf dist` from
-// inside `dist`, and `git worktree remove` does to a worktree. That throw
-// happens while this module is still being evaluated — before the transcript is
-// read — so it stopped every tool call with a message telling the user to add
-// an allow tag that could not possibly be honoured. There is nothing sensitive
-// about a missing directory: a relative path simply has no base, and one that
-// resolves to nothing is scanned as the name it is.
+// inside `dist`, and `git worktree remove` does to a worktree. The throw would
+// happen while this module is still being evaluated, before the transcript is
+// read, so it would stop every tool call with a message telling the user to add
+// an allow tag that could not be honoured. There is nothing sensitive about a
+// missing directory: a relative path simply has no base, and one that resolves
+// to nothing is scanned as the name it is.
 function currentDirectoryOrRoot(): string {
   try {
     return process.cwd();
@@ -267,14 +269,14 @@ function block(
 
   // Exit 2 blocks the tool call and stderr is the documented way to say why.
   //
-  // The reason used to be written to stdout as `{"decision":"block", …}`. That
-  // does reach Claude on the current version — measured with a probe hook, not
-  // assumed — but the documentation says stdout is ignored on a non-zero exit
-  // and that PreToolUse takes its decision from `hookSpecificOutput`, not from a
-  // top-level `decision` field. So the old form worked by way of behaviour no
-  // longer described anywhere, and a release could drop it without breaking a
-  // documented contract. Blocking would survive that (exit 2 is the block), but
-  // the reason and the allow-tag guidance would not.
+  // Not stdout as `{"decision":"block", …}`. That form does reach Claude on the
+  // current version — measured with a probe hook, not assumed — but the
+  // documentation says stdout is ignored on a non-zero exit, and that PreToolUse
+  // takes its decision from `hookSpecificOutput` rather than a top-level
+  // `decision` field. It would work by way of behaviour described nowhere, which
+  // a release could drop without breaking a documented contract. Blocking would
+  // survive that (exit 2 is the block); the reason and the allow-tag guidance
+  // would not.
   //
   // When both channels carry text, stdout wins and stderr is discarded, so
   // writing both would leave the documented one dead. Hence stderr alone.
@@ -292,8 +294,8 @@ function block(
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
 // Characters that make a token a pattern rather than a filename. `{` is here
-// because the shell expands `{a,b}` too, and `cat .env{,.bak}` reached the name
-// guard as the single name `.env{`.
+// because the shell expands `{a,b}` too, and without it `cat .env{,.bak}`
+// reaches the name guard as the single name `.env{`, which is nothing on disk.
 const GLOB_METACHARACTERS = /[*?[{]/;
 
 // How many matches of one pattern are scanned. This bounds the reading, not the
@@ -304,10 +306,11 @@ const MAX_GLOB_MATCHES = 256;
 // The paths a candidate stands for.
 //
 // A token carrying glob metacharacters names whatever the shell will expand it
-// to, and the file is in the expansion, not in the token: `cat sec*` collected
-// `sec*`, found no file by that name, and allowed the read. `cat .env*` did the
-// same, one character away from `cat .env`, which is blocked on its name — so
-// the guard this hook is most sure of was a wildcard away from being skipped.
+// to, and the file is in the expansion rather than in the token. Without this,
+// `cat sec*` collects `sec*`, finds no file by that name and allows the read;
+// `cat .env*` does the same, one character away from `cat .env`, which is
+// blocked on its name — the guard this hook is most sure of, a wildcard away
+// from being skipped.
 //
 // Expanded here rather than in the tokenizer because it needs the filesystem,
 // which is also why it can differ from what the shell will do a moment later.
@@ -317,13 +320,13 @@ function expandCandidate(candidate: string): string[] {
     expandPath(fromFileUrl(candidate)),
   );
   if (!GLOB_METACHARACTERS.test(literal)) return [literal];
-  // `**` matches across directories, and expanding it walked a whole tree:
-  // `cat ~/**/*` ran until the hook was killed, which is the failure this file
-  // spends a `stat` per path to avoid. Refusing it outright was worse — the
-  // shell still expands it and reads the files, so `cat **` was scanned not at
-  // all. Collapsed to one `*`, which costs a listing per matching directory the
-  // way every other pattern here does, and reaches one level rather than every
-  // level. Written up as a limitation.
+  // `**` matches across directories, and expanding it walks a whole tree:
+  // `cat ~/**/*` runs until the hook is killed, which is the failure this file
+  // spends a `stat` per path to avoid. Refusing the pattern outright is worse,
+  // since the shell still expands it and reads the files. Collapsed to one `*`,
+  // which costs a listing per matching directory the way every other pattern
+  // here does, and reaches one level rather than every level. Written up as a
+  // limitation.
   const pattern = literal.replace(/\*{2,}/g, "*");
   let matches: string[] = [];
   try {
@@ -331,12 +334,13 @@ function expandCandidate(candidate: string): string[] {
   } catch {
     matches = [];
   }
-  // The literal is kept as well as the expansion, and returning only the matches
-  // was a way through that this hook did not have before the expansion existed:
-  // `cat /nonexistent/.env.*` matches nothing, so nothing was scanned and the
-  // `.env` name guard — which reads the name, not the disk — never ran. A file
-  // really named `report[2].txt` was lost the same way, since glob reads `[2]`
-  // as a character class and expands it to `report2.txt`.
+  // The literal is kept as well as the expansion. Returning only the matches
+  // would be a way through that this hook did not have before the expansion
+  // existed: `cat /nonexistent/.env.*` matches nothing, so nothing would be
+  // scanned and the `.env` name guard — which reads the name, not the disk —
+  // would never run. A file really named `report[2].txt` goes the same way,
+  // since glob reads `[2]` as a character class and expands it to
+  // `report2.txt`.
   return [literal, ...matches];
 }
 
@@ -793,7 +797,7 @@ process.stdin.on("end", () => {
   try {
     // Empty stdin is nothing to check. Bytes that do not parse are a check that
     // could not read its input, which is not the same as safe: two characters
-    // missing from the end of a payload used to pass a key through.
+    // missing from the end of a payload are enough to hide a key.
     if (raw.trim().length === 0) process.exit(0);
     const parsed: unknown = JSON.parse(raw);
     // `JSON.parse("null")` succeeds and returns null, which then threw on the
@@ -838,8 +842,8 @@ process.stdin.on("end", () => {
 
   if (tool === "Bash") {
     // A tool input is whatever the tool declares, so a `command` that is not a
-    // string is a shape this really receives. It used to throw, and an exception
-    // exits 1, which does not block: the call went through unscanned.
+    // string is a shape this really receives. Throwing on it exits 1, which does
+    // not block, so the call goes through unscanned.
     const command = Array.isArray(input.command)
       ? input.command
           .filter((v): v is string => typeof v === "string")

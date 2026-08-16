@@ -160,10 +160,9 @@ export function tokenizeCommand(command: string): ShellToken[][] {
 
     // A substitution standing among the operands is one word to the command, so
     // it is consumed whole and no token is emitted for it. Ending the segment
-    // here instead cut the operand list in two: `cat <(echo hi) secrets` left
-    // `secrets` in a segment of its own, where it was read as a command name and
-    // its own reading went unseen. The comment that used to sit here said the
-    // only cost was reaching the inner command twice, which was wrong.
+    // here instead would cut the operand list in two: `cat <(echo hi) secrets`
+    // leaves `secrets` in a segment of its own, where it reads as a command name
+    // and its own reading goes unseen.
     //
     // The inner command is still reached: extractSubstitutions walks the raw
     // string for these forms, and the paths are deduplicated.
@@ -260,10 +259,10 @@ interface HeredocDelimiter {
 // the shell does it: `<<EOF`, `<<'EOF'`, `<<"EOF"` and `<<E"O"F` all end their
 // body at the line `EOF`. The word ends at whitespace or a shell metacharacter.
 //
-// A narrower character class (`[A-Za-z0-9_.]`) used to cut the word short, and the
-// truncated delimiter then never matched the real closing line: stripHeredocBodies
-// swallowed the rest of the command, so `cat > f <<EOF-1 … EOF-1` followed by
-// `cat .env` hid the read entirely.
+// A narrower character class (`[A-Za-z0-9_.]`) cuts the word short, and a
+// truncated delimiter never matches the real closing line: stripHeredocBodies
+// then swallows the rest of the command, so `cat > f <<EOF-1 … EOF-1` followed
+// by `cat .env` hides the read entirely.
 function readHeredocDelimiter(
   line: string,
   from: number,
@@ -341,9 +340,9 @@ function findHeredocDelimiters(line: string): HeredocDelimiter[] {
 
 // Remove heredoc bodies from a command line. A body is text, not commands —
 // `cat > deploy.sh <<EOF` followed by a script that mentions `.env` reads
-// nothing, and scanning the body as shell blocked exactly that everyday case.
+// nothing, and scanning the body as shell blocks exactly that everyday case.
 // The trade-off: a heredoc that *feeds* commands to a remote shell
-// (`ssh host <<EOF\ncat /secret\nEOF`) is no longer caught. Written up as a
+// (`ssh host <<EOF\ncat /secret\nEOF`) is not caught. Written up as a
 // known limitation under "② PreToolUse hook" in the README.
 export function stripHeredocBodies(command: string): string {
   const lines = command.split("\n");
@@ -453,10 +452,10 @@ export function extractSubstitutions(command: string): string[] {
 }
 
 // Shell keywords and the brace-group delimiters. They stand where a command
-// name would, so a segment led by one used to be classified as a command called
-// `{` or `then` and its operands never looked at: `{ cat secrets; }`,
-// `if …; then cat secrets; fi` and `while cat secrets; do :; done` all read a
-// file nothing noticed. The keywords that open a condition (`if`, `while`,
+// name would, so without this list a segment led by one is classified as a
+// command called `{` or `then` and its operands are never looked at:
+// `{ cat secrets; }`, `if …; then cat secrets; fi` and
+// `while cat secrets; do :; done` each read a file nothing notices. The keywords that open a condition (`if`, `while`,
 // `until`) matter as much as the ones that open a body: the command being tested
 // runs too.
 export const SHELL_KEYWORD_TOKENS = new Set([
