@@ -115,49 +115,67 @@ describe("resolveTagPriority", () => {
     expect(effectiveAllow.has("secret")).toBe(false);
   });
 
-  it("[allow-secret] before [mask-secret] → allow wins for secret", () => {
+  // The last tag replaces the earlier ones whole. Merging per category kept the
+  // wider grant of the two, so narrowing from `[allow-all]` to `[allow-secret]`
+  // went on allowing PII.
+  it("[allow-secret] then [mask-secret] → mask", () => {
     const { effectiveAllow, effectiveMask } = resolveTagPriority(
       "[allow-secret] [mask-secret] key=abc",
-    );
-    expect(effectiveAllow.has("secret")).toBe(true);
-    expect(effectiveMask.has("secret")).toBe(false);
-  });
-
-  it("[mask-secret] before [allow-secret] → mask wins for secret", () => {
-    const { effectiveAllow, effectiveMask } = resolveTagPriority(
-      "[mask-secret] [allow-secret] key=abc",
     );
     expect(effectiveMask.has("secret")).toBe(true);
     expect(effectiveAllow.has("secret")).toBe(false);
   });
 
-  it("[allow-all] before [mask-secret] → allow wins for both dimensions", () => {
+  it("[mask-secret] then [allow-secret] → allow", () => {
     const { effectiveAllow, effectiveMask } = resolveTagPriority(
-      "[allow-all] [mask-secret] key=abc",
+      "[mask-secret] [allow-secret] key=abc",
     );
     expect(effectiveAllow.has("secret")).toBe(true);
-    expect(effectiveAllow.has("pii")).toBe(true);
+    expect(effectiveMask.has("secret")).toBe(false);
+  });
+
+  it("[allow-all] then [allow-secret] narrows, and PII is guarded again", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[allow-all] [allow-secret] key=abc",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(false);
+    expect(effectiveAllow.has("all")).toBe(false);
     expect(effectiveMask.size).toBe(0);
   });
 
-  it("[mask-all] before [allow-secret] → mask wins for both dimensions", () => {
+  it("[allow-secret] then [allow-all] widens", () => {
+    const { effectiveAllow } = resolveTagPriority(
+      "[allow-secret] [allow-all] key=abc",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(true);
+    expect(effectiveAllow.has("all")).toBe(true);
+  });
+
+  it("[mask-all] then [allow-secret] → allow, for secret only", () => {
     const { effectiveAllow, effectiveMask } = resolveTagPriority(
       "[mask-all] [allow-secret] key=abc",
     );
-    expect(effectiveMask.has("secret")).toBe(true);
-    expect(effectiveMask.has("pii")).toBe(true);
-    expect(effectiveMask.has("all")).toBe(true);
-    expect(effectiveAllow.size).toBe(0);
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(false);
+    expect(effectiveMask.size).toBe(0);
   });
 
-  it("[allow-secret] [mask-pii] → allow for secret, mask for pii", () => {
-    const { effectiveAllow, effectiveMask } = resolveTagPriority(
-      "[allow-secret] [mask-pii] ...",
+  // Two tags do not add up: `[allow-all]` is how both categories are asked for.
+  it("[allow-secret] then [allow-pii] is not both", () => {
+    const { effectiveAllow } = resolveTagPriority(
+      "[allow-secret] [allow-pii] ...",
+    );
+    expect(effectiveAllow.has("pii")).toBe(true);
+    expect(effectiveAllow.has("secret")).toBe(false);
+  });
+
+  it("a tag mid-sentence still counts", () => {
+    const { effectiveAllow } = resolveTagPriority(
+      "please read the env file [allow-secret] and summarise it",
     );
     expect(effectiveAllow.has("secret")).toBe(true);
-    expect(effectiveMask.has("pii")).toBe(true);
-    expect(effectiveAllow.has("pii")).toBe(false);
-    expect(effectiveMask.has("secret")).toBe(false);
   });
 
   it("[allow-all] → effectiveAllow has 'all'", () => {

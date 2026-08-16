@@ -227,19 +227,30 @@ If you include a mask tag in your prompt, sensitive-canary shows an explanation 
 | `[mask-pii]` | `[allow-pii]` |
 | `[mask-all]` | `[allow-all]` |
 
-### Allow + Mask Tag Priority
+### Tag Priority
 
-When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag that appears first wins** for each category dimension (`secret`, `pii`).
+When more than one tag appears, **the last one wins**. It replaces the earlier
+ones entirely rather than combining with them, so changing your mind mid-message
+works the way it reads.
 
 | Example | secret | pii |
 |---------|--------|-----|
-| `[allow-secret] [mask-secret] …` | allow | — |
-| `[mask-secret] [allow-secret] …` | mask (unsupported) | — |
-| `[allow-all] [mask-secret] …` | allow | allow |
-| `[mask-all] [allow-secret] …` | mask (unsupported) | mask (unsupported) |
-| `[allow-secret] [mask-pii] …` | allow | mask (unsupported) |
+| `[allow-all] … [allow-secret]` | allow | blocked |
+| `[allow-secret] … [allow-all]` | allow | allow |
+| `[allow-secret] … [mask-secret]` | mask (unsupported) | blocked |
+| `[mask-secret] … [allow-secret]` | allow | blocked |
+| `[allow-secret] … [allow-pii]` | blocked | allow |
 
-`[allow-all]` and `[mask-all]` resolve both dimensions at once.
+The last line is the one to watch: two tags do not add up. Narrowing from
+`[allow-all]` to `[allow-secret]` really does put PII back under guard, which is
+the point — but so does writing `[allow-secret] [allow-pii]` and expecting both.
+**`[allow-all]` is how you ask for both.**
+
+A tag counts wherever it appears in the message, including mid-sentence. What
+does not count is a tag inside a fenced code block, inside one of the elements
+Claude Code writes around command output, or in a message the runtime wrote
+rather than you — a compaction summary or a skill body. Those are quoting, not
+asking.
 
 ## Category Filtering
 
