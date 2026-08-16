@@ -53,7 +53,7 @@ process.stdin.on("end", () => {
   try {
     // Empty stdin is nothing to check. Bytes that do not parse are a check that
     // could not read its input, which is not the same as safe: two characters
-    // missing from the end of a payload used to pass a key through.
+    // missing from the end of a payload are enough to hide a key.
     if (raw.trim().length === 0) process.exit(0);
     const parsed: unknown = JSON.parse(raw);
     // `JSON.parse("null")` succeeds and returns null, which then threw on the
@@ -79,9 +79,9 @@ process.stdin.on("end", () => {
   if (allFindings.length === 0) process.exit(0);
 
   // From what the user typed, not from what they pasted: a fenced log or a
-  // README quoting `[allow-secret]` used to lift the guard on the key in the
-  // same message. The other hook already read tags this way, so the two gave
-  // different answers to the same text.
+  // README quoting `[allow-secret]` would otherwise lift the guard on the key in
+  // the same message. Both hooks read tags this way, so the same text gets the
+  // same answer whichever one sees it.
   const { effectiveAllow, effectiveMask } = resolveTagPriority(
     typedTextOf(prompt),
   );
