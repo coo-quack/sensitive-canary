@@ -9,6 +9,8 @@ import {
   compileRule,
   enabledCategoriesFromEnv,
   entropy,
+  isNotSecretShaped,
+  isRealAwsKey,
   isReservedIpv4,
   isReservedIpv6,
   luhn,
@@ -128,6 +130,23 @@ describe("redact", () => {
       const kept = redact(value).replace(/\*/g, "").length;
       expect(kept / length, `${length} characters`).toBeLessThanOrEqual(0.25);
     }
+  });
+
+  // Slicing by code unit cuts a surrogate pair in half, and what reaches the
+  // terminal is a lone surrogate: not the character, and not a redaction of it
+  // either. Counting by code point also keeps the quarter honest, since one
+  // emoji is one character and not two.
+  it("does not split a character in half", () => {
+    const lone =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    for (let count = 1; count <= 40; count++) {
+      const value = "🔑".repeat(count);
+      expect(redact(value), `${count} astral characters`).not.toMatch(lone);
+    }
+  });
+
+  it("counts an astral character as one", () => {
+    expect(redact("🔑".repeat(8))).toBe("🔑****🔑");
   });
 
   it("shows the ends, so two findings can be told apart", () => {
@@ -1759,6 +1778,168 @@ describe("the reserved IPv4 boundary", () => {
       expect(isReservedIpv4(ip)).toBe(true);
     },
   );
+});
+
+// The two guards that decide a match is not a secret after all. Each waves a
+// value through, so each is a way past every rule it runs over, and what they
+// are asked has to be narrower than the shape they were written from.
+describe("the guards that wave a value through", () => {
+  describe("AWS documentation keys", () => {
+    const body = ["IOSFODNN7", "EXAMPLE"].join("");
+
+    it.each(["AKIA", "ASIA", "AIDA", "AROA"])(
+      "%s with the documented body is documentation",
+      (prefix) => {
+        expect(isRealAwsKey(prefix + body)).toBe(false);
+      },
+    );
+
+    // The bodies differ between AWS's own guides, so the suffix is the test and
+    // not a list of them. Narrowing it to one body was tried and reverted: it
+    // blocked `AKIAI44QH8DHBEXAMPLE`, which is as much documentation as the
+    // other two, and a list exempts the bodies someone wrote down rather than
+    // the convention AWS keeps to.
+    //
+    // What the suffix costs is written down here so that it stays a decision:
+    // a live key whose last seven characters spell the word is exempt.
+    it("a key ending in EXAMPLE is treated as documentation", () => {
+      expect(isRealAwsKey(["AKIA", "3QF7TZ9KL", "EXAMPLE"].join(""))).toBe(
+        false,
+      );
+    });
+
+    it("a real key is a real key", () => {
+      expect(isRealAwsKey(["AKIA", "3QF7TZ9KLMN2", "PQRS"].join(""))).toBe(
+        true,
+      );
+    });
+  });
+
+  describe("dotted values", () => {
+    const random = (n: number): string =>
+      "A1b2C3d4E5f6G7h8I9j0".repeat(10).slice(0, n);
+
+    it.each([
+      "process.env.API_KEY",
+      "user.password_digest",
+      "response.data.accessToken",
+      "this.options.tokenizer",
+      "config.database.connectionString",
+      "settings.oauth2ClientSecretIdentifier",
+      "value.toLowerCase",
+      "a.b",
+    ])("%s is a reference to a value, not a value", (identifier) => {
+      expect(isNotSecretShaped(identifier)).toBe(true);
+    });
+
+    // Dotted credentials exist, so the shape alone cannot stand for "this is
+    // code". A name is words; a token changes case or slips in a digit every
+    // character or two.
+    it.each([
+      ["a dotted API token", ["tok", random(28), random(28)].join(".")],
+      ["a two-part dotted secret", ["k", random(24)].join(".")],
+      [
+        "five dot-separated parts",
+        [random(30), random(20), random(22), random(40), random(22)].join("."),
+      ],
+    ])("%s is not a reference", (_label, value) => {
+      expect(isNotSecretShaped(value)).toBe(false);
+    });
+  });
+});
+
+// Every rule has an example, and the test above enforces that. What no example
+// does is sit on a boundary: each is one value from the middle of the range, so
+// a range written one digit short, a length guessed too tight, or a grouping
+// nobody thought of all pass the suite. Every bug in this block was found that
+// way and none of them by the examples.
+describe("rule boundaries", () => {
+  // A Luhn-valid PAN of a given length, built digit by digit so the check digit
+  // is right and no card-shaped literal is written down.
+  const pan = (prefix: string, length: number): string => {
+    const body = prefix.split("");
+    while (body.length < length - 1) body.push(String((body.length * 7) % 10));
+    let sum = 0;
+    let double = true;
+    for (let i = body.length - 1; i >= 0; i--) {
+      let d = Number(body[i]);
+      if (double) {
+        d *= 2;
+        if (d > 9) d -= 9;
+      }
+      sum += d;
+      double = !double;
+    }
+    return body.join("") + String((10 - (sum % 10)) % 10);
+  };
+
+  const grouped = (digits: string, sizes: number[]): string => {
+    const groups: string[] = [];
+    let at = 0;
+    for (const n of sizes) {
+      groups.push(digits.slice(at, at + n));
+      at += n;
+    }
+    return groups.join(" ");
+  };
+
+  const found = (text: string, id: string): boolean =>
+    scan(text).some((f) => f.ruleId === id);
+
+  // `5[0-8][0-9]` covered 6500–6589 and stopped: a range ending at 6589 belongs
+  // to no issuing scheme, and the last hundred prefixes went unmatched.
+  it.each(["6500", "6589", "6590", "6599"])(
+    "a Discover PAN beginning %s is matched",
+    (prefix) => {
+      expect(found(pan(prefix, 16), "pii-credit-card")).toBe(true);
+    },
+  );
+
+  // Every alternative assumed groups of four. A card is copied the way it is
+  // printed, and neither of these is printed in fours.
+  it("an Amex PAN written 4-6-5 is matched", () => {
+    expect(found(grouped(pan("3782", 15), [4, 6, 5]), "pii-credit-card")).toBe(
+      true,
+    );
+  });
+
+  it("a Diners PAN written 4-6-4 is matched", () => {
+    expect(found(grouped(pan("3600", 14), [4, 6, 4]), "pii-credit-card")).toBe(
+      true,
+    );
+  });
+
+  // An exact length with a negative lookahead behind it does not degrade: one
+  // character over and there is no shorter match to fall back to, so the token
+  // stops matching altogether rather than matching partly.
+  const filler = (n: number): string =>
+    "A1b2C3d4E5f6G7h8I9j0".repeat(60).slice(0, n);
+
+  it.each([
+    ["sq0csp-", 43],
+    ["sq0csp-", 44],
+    ["sq0csp-", 64],
+    ["sq0atp-", 22],
+    ["sq0atp-", 61],
+  ])("a Square token %s with %i characters is matched", (prefix, n) => {
+    expect(found(prefix + filler(n), "square-access-token")).toBe(true);
+  });
+
+  it.each([60, 200])("a Square EAAA token of %i characters is matched", (n) => {
+    expect(found(`EAAA${filler(n)}`, "square-access-token")).toBe(true);
+  });
+
+  // No boundary at all, which is its own kind of missing boundary: the pattern
+  // matched inside a longer run of hex and accepted upper case, so a certificate
+  // fingerprint was a Twilio SID.
+  it("a Twilio SID inside a longer hex string is not a SID", () => {
+    const hex = `AC${"0123456789ABCDEF".repeat(2)}`;
+    expect(found(`SHA256:${hex}AA`, "twilio-sid")).toBe(false);
+  });
+
+  it("a Twilio SID on its own is one", () => {
+    expect(found(`AC${"0123456789abcdef".repeat(2)}`, "twilio-sid")).toBe(true);
+  });
 });
 
 describe("the shipped rules", () => {

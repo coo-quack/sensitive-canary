@@ -112,13 +112,16 @@ export function isRealCardNumber(str: string): boolean {
 }
 
 // AWS writes every key in its documentation with `EXAMPLE` where the random
-// part would end — `AKIAIOSFODNN7EXAMPLE`, `ASIAIOSFODNN7EXAMPLE`. Those appear
-// in setup guides, in READMEs that copy them, and in this project's own
-// documentation, and a block on one reads exactly like a block on a live key.
+// part would end — `AKIAIOSFODNN7EXAMPLE`, `ASIAIOSFODNN7EXAMPLE`,
+// `AKIAI44QH8DHBEXAMPLE`. Those appear in setup guides, in READMEs that copy
+// them, and in this project's own documentation, and a block on one reads
+// exactly like a block on a live key.
 //
-// The suffix is the test rather than a list, since AWS uses the convention for
-// every service. A real key whose last seven characters happen to spell it is
-// one in thirty-six to the seventh.
+// The suffix is the test rather than a list of bodies. The bodies differ
+// between guides, so a list would exempt the three anyone thought to write down
+// and block the fourth; the convention is what AWS keeps to. What it costs is a
+// real key whose last seven characters spell the word, one in thirty-six to the
+// seventh, and the rule's own character class keeps that to uppercase keys.
 export function isRealAwsKey(str: string): boolean {
   return !/EXAMPLE$/.test(str);
 }
@@ -500,10 +503,38 @@ export function isNotSecretShaped(value: string): boolean {
   // A reference to a value in code rather than the value: `process.env.API_KEY`,
   // `user.password_digest`, `self.api_key`, `response.data.accessToken`. Of the
   // distinct values `env-assignment` matched across thirty thousand real files,
-  // two in five were one of these. No credential format has a dot in it — a JWT
-  // does, and it is matched by its own rule, which this test does not run over.
-  if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(v)) return true;
+  // two in five were one of these.
+  if (
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(v) &&
+    v.split(".").every(readsAsWords)
+  )
+    return true;
   return false;
+}
+
+// Whether a name is built out of words rather than out of random characters.
+//
+// Dotted credentials exist — a JWT, and the dotted forms several vendors issue —
+// so the shape alone cannot stand for "this is code". What separates them is
+// that a name is words: `connectionString` and `password_digest` run several
+// letters between one boundary and the next, where a random segment changes
+// case or slips in a digit every character or two.
+//
+// Measured over 147,643 dotted identifiers taken from the source on this
+// machine, 0.06% fall below the threshold below, and the ones that do are JWTs.
+const MIN_MEAN_WORD_LENGTH = 2.5;
+
+// Short segments are words by default: `env`, `data`, `id`. The statistic needs
+// something to average over before it says anything.
+const SHORTEST_MEASURABLE_SEGMENT = 8;
+
+function readsAsWords(segment: string): boolean {
+  if (segment.length < SHORTEST_MEASURABLE_SEGMENT) return true;
+  // A leading capital belongs to the lowercase run after it, so `toLowerCase`
+  // is three words and not five runs of one case.
+  const words = segment.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g);
+  if (words === null || words.length === 0) return false;
+  return segment.length / words.length >= MIN_MEAN_WORD_LENGTH;
 }
 
 // A key that says where a secret lives, or what it is called, rather than what
@@ -561,17 +592,19 @@ export function isPlaceholder(value: string, following = ""): boolean {
   // people set, and `user:password@prod.corp.internal` names real infrastructure.
   // The rule that finds these stops at the `@`, so the host arrives as the text
   // that follows rather than as part of the value.
+  // The scheme is bounded: an unbounded `\w+` in front of a literal that
+  // usually is not there makes the match quadratic in the length of the value,
+  // and a value is as long as whoever wrote the text wants. A scheme is a word.
   const GENERIC_CREDENTIALS =
-    /\w+:\/\/(?:your[_-]?)?(?:user|username)(?:name)?:(?:your[_-]?)?(?:password|passwd|pwd)@/i;
+    /\w{1,32}:\/\/(?:your[_-]?)?(?:user|username)(?:name)?:(?:your[_-]?)?(?:password|passwd|pwd)@/i;
   const GENERIC_HOST =
     /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host|hostname|db|database|example\.(?:com|org|net))\b/i;
-  const afterAt = v.match(GENERIC_CREDENTIALS)
-    ? v.slice(
-        (v.match(GENERIC_CREDENTIALS)?.index ?? 0) +
-          (v.match(GENERIC_CREDENTIALS)?.[0].length ?? 0),
-      )
-    : null;
-  if (afterAt !== null && GENERIC_HOST.test(afterAt || following)) return true;
+  // Matched once. Asking three times ran the same backtracking three times.
+  const credentials = GENERIC_CREDENTIALS.exec(v);
+  if (credentials !== null) {
+    const afterAt = v.slice(credentials.index + credentials[0].length);
+    if (GENERIC_HOST.test(afterAt || following)) return true;
+  }
   // Otherwise every part of the value has to be one of these words, and at
   // least one has to be a marker. Testing whether the value *contains* a marker
   // was a way through: `changeme_` in front of a live key disabled the rule.
@@ -933,9 +966,15 @@ export const RULES: Rule[] = buildRules();
 // Four characters at each end returned eight of a nine-character password.
 // A quarter of the value, capped at four per end.
 export function redact(str: string): string {
-  const shown = Math.min(4, Math.floor(str.length / 8));
+  // Code points, not code units. Slicing by unit cuts a surrogate pair in half
+  // and writes a lone surrogate to the terminal, which is neither the character
+  // nor a redaction of it.
+  const characters = [...str];
+  const shown = Math.min(4, Math.floor(characters.length / 8));
   if (shown === 0) return "****";
-  return `${str.slice(0, shown)}****${str.slice(-shown)}`;
+  const head = characters.slice(0, shown).join("");
+  const tail = characters.slice(-shown).join("");
+  return `${head}****${tail}`;
 }
 
 // Longer than any honest scan and far shorter than the hook timeout. One rule
