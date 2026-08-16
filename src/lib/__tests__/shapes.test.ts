@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { scan } from "../rules.ts";
-import { entropy, isNotSecretShaped } from "../shapes.ts";
+import {
+  entropy,
+  isNotSecretShaped,
+  MIN_MEAN_WORD_LENGTH,
+  readsAsWords,
+  SHORTEST_MEASURABLE_SEGMENT,
+} from "../shapes.ts";
 import { isRealAwsKey } from "../validators.ts";
 import { AWS_KEY, ruleIds } from "./rule-fixtures.ts";
 
@@ -311,5 +317,62 @@ describe("env-assignment does not read code as a secret", () => {
         file,
       ).toEqual([]);
     }
+  });
+});
+
+// A threshold tested at one point says nothing about where it sits. Each of
+// these was chosen from a measurement, and the pair of cases is what stops it
+// drifting: the UTF-16 defect in this release was exactly a number with a case
+// on one side of it and none on the other.
+describe("each threshold, from both sides", () => {
+  // A segment shorter than this is a word by default, because the statistic has
+  // nothing to average over. At the length itself it is measured.
+  describe("the shortest segment worth measuring", () => {
+    // Alternating case, which fails the word test wherever it is applied. Below
+    // the length it is not applied, which is the whole of the difference.
+    const alternating = (length: number): string =>
+      Array.from({ length }, (_, i) => (i % 2 === 0 ? "a" : "B")).join("");
+
+    it("a segment one under the length is taken on trust", () => {
+      expect(readsAsWords(alternating(SHORTEST_MEASURABLE_SEGMENT - 1))).toBe(
+        true,
+      );
+    });
+
+    it("a segment at the length is measured", () => {
+      expect(readsAsWords(alternating(SHORTEST_MEASURABLE_SEGMENT))).toBe(
+        false,
+      );
+    });
+  });
+
+  // Mean word length: how many characters run between one camelCase boundary
+  // and the next.
+  describe("the mean word length that separates a name from a token", () => {
+    // Words of a chosen size, so the mean lands either side of the threshold by
+    // construction rather than by luck.
+    const wordsOf = (size: number, count: number): string =>
+      Array.from(
+        { length: count },
+        (_, i) => (i === 0 ? "a" : "A") + "b".repeat(size - 1),
+      ).join("");
+
+    it("words shorter than the threshold read as a token", () => {
+      const value = wordsOf(2, 6);
+      expect(value.length / 6).toBeLessThan(MIN_MEAN_WORD_LENGTH);
+      expect(readsAsWords(value)).toBe(false);
+    });
+
+    it("words longer than the threshold read as a name", () => {
+      const value = wordsOf(3, 4);
+      expect(value.length / 4).toBeGreaterThan(MIN_MEAN_WORD_LENGTH);
+      expect(readsAsWords(value)).toBe(true);
+    });
+
+    // And the consequence, which is what the threshold is for.
+    it("a dotted name is a reference and a dotted token is not", () => {
+      expect(isNotSecretShaped(`config.${wordsOf(3, 4)}`)).toBe(true);
+      expect(isNotSecretShaped(`config.${wordsOf(2, 6)}`)).toBe(false);
+    });
   });
 });

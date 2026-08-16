@@ -307,6 +307,87 @@ describe("every rule catches something", () => {
     if (example === undefined) throw new Error(`no example for ${id}`);
     expect(scan(example).map((f) => f.ruleId)).toContain(id);
   });
+
+  // A credential longer than the pattern guessed must not become invisible.
+  //
+  // This is the defect the Square rule had, generalised: an exact length with a
+  // negative lookahead behind it has no shorter match to fall back to, so one
+  // character over the guess stopped the token matching at all. Every vendor
+  // length in this file is a guess about someone else's format, so the check is
+  // run over every rule rather than the ones anyone suspected — the example is
+  // padded with more of the characters it already ends in.
+  // The rules a longer value legitimately does not belong to. Each is exact
+  // because the format is, not because a length was guessed: a checksum fixes
+  // the digits, or the credential is a fixed-width field. Anything not listed
+  // has to survive the padding, so a new rule with a guessed upper bound fails
+  // here rather than going quiet in a release.
+  const LONGER_IS_A_DIFFERENT_THING: Record<string, string> = {
+    "aws-access-key": "twenty characters exactly; a longer run is not a key",
+    "databricks-token": "dapi and thirty-two hex; longer is a digest",
+    "shopify-token": "a prefix and thirty-two hex; longer is a digest",
+    "twilio-sid": "thirty-four characters; longer is a certificate digest",
+    "pii-email": "padding the end writes a different domain",
+    "pii-credit-card": "the checksum fixes the digits",
+    "pii-ssn": "nine digits; a longer run is not one",
+    "pii-mynumber-jp": "twelve digits with a check digit",
+    "pii-nir-fr": "fifteen digits with a two-digit key",
+    "pii-codice-fiscale-it": "sixteen characters, checksummed",
+    "pii-steuer-id-de": "eleven digits with a check digit",
+    "pii-dni-nie-es": "eight digits and a checksum letter",
+    "pii-rrn-kr": "thirteen digits with a check digit",
+    "pii-brn-kr": "ten digits with a check digit",
+    "pii-resident-id-cn": "eighteen characters with a check digit",
+    "pii-phone-us": "a dialling plan fixes the length",
+    "pii-phone-jp": "ten or eleven digits",
+    "pii-phone-fr": "ten digits",
+    "pii-phone-it": "a dialling plan fixes the length",
+    "pii-phone-de": "a dialling plan fixes the length",
+    "pii-phone-es": "nine digits",
+    "pii-postal-code": "five digits",
+    "pii-postal-cn": "six digits",
+    "pii-ipv4-public": "four octets",
+  };
+
+  // The list above is a list, so it is held to the rules that exist: an id left
+  // in it after its rule is renamed or dropped would silently stop anything
+  // being checked.
+  it("exempts only rules that are shipped", () => {
+    const ids = new Set(DEFAULT_RULES.map((r) => r.id));
+    const stale = Object.keys(LONGER_IS_A_DIFFERENT_THING).filter(
+      (id) => !ids.has(id),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  const alphabetFor = (example: string): string => {
+    const tail = example.slice(-12);
+    if (/^[0-9]+$/.test(tail)) return "0123456789";
+    if (/^[a-f0-9]+$/i.test(tail)) return "abcdef0123456789";
+    if (/^[a-z0-9]+$/.test(tail)) return "abcdefghijklmnopqrstuvwxyz0123456789";
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  };
+
+  const padded = (example: string, extra: number): string => {
+    const alphabet = alphabetFor(example);
+    let out = example;
+    for (let i = 0; i < extra; i++) out += alphabet[i % alphabet.length];
+    return out;
+  };
+
+  it.each(
+    DEFAULT_RULES.map((r) => r.id).filter(
+      (id) => !(id in LONGER_IS_A_DIFFERENT_THING),
+    ),
+  )("%s still finds a value that runs longer", (id) => {
+    const example = EXAMPLES[id];
+    if (example === undefined) throw new Error(`no example for ${id}`);
+    for (const extra of [1, 8, 64]) {
+      expect(
+        scan(padded(example, extra)).map((f) => f.ruleId),
+        `${id} with ${extra} more characters`,
+      ).toContain(id);
+    }
+  });
 });
 
 // Every rule has an example, and the test above enforces that. What no example
