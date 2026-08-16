@@ -998,6 +998,66 @@ describe("pre-tool-use-hook — what is not the user asking", () => {
     expect(exitCode).toBe(2);
   });
 
+  // A background task reporting back arrives under the user's role and carries
+  // an agent's prose. Prose about these tags is enough, so a report that quotes
+  // the documentation arms the guard it is describing — and a review of this
+  // very feature is the kind of report that does it.
+  it("a task notification does not carry a tag", () => {
+    const transcript = writeRawTranscript([
+      {
+        type: "user",
+        origin: { kind: "human" },
+        message: { role: "user", content: "review the tag priority table" },
+      },
+      {
+        type: "user",
+        origin: { kind: "task-notification" },
+        message: {
+          role: "user",
+          content: `<task-notification>\n<result>The table says ${tag} is the wider grant.</result>\n</task-notification>`,
+        },
+      },
+    ]);
+    const { exitCode } = runHook("Read", envFile(), {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+  });
+
+  // The same line without the field, which is how a runtime that does not write
+  // one records it. The element name is what catches this one.
+  it("a task notification with no origin field does not carry a tag either", () => {
+    const transcript = writeRawTranscript([
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: `<task-notification>\n<result>The table says ${tag} is the wider grant.</result>\n</task-notification>`,
+        },
+      },
+    ]);
+    const { exitCode } = runHook("Read", envFile(), {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+  });
+
+  // The direction that matters more: rejecting the runtime's lines must not
+  // reject the user's. A line marked `human` is someone asking.
+  it("a line marked as human carries its tag", () => {
+    const transcript = writeRawTranscript([
+      {
+        type: "user",
+        origin: { kind: "human" },
+        message: { role: "user", content: `${tag} read the env file` },
+      },
+    ]);
+    const { exitCode } = runHook("Read", envFile(), {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("a tag under a fence that never closes is quoted, not asked", () => {
     const transcript = writeTranscript([
       `paste of a truncated file:\n\`\`\`\nconfig:\n  note: ${tag}\n`,
@@ -1006,6 +1066,48 @@ describe("pre-tool-use-hook — what is not the user asking", () => {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
+  });
+
+  // Pairing markers off — one with two, three with four — leaves the span
+  // between the second and third readable as typed. A pasted markdown document
+  // with a code block inside it puts a quoted tag in exactly that span, and it
+  // is the ordinary shape of a paste, not a contrived one.
+  it.each([
+    ["a document quoting a code block", 4],
+    ["a document quoting two", 6],
+    ["an odd number of markers", 5],
+  ])("a tag inside %s is quoted, not asked", (_label, markers) => {
+    const fence = "```";
+    const parts = ["here is a doc I was sent:"];
+    for (let i = 0; i < markers; i++) {
+      parts.push(fence);
+      if (i === 1) parts.push(`note: ${tag}`);
+    }
+    const transcript = writeTranscript([parts.join("\n")]);
+    const { exitCode } = runHook("Read", envFile(), {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(2);
+  });
+
+  it("a tag before the first fence is still asked", () => {
+    const transcript = writeTranscript([
+      `${tag} read the env file, here is the log:\n\`\`\`\nnothing\n\`\`\`\n`,
+    ]);
+    const { exitCode } = runHook("Read", envFile(), {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a tag after the last fence is still asked", () => {
+    const transcript = writeTranscript([
+      `here is the log:\n\`\`\`\nnothing\n\`\`\`\n${tag} now read the env file`,
+    ]);
+    const { exitCode } = runHook("Read", envFile(), {
+      transcriptPath: transcript,
+    });
+    expect(exitCode).toBe(0);
   });
 
   it("an ordinary message still carries one", () => {
