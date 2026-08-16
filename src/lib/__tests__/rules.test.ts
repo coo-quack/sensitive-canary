@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  beginScanBudget,
   compileRule,
   enabledCategoriesFromEnv,
   entropy,
@@ -14,6 +15,7 @@ import {
   parseCategories,
   type RuleConfig,
   redact,
+  ScanBudgetExceeded,
   scan,
   VALIDATOR_NAMES,
   validateChineseID,
@@ -2019,6 +2021,173 @@ describe("the credential shapes the rules used to miss", () => {
     ])("%s is not", (_label, text) => {
       expect(scan(text)).toEqual([]);
     });
+  });
+});
+
+// One case per format the vendor documents and the rule did not match. Each
+// pattern below is what the issuer or the vendor's own detector says, not what
+// looked plausible.
+// The budget covers the invocation, not one call. A hook scans once per
+// environment variable and twice per file, so counting per call left the total
+// unbounded — and the runtime kills a hook that runs long, which does not block.
+describe("the scan budget spans every call in the invocation", () => {
+  afterEach(() => {
+    beginScanBudget(null);
+  });
+
+  it("a call made after the budget is spent throws rather than returning clean", () => {
+    beginScanBudget(0);
+    expect(() => scan("key=AKIAIOSFODNN7EXAMPLE")).toThrow(ScanBudgetExceeded);
+  });
+
+  it("repeated calls draw on one budget", () => {
+    beginScanBudget(60);
+    const started = Date.now();
+    expect(() => {
+      // Each of these is well inside the budget on its own.
+      for (let i = 0; i < 10_000; i++) scan(`line ${i} of ordinary text`);
+    }).toThrow(ScanBudgetExceeded);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("with no budget begun, a call gets the whole of one", () => {
+    beginScanBudget(null);
+    expect(scan("key=AKIAIOSFODNN7EXAMPLE").map((f) => f.ruleId)).toContain(
+      "aws-access-key",
+    );
+  });
+
+  it("a fresh budget lets scanning continue", () => {
+    beginScanBudget(0);
+    expect(() => scan("anything")).toThrow(ScanBudgetExceeded);
+    beginScanBudget();
+    expect(scan("key=AKIAIOSFODNN7EXAMPLE")).not.toHaveLength(0);
+  });
+});
+
+describe("credential formats the vendors document", () => {
+  const hits = (text: string, ruleId: string): boolean =>
+    scan(text).some((f) => f.ruleId === ruleId);
+  const b64 = (n: number): string =>
+    "aB3d5f7h9jK2m4n6p8r0stUvwx1y3z5A7c9e1g3iQwErTyUiOpAsDfGhJkLzXcVbNm"
+      .repeat(4)
+      .slice(0, n);
+  const hex = (n: number): string =>
+    "a3d5f7b9c2e4a6d8f0b1c3e5a7d9f0b2".repeat(4).slice(0, n);
+  // Assembled rather than written out. GitHub's push protection reads these
+  // three as live tokens and refuses the push, which is the shapes being right.
+  const glft = ["gl", "ft-"].join("");
+  const grRunner = ["GR", "1348941"].join("");
+  const sqOauth = ["sq", "0atp-"].join("");
+  const sqSecret = ["sq", "0csp-"].join("");
+
+  it.each([
+    ["linear-key", "mixed case", `lin_api_${b64(40)}`],
+    ["notion-token", "the legacy secret_ token", `secret_${b64(43)}`],
+    ["digitalocean-pat", "an OAuth access token", `doo_v1_${hex(64)}`],
+    ["digitalocean-pat", "an OAuth refresh token", `dor_v1_${hex(64)}`],
+    ["gitlab-pat", "a feed token", `${glft}${b64(20)}`],
+    ["gitlab-pat", "a runner registration token", `${grRunner}${b64(20)}`],
+    ["flyio-token", "a token with no auth scheme in front", `fm2_${b64(120)}`],
+    ["flyio-token", "an fo1_ token", `fo1_${b64(43)}`],
+    ["flyio-token", "underscore inside the body", `fm2_aB3d5f7h_${b64(60)}`],
+    ["square-access-token", "an OAuth token", `${sqOauth}${b64(24)}`],
+    ["square-access-token", "a client secret", `${sqSecret}${b64(43)}`],
+    ["huggingface-token", "an organization token", `api_org_${b64(34)}`],
+    ["twilio-sid", "an uppercase Account SID", `AC${hex(32).toUpperCase()}`],
+    ["twilio-sid", "an API Key SID", `SK${hex(32)}`],
+    [
+      "postman-key",
+      "uppercase hex",
+      `PMAK-${hex(24).toUpperCase()}-${hex(34).toUpperCase()}`,
+    ],
+    [
+      "replicate-token",
+      "a hyphen in the body",
+      "r8_aB3d5f7h9jK2m4n6-8r0stUvwx1y3z5A7c9e1",
+    ],
+    ["azure-sas-key", "an IoT DPS 64-byte key", `SharedAccessKey=${b64(86)}==`],
+    ["azure-sas-key", "a 16-byte key", `SharedAccessKey=${b64(22)}==`],
+  ])("%s finds %s", (ruleId, _label, value) => {
+    expect(hits(value, ruleId)).toBe(true);
+  });
+
+  it.each([
+    [
+      "digitalocean-pat",
+      "dox_v1_ is not a DigitalOcean prefix",
+      `dox_v1_${hex(64)}`,
+    ],
+    ["twilio-sid", "AB is not a Twilio prefix", `AB${hex(32)}`],
+    ["replicate-token", "r9_ is not a Replicate prefix", `r9_${b64(37)}`],
+  ])("%s does not find %s", (ruleId, _label, value) => {
+    expect(hits(value, ruleId)).toBe(false);
+  });
+
+  // The whole key, not a prefix of it. `{95}` matched 102 of the 108 characters
+  // and left the tail outside the match.
+  it("anthropic-key matches the key to its end", () => {
+    const key = `sk-ant-api03-${b64(93).replace(/[+/]/g, "x")}AA`;
+    const finding = scan(key).find((f) => f.ruleId === "anthropic-key");
+    expect(finding?.secretValue).toHaveLength(key.length);
+  });
+});
+
+// ISO/IEC 7812 allows 10–19 digits and the brands use most of that range. The
+// pattern encoded one length per brand, so a 19-digit UnionPay or JCB card —
+// and every Maestro card — went unmatched.
+describe("card numbers at every length their brand issues", () => {
+  const luhnCheck = (body: string): string => {
+    let sum = 0;
+    let double = true;
+    for (let i = body.length - 1; i >= 0; i--) {
+      let d = Number(body[i]);
+      if (double) d = d * 2 > 9 ? d * 2 - 9 : d * 2;
+      double = !double;
+      sum += d;
+    }
+    return String((10 - (sum % 10)) % 10);
+  };
+  const pan = (prefix: string, total: number): string => {
+    let body = prefix;
+    let n = 7;
+    while (body.length < total - 1) {
+      n = (n * 7 + 3) % 10;
+      body += String(n);
+    }
+    return body + luhnCheck(body);
+  };
+  const found = (value: string): boolean =>
+    scan(`card ${value}`).some((f) => f.ruleId === "pii-credit-card");
+
+  it.each([
+    ["visa", "4539", [13, 16, 19]],
+    ["amex", "3782", [15]],
+    ["discover", "6011", [16, 17, 18, 19]],
+    ["jcb", "3528", [16, 17, 18, 19]],
+    ["diners", "3056", [14, 16, 17, 18, 19]],
+    ["unionpay", "6212", [16, 17, 18, 19]],
+    ["maestro", "6759", [12, 13, 14, 15, 16, 17, 18, 19]],
+  ] as [string, string, number[]][])("%s", (_brand, prefix, lengths) => {
+    for (const total of lengths) {
+      expect(found(pan(prefix, total)), `${total} digits`).toBe(true);
+    }
+  });
+
+  it("a nineteen-digit run that fails Luhn is not a card", () => {
+    expect(found("6212272727272727270")).toBe(false);
+  });
+
+  it("a thirteen-digit millisecond timestamp is not a card", () => {
+    expect(found("1755300000000")).toBe(false);
+  });
+
+  it("groups separated by spaces and by hyphens are both found", () => {
+    const digits = pan("4539", 19);
+    const spaced = digits.replace(/(.{4})/g, "$1 ").trim();
+    const hyphenated = digits.replace(/(.{4})/g, "$1-").replace(/-$/, "");
+    expect(found(spaced)).toBe(true);
+    expect(found(hyphenated)).toBe(true);
   });
 });
 
