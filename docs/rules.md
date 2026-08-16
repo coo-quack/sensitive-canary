@@ -116,7 +116,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `generic-secret` | `api_key`, `secret_key`, `access_token`, `api_secret` assignments | 3.5 |
 | `env-assignment` | Assignments whose name carries `SECRET`, `PASSWORD`, `PASSWD`, `PASS`, `TOKEN`, `API_KEY`, `ACCESS_KEY` or `PRIVATE_KEY`, written with `=` anywhere or with `:` at the start of a line. `PASS` must stand on its own — `COMPASS` and `BYPASS` are not passwords. The value must be a value: eight characters or more, no brackets or separators in it, and not a `$VAR` reference | 3.0 |
 
-The entropy threshold filters out low-entropy values that are unlikely to be real secrets — `API_KEY=aaaaaaaa` scores 0 and is dropped. It is a weak filter, not a classifier: `placeholder` scores 3.096 and clears the 3.0 threshold, so `API_KEY=placeholder` is reported. Entropy is the Shannon entropy of the value.
+The entropy threshold filters out low-entropy values that are unlikely to be real secrets — `API_KEY=aaaaaaaa` scores 0 and is dropped. It is a weak filter, not a classifier: `placeholder` scores 3.096 and clears the 3.0 threshold, so entropy alone would report `API_KEY=placeholder`. What drops that one is the placeholder test, not the threshold. Entropy is the Shannon entropy of the value.
 
 ### Why `private-key-base64` carries three prefixes
 
@@ -259,7 +259,7 @@ Values are comma-separated and case-insensitive. Unset, empty, or containing no 
 
 Files that end in `.env` but don't start with a dot (e.g. `production.env`) are handled by content scanning rather than name-based blocking.
 
-Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) bypasses the name-based block. When an allow tag is present, the file is passed through **immediately without scanning** its contents.
+`[allow-secret]` and `[allow-all]` lift the name-based block; `[allow-pii]` does not, since the block is a secret-category finding. Lifting the name block is not a pass: the contents are still scanned, and a tag only removes findings of the category it names. A file exempted by `[allow-secret]` is still blocked for an email address in it.
 
 ## Bash Command Scanning
 
@@ -311,7 +311,7 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | `regex` | string | yes | Regex source (not a `/literal/`). |
 | `category` | `"secret"` \| `"pii"` | yes | Which category the rule belongs to. |
 | `flags` | string | no | Regex flags. `g` is added if you leave it out, since the scan needs every match; `y` makes a rule match only at the start of the text, which is almost never what a detection rule wants |
-| `secretGroup` | number | no | Capture group containing the secret. Omit it for the full match — writing `0` is not the same as omitting it, see below |
+| `secretGroup` | number | no | Capture group containing the secret. Omit it for the full match — writing `0` is not the same as omitting it, see [Ways a rule goes quiet without saying so](#ways-a-rule-goes-quiet-without-saying-so) |
 | `entropyThreshold` | number | no | Skip matches below this Shannon entropy (bits/char). |
 | `requireContext` | boolean | no | Only fire when a context word is nearby. |
 | `contextWords` | string[] | no | Words that satisfy `requireContext`. |

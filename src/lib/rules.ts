@@ -930,25 +930,48 @@ export class ScanBudgetExceeded extends Error {
   }
 }
 
+// The budget belongs to the hook invocation, not to one `scan()` call. A single
+// call is a small part of the work: `scanEnvironment` scans once per variable,
+// a file is scanned at both ends, and `Object.keys(process.env)` sets the
+// multiplier. Per call, each stays inside the budget while the total runs past
+// the hook timeout — and a hook killed by the timeout does not block.
+//
+// Set once by each hook entry point. Left unset, every call gets the full
+// budget, which is what the test suite needs.
+let deadline: number | null = null;
+
+// `null` clears it, which is the state a process starts in.
+export function beginScanBudget(totalMs: number | null = SCAN_BUDGET_MS): void {
+  deadline = totalMs === null ? null : Date.now() + totalMs;
+}
+
+// What is left of the budget, or the whole of it when none was begun.
+function remainingBudget(): number {
+  return deadline === null ? SCAN_BUDGET_MS : deadline - Date.now();
+}
+
 // The between-rule check below cannot interrupt a single `matchAll`, and one
 // rule from a user config is enough to hang the hook — which is then killed by
 // the timeout, and a killed hook does not block. A V8-side timeout does
 // interrupt a running match. Measured at 0.06ms per call, against a scan that
 // costs hundreds of times that.
 const SCAN_SLOT = "__sensitiveCanaryScan";
-const SCAN_HARD_LIMIT_MS = SCAN_BUDGET_MS + 2_000;
+const HARD_LIMIT_SLACK_MS = 2_000;
 
-function runInterruptibly<T>(work: () => T): T {
+// `limitMs` bounds this call so it cannot overshoot what the invocation has
+// left. Without it a single call could run the full hard limit past a deadline
+// that was already spent.
+function runInterruptibly<T>(work: () => T, limitMs: number): T {
   const slots = globalThis as unknown as Record<string, unknown>;
   slots[SCAN_SLOT] = work;
   try {
     return vm.runInThisContext(`globalThis.${SCAN_SLOT}()`, {
-      timeout: SCAN_HARD_LIMIT_MS,
+      timeout: limitMs,
       displayErrors: false,
     }) as T;
   } catch (error) {
     if (error instanceof Error && error.message.includes("timed out"))
-      throw new ScanBudgetExceeded("a single rule", SCAN_HARD_LIMIT_MS);
+      throw new ScanBudgetExceeded("a single rule", limitMs);
     throw error;
   } finally {
     delete slots[SCAN_SLOT];
@@ -959,12 +982,19 @@ export function scan(
   text: string,
   categories: ReadonlySet<Category> = ALL_CATEGORIES,
 ): Finding[] {
-  return runInterruptibly(() => scanUninterrupted(text, categories));
+  const remaining = remainingBudget();
+  if (remaining <= 0)
+    throw new ScanBudgetExceeded("this call's total", SCAN_BUDGET_MS);
+  return runInterruptibly(
+    () => scanUninterrupted(text, categories, remaining),
+    remaining + HARD_LIMIT_SLACK_MS,
+  );
 }
 
 function scanUninterrupted(
   text: string,
   categories: ReadonlySet<Category>,
+  budgetMs: number,
 ): Finding[] {
   const findings: Finding[] = [];
   const startedAt = Date.now();
@@ -974,8 +1004,7 @@ function scanUninterrupted(
     const elapsed = Date.now() - startedAt;
     // Thrown rather than returned: a partial result is indistinguishable from a
     // clean one, and the hooks stop the call on an error they cannot explain.
-    if (elapsed > SCAN_BUDGET_MS)
-      throw new ScanBudgetExceeded(rule.id, elapsed);
+    if (elapsed > budgetMs) throw new ScanBudgetExceeded(rule.id, elapsed);
     for (const match of text.matchAll(rule.regex)) {
       const secretValue =
         rule.secretGroup != null ? match[rule.secretGroup] : match[0];

@@ -194,9 +194,6 @@
   - an address is not a person when an `ssh`, `scp`, `rsync`, `clone` or `git@`
     is next to it, and `example.com` and the other RFC 2606 domains are nobody's
     mail
-  - a private IPv4 needs a person nearby (`client`, `user`, `visitor`) rather
-    than the word "address", which made `kubectl port-forward --address 10.0.0.1`
-    a finding
   - the published test card numbers are not cards
   - `cap` is an English word as well as an Italian postal one, so sizes and
     limits nearby say it is not a postal code
@@ -355,7 +352,7 @@
   Public addresses are unchanged and still require a nearby label. Anyone who
   wants the old behaviour can add the rule back through the config file; the
   `excludeContext` field it used is documented now and still serves the postal
-  code rule. 75 rules to 74
+  code rule
 - The release could not publish. GitHub runs every `run:` step as `bash -e {0}`,
   and the smoke test added last round pipes into a hook that exits 2 on purpose,
   so errexit killed the step before the assertion that expected the 2. The gate
@@ -518,9 +515,62 @@
   printing it: `sha512sum < secrets` was scanned while `sha256sum < secrets` was
   not, because only four of the family were listed. `sha224sum`, `sha384sum`,
   `sha512sum`, `b2sum`, `shasum`, `md5` and `sum` join them
+- Read a directory when a tool is pointed at one. `grep -r AKIA .` and a Grep
+  whose `path` names a folder both return file contents, and both reached a
+  check that asks whether the candidate is a regular file, found it is not, and
+  let the call through — with the key printed to stdout. The files directly
+  inside are now scanned, one level deep and capped at the same limit a glob is.
+  Measured over forty-five real directories, five block, and all five hold
+  credential-shaped assignments
+- Scan what a command says, not only what it opens, for every tool rather than
+  only `Bash`. An MCP server that runs a shell takes `{"command":"echo AKIA…"}`,
+  and the key was in the argument list unread
+- Scan every run of text in a file that holds NUL bytes. Scanning stopped at the
+  first one, so a single leading NUL reduced the scan to the empty string — and
+  an empty scan finds nothing and allows the read. The runs are joined by
+  newlines so no rule matches across two of them
+- Recognise UTF-16 when one side of each byte pair dominates, rather than when
+  the other side is empty. Characters in the U+xx00 rows — U+3000, the
+  ideographic space, among them — put a single NUL on the wrong side, and one of
+  those in a Japanese document sent the whole file down the binary path
+- Expand `$VAR` and `${VAR}` in a path. `cat ~/.aws/credentials` was blocked and
+  `cat $HOME/.aws/credentials` was not, so the guard turned on which of two
+  spellings the author used. A variable that is unset is left as written
+- Hold the scan budget across the whole hook invocation rather than resetting it
+  per `scan()` call. A hook scans once per environment variable and twice per
+  file, so each call stayed inside the budget while the total did not: with a
+  slow rule in a user config and sixty variables, measured at 29 seconds and
+  exit 0. Now capped at 10.5 seconds, and past the budget it exits 2
+- Fifteen detection rules matched a shape the vendor does not issue. `flyio-token`
+  required the `FlyV1 ` auth scheme, which is not part of the token, and excluded
+  `_` and `-` from a base64url body; `linear-key`, `twilio-sid` and `postman-key`
+  were lower-case only against mixed-case and hex formats; `notion-token`,
+  `digitalocean-pat`, `gitlab-pat`, `square-access-token` and `huggingface-token`
+  each covered one of the prefixes their vendor issues; `replicate-token` omitted
+  the hyphen; `azure-sas-key` fixed the length at 43 where Azure IoT DPS
+  documents 16–64 byte keys; `anthropic-key` asked for 95 characters after the
+  prefix where the format has 101, truncating the match; and `twilio-sid` had no
+  rule for the API Key SID at all
+- Match card numbers at every length their brand issues. ISO/IEC 7812 allows
+  10–19 digits and the pattern encoded one length per brand, so 19-digit
+  UnionPay, JCB and Discover cards, 13-digit Visa, and every Maestro card went
+  unmatched. Swept over 986 real files, the wider pattern adds no false positive
 
 ### Documentation
 
+- `SECURITY.md` described the parse-error path as a fail-open that exits 0. It
+  exits 2 — the security policy stated the protection backwards
+- `docs/troubleshooting.md` said hooks activate without a restart, which the
+  README, the installation page and the getting-started page all contradict.
+  Restarting is now the first step, since a session that missed the hooks lists
+  the plugin as enabled and checks nothing
+- `README.md` said only the first 1 MiB of a file is scanned. Both ends are
+  read; what is missed is the middle
+- `docs/rules.md` said any allow tag lifts the `.env` name block and passes the
+  file through without scanning. `[allow-pii]` does not lift it, and the
+  contents are scanned either way
+- `docs/rules.md` gave `API_KEY=placeholder` as a value the entropy threshold
+  reports. It is not reported — the placeholder test drops it
 - The file structure in `README.md` listed two files under `src/lib/`, from
   before this release added three more and moved the rules into JSON
 - The development commands in `README.md` were `npm`, while `CONTRIBUTING.md`
@@ -554,6 +604,11 @@
 - Run CI on pushes to `main` and `develop`, not only on pull requests. The
   commit a merge makes belongs to no PR, so nothing built it: two branches that
   are green apart can still be red together
+- Run the release smoke test against the commands `hooks/hooks.json` declares,
+  as well as against `dist/`. The manifest starts `src/*.ts` under type
+  stripping, which is what a plugin install runs and what the gate only checked
+  the existence of; `dist/*.js` is what the npm instructions point at. The
+  commands are read back from the manifest so the two cannot drift apart
 - Fail the release when the marketplace catalog does not pin this plugin to
   `main`. `/plugin install` serves the entry's `ref`, and with no `ref` that is
   the repository's default branch — `develop`. Every gate in `release.yml`

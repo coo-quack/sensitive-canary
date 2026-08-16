@@ -36,8 +36,8 @@ sensitive-canary is a best-effort guard, not a guaranteed security boundary:
 - **Entropy filtering** — Generic rules use Shannon entropy thresholds to reduce false positives. Low-entropy values that happen to be real secrets may pass through.
 - **Allow tags** — Any block can be bypassed by the user with `[allow-secret]`, `[allow-pii]`, or `[allow-all]`. This is intentional — the tool assists, not enforces.
 - **Hook execution** — If the Node.js process fails to start, the hook does not block the call. It does not exit 0 to do so: node exits with its own status (9 for an unknown flag), and Claude Code treats anything other than 2 as "do not block". A hook killed by the PreToolUse timeout is the same case, which is why the scan bounds what it reads and what its patterns can cost.
-- **Parse errors** — If the hook input cannot be parsed (malformed JSON from Claude Code), the hook exits 0 (pass) as a fail-open fallback.
-- **Binary files** — Binary files are detected by the presence of a NUL byte. Only the text portion before the first NUL is scanned; content after the NUL is not checked.
+- **Parse errors** — If the hook input cannot be parsed, the hook exits 2 and the call is stopped. The check did not finish, and "unknown" is not "safe". Empty stdin is the one exception: there is nothing to check, so it exits 0.
+- **Files holding NUL bytes** — every run of text between the NUL bytes is scanned, joined by newlines so that no rule matches across two unrelated runs. A file that holds a NUL is still judged on its name where the `.env` guard applies, since part-binary contents cannot speak for the name.
 - **Scope** — The default matcher is `Read|Bash|Grep|mcp__.*`, so `Read`, `Bash`, `Grep` and every MCP tool are intercepted. A tool outside the matcher is not scanned at all, and a tool inside it is scanned for the input fields that name a file — see Known Limitations in the README for what that does not reach.
 - **Tool results are not scanned** — there is no `PostToolUse` hook. What a tool returns, having been allowed, is not inspected.
 

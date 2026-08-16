@@ -15,7 +15,12 @@ import {
   randomBird,
   userTypedText,
 } from "./lib/inspector.ts";
-import { enabledCategoriesFromEnv, type Finding, scan } from "./lib/rules.ts";
+import {
+  beginScanBudget,
+  enabledCategoriesFromEnv,
+  type Finding,
+  scan,
+} from "./lib/rules.ts";
 import {
   extractEnvVarNames,
   extractQuotedLiterals,
@@ -129,6 +134,11 @@ let bytesScanned = 0;
 // what the walk costs. Files after the deadline are not scanned, and a `.env`
 // name reached after it falls back on the name.
 const DEADLINE = Date.now() + 5_000;
+
+// One budget for the whole invocation, started here rather than counted per
+// `scan()` call. A call is scanned per environment variable and per end of each
+// file, so the number of calls is set by the payload.
+beginScanBudget();
 
 // The directory a relative path is relative to. Set from the payload before any
 // scanning; `process.cwd()` is where the hook was started, which is not
@@ -399,7 +409,7 @@ const MAX_GLOB_MATCHES = 256;
 function expandCandidate(candidate: string): string[] {
   const literal = path.resolve(
     baseDirectory,
-    expandTilde(fromFileUrl(candidate)),
+    expandPath(fromFileUrl(candidate)),
   );
   if (!GLOB_METACHARACTERS.test(literal)) return [literal];
   // `**` matches across directories, and expanding it walked a whole tree:
@@ -437,14 +447,47 @@ function fromFileUrl(candidate: string): string {
   }
 }
 
-// `~` and `~/…` stand for the home directory, and nothing here expanded them, so
-// `cat ~/.aws/credentials` named a path that exists on no disk and was dropped
-// as a file that is not there. `~user/…` is left alone: resolving it needs the
-// password database, and guessing at it would name the wrong file.
-function expandTilde(candidate: string): string {
-  if (candidate === "~") return os.homedir();
-  if (!candidate.startsWith("~/")) return candidate;
-  return path.join(os.homedir(), candidate.slice(2));
+// `$VAR` and `${VAR}` in a path, substituted from this process's environment,
+// which is the one the command will inherit.
+//
+// An unset variable is left as written rather than removed: a shell expands it
+// to nothing, and the shortened path names a different file. Finding nothing is
+// the safer of the two wrong answers.
+function expandShellVars(candidate: string): string {
+  return candidate.replace(
+    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    (whole, braced: string | undefined, bare: string | undefined) =>
+      process.env[braced ?? bare ?? ""] ?? whole,
+  );
+}
+
+// A path as the shell will see it: variables substituted, then `~` and `~/…`
+// resolved to the home directory. `~user/…` is left alone, since resolving it
+// needs the password database.
+function expandPath(candidate: string): string {
+  const expanded = expandShellVars(candidate);
+  if (expanded === "~") return os.homedir();
+  if (!expanded.startsWith("~/")) return expanded;
+  return path.join(os.homedir(), expanded.slice(2));
+}
+
+// The regular files directly inside a directory, for the tools that read a
+// directory's contents — `grep -r`, and a Grep whose `path` names a folder.
+//
+// One level, and capped at the same limit a glob is, because the walk is the
+// part that cannot be interrupted. `readdirSync` rather than a glob: `*` does
+// not match a leading dot, and `.env` is the file this most needs to find.
+function filesDirectlyUnder(candidate: string): string[] {
+  try {
+    return fs
+      .readdirSync(candidate, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .slice(0, MAX_GLOB_MATCHES)
+      .map((entry) => path.join(candidate, entry.name));
+  } catch {
+    // Not a directory, or not readable.
+    return [];
+  }
 }
 
 // Every command an input carries, whatever shape it arrives in.
@@ -512,6 +555,7 @@ function scanIfRegularFile(
   if (!candidate) return;
   for (const p of expandCandidate(candidate)) {
     if (isRegularFile(p)) scanFile(p, allowTags);
+    else for (const child of filesDirectlyUnder(p)) scanFile(child, allowTags);
   }
 }
 
@@ -568,8 +612,16 @@ function scanPathsLiteralsFirst(
   opts?: { onlyExisting?: boolean },
 ): void {
   const scanOne = (candidate: string): void => {
-    if (opts?.onlyExisting) scanIfRegularFile(candidate, allowTags);
-    else scanFile(candidate, allowTags);
+    if (opts?.onlyExisting) {
+      scanIfRegularFile(candidate, allowTags);
+      return;
+    }
+    scanFile(candidate, allowTags);
+    // `grep -r AKIA .` names a directory, and `scanFile` has nothing to read
+    // from one.
+    for (const child of filesDirectlyUnder(candidate)) {
+      scanFile(child, allowTags);
+    }
   };
   const patterns: string[] = [];
   for (const candidate of paths) {
@@ -613,8 +665,15 @@ function detectUtf16(raw: Buffer): Buffer | null {
   // too, and reading that as UTF-16 turns a file the scan could read into
   // nonsense it cannot.
   const MINIMUM_NULS = 8;
-  if (evenNuls === 0 && oddNuls >= MINIMUM_NULS && readsAsText(raw)) return raw;
-  if (oddNuls === 0 && evenNuls >= MINIMUM_NULS) {
+  // One side dominating, rather than the other being empty. Characters in the
+  // U+xx00 rows — U+3000, the ideographic space, among them — put a NUL on the
+  // other side, and a single one of those in a Japanese document is not
+  // evidence the file is anything but UTF-16. `readsAsText` still has to agree,
+  // which is what keeps a binary whose NULs happen to lean one way out.
+  const dominates = (side: number, other: number): boolean =>
+    side >= MINIMUM_NULS && side >= other * 8;
+  if (dominates(oddNuls, evenNuls) && readsAsText(raw)) return raw;
+  if (dominates(evenNuls, oddNuls)) {
     const be = swapped();
     if (readsAsText(be)) return be;
   }
@@ -744,19 +803,25 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       const text = utf16.toString("utf16le").replace(/^\uFEFF/, "");
       const nul = text.indexOf("\0");
       readWasPartial = nul !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
-      content = nul === -1 ? text : text.slice(0, nul);
+      content = nul === -1 ? text : text.split("\0").join("\n");
       // Falls through to the same guards and the same scan below.
     } else {
-      // Binary files: scan only the text prefix before the first NUL byte
+      // Every run of text between the NUL bytes, joined by newlines so that no
+      // rule matches across two unrelated runs.
       const nulIndex = raw.indexOf(0);
       // Whether the file was read to its end. Recorded here and acted on below,
       // outside the catch: `block` exits the process, and anything it threw on the
       // way — a closed stderr, say — would be swallowed by the `catch` and turn a
       // block into a pass.
+      //
+      // A NUL counts as partial for the `.env` template guard below even though
+      // every run is scanned: the guard turns on whether the contents can speak
+      // for the name, and a file that is part binary cannot.
       readWasPartial = nulIndex !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
-      content = (nulIndex === -1 ? raw : raw.subarray(0, nulIndex)).toString(
-        "utf8",
-      );
+      content =
+        nulIndex === -1
+          ? raw.toString("utf8")
+          : raw.toString("utf8").split("\0").join("\n");
     }
   } catch {
     return;
@@ -907,21 +972,22 @@ process.stdin.on("end", () => {
         // costs nothing and the tokenizer is free to change.
         if (head?.value !== "cd" || head.redirect) break;
         if (target === undefined || target.redirect) break;
-        // `cd -`, `cd b*ld` and `cd $VAR` name a directory this cannot work
-        // out. Resolving them anyway pointed the scan at a directory that does
-        // not exist — or worse, at one that happens to exist under the literal
-        // name — and every relative path after it went unscanned.
+        // `cd -`, `cd b*ld` and a `cd` into an unset variable name a directory
+        // this cannot work out. Following one anyway moves the base somewhere
+        // the command will not read, and every relative path after it resolves
+        // against the wrong directory.
+        const destination = expandPath(target.value);
         if (
           target.value === "-" ||
           target.value === "--" ||
-          target.value.includes("$") ||
-          GLOB_METACHARACTERS.test(target.value)
+          destination.includes("$") ||
+          GLOB_METACHARACTERS.test(destination)
         ) {
           break;
         }
         // A `cd` the shell will fail is a `cd` that does not happen. Following
         // it moved the base somewhere neither the command nor this will read.
-        const moved = path.resolve(baseDirectory, expandTilde(target.value));
+        const moved = path.resolve(baseDirectory, destination);
         if (!isDirectory(moved)) break;
         baseDirectory = moved;
       }
@@ -966,6 +1032,23 @@ process.stdin.on("end", () => {
     // was looked at as a path, found not to be a file, and let through — with
     // the default matcher sending every `mcp__*` tool here.
     for (const value of collectCommandFields(input)) {
+      // What the command says, as well as what it opens. A key in an argument
+      // list is a key whichever tool runs the shell.
+      const commandFindings = dedupeFindings(
+        applyAllowTags(scan(value, ENABLED_CATEGORIES), allowTags),
+      );
+      if (commandFindings.length > 0) {
+        block(
+          `${tool} command`,
+          [
+            "🚫 Blocked: tool command contains sensitive data",
+            "",
+            ...findingsToLines(commandFindings),
+          ],
+          buildAllowHints("please run the command", commandFindings),
+        );
+      }
+
       const refs = extractCommandRefs(value);
       // Code is not a command line: `print(open("secrets").read())` has no
       // command in it this can classify, and the path is a quoted literal — the

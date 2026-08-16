@@ -9,7 +9,11 @@ import {
   resolveTagPriority,
   typedTextOf,
 } from "./lib/inspector.ts";
-import { enabledCategoriesFromEnv, scan } from "./lib/rules.ts";
+import {
+  beginScanBudget,
+  enabledCategoriesFromEnv,
+  scan,
+} from "./lib/rules.ts";
 
 // A hook that crashes exits 1, and only exit 2 blocks — so until now any
 // unforeseen error was a silent pass, which is the failure this whole tool
@@ -57,6 +61,10 @@ function collectStrings(value: unknown, depth = 0): string[] {
 }
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
+
+// One budget for the whole invocation. A prompt carries several strings and
+// each is a separate `scan()` call.
+beginScanBudget();
 
 let raw = "";
 process.stdin.setEncoding("utf8");
