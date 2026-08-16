@@ -277,7 +277,7 @@ Files that end in `.env` but don't start with a dot (e.g. `production.env`) are 
 When Claude uses the `Bash` tool, sensitive-canary checks three things:
 
 1. **Environment variables** — any `$VAR` or `${VAR}` references in the command are looked up in the current environment; if their values contain secrets or PII, the command is blocked.
-2. **Command string** — the raw command is scanned (catches inline secrets like `echo AKIAIOSFODNN7EXAMPLE`).
+2. **Command string** — the raw command is scanned, which catches a secret written inline (`echo ghp_…`, `curl -H "Authorization: Bearer …"`).
 3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
 
 ### Ways a rule goes quiet without saying so

@@ -20,7 +20,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | Without sensitive-canary | With sensitive-canary |
 |--------------------------|----------------------|
 | `cat .env` → full contents sent to Claude ❌ | Blocked by name before Claude reads it ✅ |
-| Paste `AKIAIOSFODNN7EXAMPLE` in prompt ❌ | Blocked before the API call is made ✅ |
+| Paste a live AWS key in a prompt ❌ | Blocked before the API call is made ✅ |
 | `Read customers.csv` full of email addresses ❌ | PII detected before Claude sees the file ✅ |
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
@@ -175,11 +175,14 @@ Then add to `~/.claude/settings.json`:
 Prompts containing secrets or PII are blocked before being sent.
 
 ```
-> My AWS key is AKIAIOSFODNN7EXAMPLE. Can you review this code?
+> Here is my deploy key:
+> -----BEGIN RSA PRIVATE KEY-----
+> MIIEowIBAAKCAQEAwK3vJ9m5Q8xY2nB4dF6hL0pR7sT1uV3wX5yZ8aC2eG4iK6mO
+> Can you review the config that uses it?
 
-🐤  sensitive-canary: sensitive data detected — blocked
+🐦 sensitive-canary: sensitive data detected — blocked
 
-  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+  [Secret] PEM Private Key (private-key): ---****KEY
 
 To allow, add a tag to your prompt:
   [allow-secret]  — allow secrets
@@ -189,7 +192,7 @@ To allow, add a tag to your prompt:
 To allow it through, add the suggested tag:
 
 ```
-> [allow-secret] My AWS key is AKIAIOSFODNN7EXAMPLE. Can you review this code?
+> [allow-secret] Here is my deploy key: -----BEGIN RSA PRIVATE KEY-----
 ```
 
 ### .env file blocked
@@ -529,10 +532,11 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
 - **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
 - **A template holding a real credential is blocked** — `.env.example` and its siblings are exempt from the name guard, not from the scan. Placeholders (`your-token-here`, `REPLACE_ME`, `changeme`, `<token>`, `postgres://user:password@localhost/db`) are recognised and left alone, but a template committed with a live key is blocked like any other file, through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` if that is deliberate.
-- **Anything past the first NUL byte of a file** — a file's text prefix is scanned and the rest is dropped, so that a binary is not ground through every rule. A file that uses NUL as a separator rather than as binary content is therefore barely scanned: `/proc/self/environ` on Linux holds the whole environment, and only the first variable of it is seen.
-- **Anything that is not a regular file** — a directory, a FIFO, a process substitution (`/dev/fd/63`) and `/dev/stdin` are not read, so `cat` of one is not scanned. The directory case is what leaves the Grep tool's `path` and a recursive `grep -r pattern src/` alone, both of which would otherwise mean reading every file underneath. Reading them can never reach the end of the file: `cat /dev/zero` held the hook open until Claude Code's PreToolUse timeout killed it, and a killed hook does not block the call. Not scanning them is the lesser of the two, since a hang lets the call through as well.
+- **A binary swept up by a directory being named** — the files under a directory are scanned because the directory was named, and one whose first four kilobytes read as neither text nor UTF-16 is skipped rather than ground through every rule. A file named outright is scanned whatever its bytes look like, and so is an `.env` in a swept directory: the name decides that one when the contents cannot.
+- **Anything that is not a regular file** — a FIFO, a process substitution (`/dev/fd/63`) and `/dev/stdin` are not read, so `cat` of one is not scanned. Reading them can never reach the end of the file: `cat /dev/zero` held the hook open until Claude Code's PreToolUse timeout killed it, and a killed hook does not block the call. Not scanning them is the lesser of the two, since a hang lets the call through as well. A directory is not read either, but it is not left alone: the files directly under it are scanned, one level and no further.
+- **A search that names no path is judged on names alone** — `rg pattern`, `grep -r pattern` and `Grep {pattern}` with no `path` all print from the working directory, so that directory is checked for an `.env` and its siblings. Its other files are not read. A directory the user named is one they asked about and its contents are scanned; a directory only implied by a search is every repository anyone works in, and reading those stopped a plain `rg TODO` in a third of the checkouts it was measured against.
 - **`~user/…` is not expanded** — `~` and `~/…` are resolved to the home directory, but the form naming another user needs the password database, and guessing would name the wrong file.
-- **A file whose text is not bytes the scanner reads as text** — scanning stops at the first NUL byte, which is what keeps a binary from being ground through every pattern. UTF-16 is the exception and is decoded first, by its byte-order mark or by which side of each byte pair the zeros fall on. A file that carries no zeros at all in its first sixteen kilobytes — text in a script with no Latin characters and no line breaks — is not recognised as UTF-16 and is read to its first zero byte.
+- **A file in an encoding neither reading recovers** — every run of text between NUL bytes is scanned, and UTF-16 is decoded first: by its byte-order mark, or by NULs falling on one side of each pair through the first sixteen kilobytes. Without a mark that verdict is a guess, so both readings are scanned and a wrong guess hides nothing. What is left out is an encoding that is neither: a file in Shift_JIS or GBK is read as the bytes it is, and a credential written in one of those character sets is not found. An ASCII credential inside such a file still is.
 - **A shell construct that names the file only at run time** — `for f in secrets; do cat "$f"; done` and `find . -name secrets -exec cat {} +` both name the file in the command line, but the hook classifies the command it can see, and in these the reading command is `cat` reached through a loop or through `find`'s own argument list.
 - **At most 64 MiB is read across one tool call** — the per-file cut bounds one file; this bounds the call. A glob naming three hundred large files took half a minute, which is long enough for the PreToolUse timeout to kill the hook, and a killed hook does not block. Files past the budget are not scanned, so naming enough large files before the one that matters is a way past the scan.
 - **A relative path is resolved against the directory Claude Code reports** — and against a literal `cd` at the start of the same command. A `cd` later in the line, one inside a subshell, and one whose argument is a variable, a glob or `-` are all left alone, because where they land cannot be worked out here. A directory changed some other way is the same case.
@@ -560,14 +564,14 @@ Allow tags filter the scan results — the scan still runs, including for a `.en
 If you include a mask tag, sensitive-canary will explain this and list what was detected:
 
 ```
-> [mask-secret] My key is AKIAIOSFODNN7EXAMPLE, can you review this?
+> [mask-secret] My deploy key is -----BEGIN RSA PRIVATE KEY----- , can you review this?
 
 🐦 sensitive-canary: prompt masking is not supported
 
   [mask-secret] cannot mask prompt content.
   The following sensitive data was detected:
 
-  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+  [Secret] PEM Private Key (private-key): ---****KEY
 
   Please choose one of the following:
 
@@ -579,13 +583,19 @@ If you include a mask tag, sensitive-canary will explain this and list what was 
 
 ### Allow + Mask tag priority
 
-When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag that appears first wins** for each category (`secret`, `pii`). `[allow-all]` and `[mask-all]` resolve both categories at once.
+When more than one tag appears, **the last one wins**. It replaces the earlier ones entirely rather than combining with them, so changing your mind mid-message works the way it reads.
 
-| Example | Result |
-|---------|--------|
-| `[allow-secret] [mask-secret] …` | secret allowed |
-| `[mask-secret] [allow-secret] …` | masking not supported error |
-| `[allow-secret] [mask-pii] …` | secret allowed, PII mask error |
+| Example | secret | pii |
+|---------|--------|-----|
+| `[allow-all] … [allow-secret]` | allow | blocked |
+| `[allow-secret] … [allow-all]` | allow | allow |
+| `[allow-secret] … [mask-secret]` | mask (unsupported) | blocked |
+| `[mask-secret] … [allow-secret]` | allow | blocked |
+| `[allow-secret] … [allow-pii]` | blocked | allow |
+
+The last line is the one to watch: two tags do not add up. Narrowing from `[allow-all]` to `[allow-secret]` really does put PII back under guard, which is the point — but so does writing `[allow-secret] [allow-pii]` and expecting both. **`[allow-all]` is how you ask for both.**
+
+A tag counts wherever it appears in the message, mid-sentence included. What does not count is a tag inside a fenced code block, inside one of the elements Claude Code writes around command output, or in a line the runtime wrote rather than you — a compaction summary, a skill body, or a background task reporting back. Those are quoting, not asking.
 
 ---
 

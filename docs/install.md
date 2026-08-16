@@ -29,12 +29,17 @@ exit 2 stops a tool call, so a hook that fails to start is silent. This step is
 not optional.
 
 ```bash
-printf 'key=AKIA''IOSFODNN7EXAMPLE\n' > /tmp/canary-check.txt
+printf -- '-----BEGIN RSA PRIVATE KEY-----\n' > /tmp/canary-check.txt
 ```
 
 Ask Claude to read `/tmp/canary-check.txt`. It should refuse and say why. If it
-reads the file and shows you the key, the hooks are not running — see
+reads the file and shows you what is in it, the hooks are not running — see
 [Troubleshooting](/troubleshooting).
+
+A private-key header is the fixture here because it carries no key material and
+is recognised on its own. AWS's documented `AKIAIOSFODNN7EXAMPLE` will not do:
+it appears in AWS's own setup guides and in READMEs that copy them, so this tool
+reads it as documentation and allows it.
 
 ### Updating
 
@@ -117,13 +122,18 @@ An installation that checks nothing looks exactly like one that works, so this
 step is not optional. Run the hook by hand and read the exit code:
 
 ```bash
-printf 'key=AKIA''IOSFODNN7EXAMPLE\n' > /tmp/canary-check.txt
+printf -- '-----BEGIN RSA PRIVATE KEY-----\n' > /tmp/canary-check.txt
 printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/canary-check.txt"}}' \
   | node <dist>/pre-tool-use-hook.js; echo "exit=$?"
 ```
 
 `exit=2` means it is working. Anything else — 0, 1, or a module-not-found error
 — means the path is wrong and nothing is being checked.
+
+The fixture is a private-key header rather than a key: it carries no key
+material and is recognised on its own. AWS's documented `AKIAIOSFODNN7EXAMPLE`
+would report `exit=0` here, because this tool reads it as the documentation it
+is — see [Rules](/rules).
 
 
 ## Manual Setup (git clone)
@@ -217,7 +227,7 @@ Runs before Claude uses `Read`, `Bash`, `Grep` or any MCP tool. It blocks:
 - `.env` and `.env.*` files by filename (a secret guard; only while the `secret` category is enabled)
 - Any file whose contents contain secrets or PII
 - `cat`, `head`, `tail`, and other file-reading commands targeting sensitive files
-- Bash commands containing secrets inline (e.g. `echo AKIAIOSFODNN7EXAMPLE`)
+- Bash commands containing secrets inline (e.g. `echo ghp_…`)
 - Environment variables referenced in Bash commands whose values contain secrets
 
 ## Allow Tags

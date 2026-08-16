@@ -5,6 +5,7 @@ import {
   compileRule,
   enabledCategoriesFromEnv,
   parseCategories,
+  scan,
 } from "../rules.ts";
 import { VALIDATOR_NAMES } from "../validators.ts";
 import { DEFAULT_RULES } from "./rule-fixtures.ts";
@@ -89,6 +90,43 @@ describe("the documents and the registry agree", () => {
         !rulesDocText.includes(`\`${name}\``),
     );
     expect(undocumented).toEqual([]);
+  });
+
+  // The counts the README puts in its section headings. A rule added to the
+  // config and not to the table below it leaves the heading wrong, which is how
+  // a reader finds out whether the list they are reading is the list that ships.
+  it.each([
+    ["Secrets", "secret" as const],
+    ["PII", "pii" as const],
+  ])("the %s heading states the number that ships", (heading, category) => {
+    const shipped = DEFAULT_RULES.filter((r) => r.category === category).length;
+    expect(readmeText).toContain(`### ${heading} (${shipped} rules)`);
+  });
+
+  // The step the install guide calls not optional. Its fixture has to be one
+  // this tool actually blocks — AWS's documented key was the fixture until the
+  // `aws-key` validator started reading it as the documentation it is, at which
+  // point the guide told every new user their installation was broken.
+  it("the install guide verifies with something that is blocked", () => {
+    const installText = docText("../../../docs/install.md");
+    const fixtures = [...installText.matchAll(/printf -- '([^']+)'/g)].map(
+      (m) => (m[1] ?? "").replace(/\\n/g, "\n"),
+    );
+    expect(fixtures.length).toBeGreaterThan(0);
+    for (const fixture of fixtures) {
+      expect(scan(fixture), `printf -- '${fixture.trim()}'`).not.toEqual([]);
+    }
+  });
+
+  // Both documents describe the same tag resolution, and one of them was left
+  // behind when it changed. Each has to say which way it goes, and neither may
+  // still say the other.
+  it.each([
+    ["README.md", () => readmeText],
+    ["docs/rules.md", () => rulesDocText],
+  ])("%s states the tag priority that ships", (_name, text) => {
+    expect(text()).toContain("the last one wins");
+    expect(text()).not.toContain("appears first wins");
   });
 
   // A configuration can switch a rule off without warning, in ways somebody
