@@ -120,13 +120,18 @@ export function parseAllowTags(messages: Message[]): Set<string> {
   return parseTagsOfType("allow", messages);
 }
 
-// Resolve effective allow/mask tags based on first-occurrence priority.
-// For each category dimension ("secret", "pii"), the first matching tag wins.
-// [allow-all] / [mask-all] resolve both dimensions at once.
+// The last tag in the text is the one that applies. Earlier ones are discarded
+// whole, not merged with it.
 //
-//   "[allow-secret] [mask-secret] ..." → secret: allow
-//   "[mask-secret] [allow-secret] ..." → secret: mask
-//   "[allow-secret] [mask-pii]   ..." → secret: allow, pii: mask
+//   "[allow-all] … [allow-secret]"  → secret only; PII is blocked again
+//   "[allow-secret] … [allow-all]"  → both
+//   "[mask-secret] … [allow-secret]" → allow
+//
+// Merging per category would keep the wider grant of the two, so a writer who
+// started with `[allow-all]` and narrowed to `[allow-secret]` would still be
+// allowing PII — the opposite of what narrowing means. Writing two tags to
+// combine categories does not work either; `[allow-all]` is how both are asked
+// for.
 export function resolveTagPriority(prompt: string): {
   effectiveAllow: Set<string>;
   effectiveMask: Set<string>;
@@ -134,27 +139,22 @@ export function resolveTagPriority(prompt: string): {
   const pattern = /\[(allow|mask)-(all|secret|pii)\]/gi;
   const effectiveAllow = new Set<string>();
   const effectiveMask = new Set<string>();
-  const resolved = new Set<string>();
 
-  for (const [, kind, tag] of prompt.matchAll(pattern)) {
-    if (!kind || !tag) continue;
-    const k = kind.toLowerCase() as "allow" | "mask";
-    const t = tag.toLowerCase();
-    const dims = t === "all" ? ["secret", "pii"] : [t];
+  const tags = [...prompt.matchAll(pattern)];
+  const last = tags[tags.length - 1];
+  if (!last) return { effectiveAllow, effectiveMask };
 
-    for (const dim of dims) {
-      if (!resolved.has(dim)) {
-        resolved.add(dim);
-        (k === "allow" ? effectiveAllow : effectiveMask).add(dim);
-      }
-    }
-  }
+  const kind = last[1]?.toLowerCase();
+  const category = last[2]?.toLowerCase();
+  if (!kind || !category) return { effectiveAllow, effectiveMask };
 
-  if (effectiveAllow.has("secret") && effectiveAllow.has("pii")) {
-    effectiveAllow.add("all");
-  }
-  if (effectiveMask.has("secret") && effectiveMask.has("pii")) {
-    effectiveMask.add("all");
+  const target = kind === "allow" ? effectiveAllow : effectiveMask;
+  if (category === "all") {
+    target.add("secret");
+    target.add("pii");
+    target.add("all");
+  } else {
+    target.add(category);
   }
 
   return { effectiveAllow, effectiveMask };

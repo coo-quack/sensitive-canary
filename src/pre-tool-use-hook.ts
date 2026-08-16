@@ -11,8 +11,8 @@ import {
   findingsToLines,
   forOutput,
   type Message,
-  parseAllowTags,
   randomBird,
+  resolveTagPriority,
   userTypedText,
 } from "./lib/inspector.ts";
 import {
@@ -258,11 +258,11 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
   }
 
   if (!lastUserMessage || toolResultAfterLastText) return new Set();
-  // Parsed from the typed text, not the raw content, so the two agree about
-  // what counts as the user speaking.
-  return parseAllowTags([
-    { role: "user", content: userTypedText(lastUserMessage) },
-  ]);
+  // Through the same resolution the prompt hook uses, over the typed text
+  // rather than the raw content. Collecting every tag instead meant this hook
+  // did not see mask tags at all, so `[mask-secret] [allow-secret]` stopped the
+  // prompt and then allowed the tool call it was stopping.
+  return resolveTagPriority(userTypedText(lastUserMessage)).effectiveAllow;
 }
 
 // ── .env pattern ──────────────────────────────────────────────────────────────

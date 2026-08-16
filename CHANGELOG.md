@@ -579,6 +579,14 @@
   matched `process.env.API_TOKEN`, `user.password_digest` and `self.api_key`;
   two in five of the distinct values it matched across thirty thousand real
   files were one of these
+- The last tag in a message is the one that applies, replacing the earlier ones
+  rather than merging with them. Resolving each category separately kept the
+  wider grant of the two, so `[allow-all]` narrowed to `[allow-secret]` went on
+  allowing PII — the opposite of what narrowing means. Two tags no longer add
+  up: `[allow-all]` is how both categories are asked for
+- Resolve tags the same way in both hooks. `PreToolUse` collected every allow
+  tag and never looked at mask tags, so `[mask-secret] [allow-secret]` stopped
+  the prompt and then allowed the tool call it was stopping
 - Read AWS's documented keys as documentation. AWS writes `EXAMPLE` where the
   random part would end — `AKIAIOSFODNN7EXAMPLE` and its siblings — and those
   appear in every setup guide and in every README that copies one, where a block

@@ -329,63 +329,62 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
   });
 });
 
-describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
-  it("[allow-secret] before [mask-secret] → passes through (exit 0)", () => {
-    const { exitCode } = runHook(
+describe("user-prompt-submit-hook — the last tag is the one that applies", () => {
+  it("[allow-secret] then [mask-secret] → mask, so the prompt stops", () => {
+    const { exitCode, stderr } = runHook(
       `[allow-secret] [mask-secret] my key is ${AWS_KEY}`,
     );
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("prompt masking is not supported");
   });
 
-  it("[mask-secret] before [allow-secret] → shows masking not supported (exit 2)", () => {
-    const { exitCode, stderr } = runHook(
+  it("[mask-secret] then [allow-secret] → allow, so it passes", () => {
+    const { exitCode } = runHook(
       `[mask-secret] [allow-secret] my key is ${AWS_KEY}`,
     );
-    expect(exitCode).toBe(2);
-    expect(stderr).toContain("prompt masking is not supported");
+    expect(exitCode).toBe(0);
   });
 
-  it("[allow-all] before [mask-secret] → passes through (exit 0)", () => {
+  it("[mask-all] then [allow-secret] → allow", () => {
     const { exitCode } = runHook(
-      `[allow-all] [mask-secret] my key is ${AWS_KEY}`,
+      `[mask-all] [allow-secret] my key is ${AWS_KEY}`,
     );
     expect(exitCode).toBe(0);
   });
 
-  it("[mask-all] before [allow-secret] → shows masking not supported (exit 2)", () => {
+  // Narrowing really narrows: the PII that `[allow-all]` covered is guarded
+  // again, so the email stops the prompt while the key does not.
+  it("[allow-all] then [allow-secret] puts PII back under guard", () => {
     const { exitCode, stderr } = runHook(
-      `[mask-all] [allow-secret] my key is ${AWS_KEY}`,
+      `[allow-all] [allow-secret] key ${AWS_KEY} email ada@analytical-engines.org`,
     );
     expect(exitCode).toBe(2);
-    expect(stderr).toContain("prompt masking is not supported");
+    expect(stderr).toContain("pii-email");
+    expect(stderr).not.toContain("aws-access-key");
   });
 
-  it("[allow-secret] [mask-pii] → secret allowed, pii masked → masking not supported (exit 2)", () => {
-    const { exitCode, stderr } = runHook(
-      `[allow-secret] [mask-pii] key ${AWS_KEY} email ada@analytical-engines.org`,
+  it("[allow-secret] then [allow-all] passes both", () => {
+    const { exitCode } = runHook(
+      `[allow-secret] [allow-all] key ${AWS_KEY} email ada@analytical-engines.org`,
     );
-    expect(exitCode).toBe(2);
-    expect(stderr).toContain("prompt masking is not supported");
-    expect(stderr).toContain("[mask-pii]");
-    expect(stderr).not.toContain("[mask-secret]");
+    expect(exitCode).toBe(0);
   });
 
-  it("[mask-pii] [allow-secret] → secret: allow, pii: mask → masking not supported for email (exit 2)", () => {
+  // Two tags do not add up. `[allow-all]` is how both are asked for.
+  it("[allow-secret] then [allow-pii] leaves the secret blocked", () => {
     const { exitCode, stderr } = runHook(
-      `[mask-pii] [allow-secret] key ${AWS_KEY} email ada@analytical-engines.org`,
+      `[allow-secret] [allow-pii] key ${AWS_KEY} email ada@analytical-engines.org`,
     );
     expect(exitCode).toBe(2);
-    expect(stderr).toContain("prompt masking is not supported");
-    expect(stderr).toContain("[mask-pii]");
+    expect(stderr).toContain("aws-access-key");
+    expect(stderr).not.toContain("pii-email");
   });
 
-  it("[allow-pii] before [mask-pii] → pii allowed, secret still blocked (exit 2)", () => {
-    const { exitCode, stderr } = runHook(
-      `[allow-pii] [mask-pii] key ${AWS_KEY} email ada@analytical-engines.org`,
+  it("a tag in the middle of a sentence still counts", () => {
+    const { exitCode } = runHook(
+      `my key is ${AWS_KEY} [allow-secret] please have a look`,
     );
-    expect(exitCode).toBe(2);
-    expect(stderr).toContain("sensitive data detected");
-    expect(stderr).not.toContain("prompt masking is not supported");
+    expect(exitCode).toBe(0);
   });
 });
 
