@@ -58,6 +58,41 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       const result = runGrepHook(writeFixture.path("nonexistent.txt"));
       expect(result.exitCode).toBe(0);
     });
+
+    // The sweep skips binaries so that a folder of images is not ground through
+    // every rule, and that skip ran before the name guard. Eight bytes at the
+    // head of a `.env` were enough to drop it out of the sweep, which took the
+    // strongest guard in the tool with it. The name is judged whatever the bytes
+    // look like; it is the contents that the guard stops trusting.
+    it("blocks a .env whose bytes look binary", () => {
+      const dir = writeFixture.path("grep-dir-nul-env");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, ".env"),
+        Buffer.concat([
+          Buffer.from([0, 1, 2, 3, 0, 5, 0, 7]),
+          Buffer.from(`TOKEN=${TOKEN_VALUE}\n`),
+        ]),
+      );
+      const result = runGrepHook(dir);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // The other direction, so the case above is not passing on the sweep having
+    // stopped skipping binaries altogether.
+    it("still allows a directory of binaries with no env name", () => {
+      const dir = writeFixture.path("grep-dir-binaries");
+      mkdirSync(dir, { recursive: true });
+      for (const name of ["a.bin", "b.bin", "c.bin"]) {
+        writeFileSync(
+          join(dir, name),
+          Buffer.from([0, 1, 2, 3, 0, 255, 0, 7, 9, 0, 0, 0, 254, 0, 3]),
+        );
+      }
+      const result = runGrepHook(dir);
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe("other tools and MCP", () => {

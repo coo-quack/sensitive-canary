@@ -504,12 +504,18 @@ function expandPath(candidate: string): string {
 // the compressed bytes as email addresses.
 function filesDirectlyUnder(candidate: string): string[] {
   try {
-    return fs
-      .readdirSync(candidate, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .slice(0, MAX_GLOB_MATCHES)
-      .map((entry) => path.join(candidate, entry.name))
-      .filter((file) => !looksBinary(file));
+    return (
+      fs
+        .readdirSync(candidate, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .slice(0, MAX_GLOB_MATCHES)
+        .map((entry) => path.join(candidate, entry.name))
+        // An `.env` is kept whatever its bytes look like, because `scanFile`
+        // judges it on its name when the contents cannot speak for it. Dropping
+        // it here runs first, so a binary-looking one would never reach that
+        // guard — and eight bytes of NUL are all it takes to look binary.
+        .filter((file) => isEnvName(file) || !looksBinary(file))
+    );
   } catch {
     // Not a directory, or not readable.
     return [];
@@ -529,7 +535,13 @@ function looksBinary(filePath: string): boolean {
     const read = fs.readSync(fd, head, 0, head.length, 0);
     const bytes = head.subarray(0, read);
     if (!bytes.includes(0)) return false;
-    return detectUtf16(bytes) === null;
+    // Neither reading, rather than the UTF-16 verdict alone. That verdict is
+    // deliberately loose — the file scan covers a wrong guess by reading the
+    // bytes both ways — and a sweep has no such second chance, so it asks the
+    // question the answer is wanted for: does anything here read as text?
+    const utf16 = detectUtf16(bytes);
+    if (utf16 !== null && readsAsText(utf16.bytes)) return false;
+    return !readsAsUtf8Text(bytes);
   } catch {
     // Unreadable. Nothing to sweep, and the named-file path still guards it.
     return true;
@@ -681,24 +693,29 @@ function scanPathsLiteralsFirst(
   }
 }
 
-// The bytes as little-endian UTF-16, or null when the file is not UTF-16.
+// The bytes as little-endian UTF-16, with whether a byte-order mark said so.
 //
-// The byte-order mark decides it outright. Without one, the question is whether
-// every NUL falls on the same side of each pair — which it does in UTF-16 text,
-// because the high byte of a Latin character is zero. Requiring most pairs to
-// carry one was too strong: a file whose first few hundred characters are
-// Japanese or Chinese has neither byte zero, and the whole file went unread. One
-// NUL on a consistent side is enough to ask the question; whether the answer is
-// text is what settles it.
-function detectUtf16(raw: Buffer): Buffer | null {
+// The mark decides it outright. Without one, the question is whether every NUL
+// falls on the same side of each pair — which it does in UTF-16 text, because
+// the high byte of a Latin character is zero. Requiring most pairs to carry one
+// is too strong: a file whose first few hundred characters are Japanese or
+// Chinese has neither byte zero. One NUL on a consistent side is enough to ask
+// the question; whether the answer is text is what settles it.
+//
+// A guess this loose is wrong sometimes, so `fromBom` marks the ones that are
+// guesses and the caller scans the bytes both ways rather than betting on it.
+type Utf16Reading = { bytes: Buffer; fromBom: boolean };
+
+function detectUtf16(raw: Buffer): Utf16Reading | null {
   if (raw.length < 4) return null;
   // Swapping is done on a copy: `raw` is a view into the shared read buffer.
   const swapped = (): Buffer =>
     Buffer.from(raw)
       .subarray(0, raw.length & ~1)
       .swap16();
-  if (raw[0] === 0xff && raw[1] === 0xfe) return raw;
-  if (raw[0] === 0xfe && raw[1] === 0xff) return swapped();
+  if (raw[0] === 0xff && raw[1] === 0xfe) return { bytes: raw, fromBom: true };
+  if (raw[0] === 0xfe && raw[1] === 0xff)
+    return { bytes: swapped(), fromBom: true };
 
   // Far enough in to reach a newline or a space. Five hundred pairs of Japanese
   // carry no zero byte at all, and that prefix decided the whole file.
@@ -709,29 +726,50 @@ function detectUtf16(raw: Buffer): Buffer | null {
     if (raw[i * 2] === 0) evenNuls++;
     if (raw[i * 2 + 1] === 0) oddNuls++;
   }
-  // Several, not one: a UTF-8 file with a stray NUL in it has the asymmetry
-  // too, and reading that as UTF-16 turns a file the scan could read into
-  // nonsense it cannot.
+  // Several, not one: a single stray NUL is not an encoding.
   const MINIMUM_NULS = 8;
-  // One side dominating, rather than the other being empty. Characters in the
-  // U+xx00 rows — U+3000, the ideographic space, among them — put a NUL on the
-  // other side, and a single one of those in a Japanese document is not
-  // evidence the file is anything but UTF-16. `readsAsText` still has to agree,
-  // which is what keeps a binary whose NULs happen to lean one way out.
-  // Both a ratio and an absolute cap. A ratio alone read four real binaries out
-  // of seventeen thousand as UTF-16 — a JPEG among them, which then decoded to
-  // nonsense and hid a key sitting in its bytes. The characters this exists for
-  // are rare in a document: a handful of U+xx00 in a page of Japanese, not the
-  // hundreds a binary contributes.
-  const MAX_MINORITY_NULS = 4;
-  const dominates = (side: number, other: number): boolean =>
-    side >= MINIMUM_NULS && other <= MAX_MINORITY_NULS && side >= other * 64;
-  if (dominates(oddNuls, evenNuls) && readsAsText(raw)) return raw;
-  if (dominates(evenNuls, oddNuls)) {
-    const be = swapped();
-    if (readsAsText(be)) return be;
+  if (Math.max(evenNuls, oddNuls) < MINIMUM_NULS) return null;
+
+  // How much the minority side holds is not asked. Characters in the U+xx00
+  // rows put a NUL on that side, and Japanese is full of them — `一` is U+4E00,
+  // and a full-width space is U+3000 — so any threshold tight enough to exclude
+  // a binary also excludes an ordinary Japanese document. The counts cannot
+  // separate those two cases, so the question is left to `readsAsText`, and
+  // being wrong costs only a pass: the caller reads the bytes both ways
+  // whenever the verdict did not come from a byte-order mark.
+  //
+  // Which side leads picks the order the two byte orders are tried in, not
+  // whether they are tried.
+  const orderings: Buffer[] =
+    oddNuls >= evenNuls ? [raw, swapped()] : [swapped(), raw];
+  for (const candidate of orderings) {
+    if (readsAsText(candidate)) return { bytes: candidate, fromBom: false };
   }
   return null;
+}
+
+// Whether the runs of text between the NUL bytes read as something someone
+// wrote. A `.env` written by a tool that terminates its values, and a log with
+// a stray zero in it, both pass; a JPEG's compressed bytes do not.
+function readsAsUtf8Text(raw: Buffer): boolean {
+  const sample = utf8Runs(raw.subarray(0, 4096));
+  if (sample.length === 0) return false;
+  let bad = 0;
+  for (const ch of sample) {
+    const code = ch.codePointAt(0) ?? 0;
+    const isControl =
+      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      code === 0x7f;
+    if (isControl || code === 0xfffd) bad++;
+  }
+  return bad / sample.length < 0.05;
+}
+
+// Every run of text between the NUL bytes, joined by newlines so that no rule
+// matches across two unrelated runs.
+function utf8Runs(raw: Buffer): string {
+  const text = raw.toString("utf8");
+  return text.indexOf("\0") === -1 ? text : text.split("\0").join("\n");
 }
 
 // Whether these bytes decoded as UTF-16 look like something someone wrote. A
@@ -807,9 +845,10 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     // read as empty and passed. `readFileSync` handled that case by reading to
     // EOF, and replacing it took the handling with it.
     //
-    // What this does not do is scan such a file whole. The NUL rule below stops
-    // at the first separator, so `/proc/self/environ` is read but only its first
-    // variable is looked at. Written up under Known Limitations.
+    // The cap is what bounds it: the first megabyte and, on a larger file, the
+    // last. Every run of text between NUL separators inside those windows is
+    // scanned, so a NUL-separated file such as `/proc/self/environ` is read
+    // through rather than cut at its first entry.
     const buf = Buffer.alloc(MAX_FILE_SCAN_BYTES);
     const fd = fs.openSync(filePath, "r");
     let raw: Buffer;
@@ -841,11 +880,18 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     if (tail !== null) {
       bytesScanned += tail.length;
       const tailUtf16 = detectUtf16(tail);
-      const text = (tailUtf16 ?? tail).toString(tailUtf16 ? "utf16le" : "utf8");
-      // Past the last NUL rather than up to the first: this window is the end of
-      // the file, so what follows a separator is the part that gets printed.
-      const nul = text.lastIndexOf("\0");
-      tailContent = nul === -1 ? text : text.slice(nul + 1);
+      const windows: string[] = [];
+      if (tailUtf16 !== null) {
+        const text = tailUtf16.bytes.toString("utf16le");
+        // Past the last NUL rather than up to the first: this window is the end
+        // of the file, so what follows a separator is the part that gets
+        // printed.
+        const nul = text.lastIndexOf("\0");
+        windows.push(nul === -1 ? text : text.slice(nul + 1));
+      }
+      if (tailUtf16 === null || !tailUtf16.fromBom)
+        windows.push(utf8Runs(tail));
+      tailContent = windows.join("\n");
     }
     // UTF-16 puts a NUL in every other byte, so the rule below stopped after one
     // character and the file went through unread. PowerShell 5.1 writes UTF-16LE
@@ -853,29 +899,34 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     // not look at. Detected by the byte-order mark, or by NULs falling on one
     // side of every pair through the prefix.
     const utf16 = detectUtf16(raw);
-    if (utf16 !== null) {
-      const text = utf16.toString("utf16le").replace(/^\uFEFF/, "");
-      const nul = text.indexOf("\0");
-      readWasPartial = nul !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
-      content = nul === -1 ? text : text.split("\0").join("\n");
-      // Falls through to the same guards and the same scan below.
+    // Whether the file was read to its end. Recorded here and acted on below,
+    // outside the catch: `block` exits the process, and anything it threw on the
+    // way — a closed stderr, say — would be swallowed by the `catch` and turn a
+    // block into a pass.
+    //
+    // A NUL counts as partial for the `.env` template guard below even though
+    // every run is scanned: the guard turns on whether the contents can speak
+    // for the name, and a file that is part binary cannot. The NUL that counts
+    // is one in the text, not one in the bytes — UTF-16 is half NUL by
+    // construction, and reading those bytes directly makes every UTF-16 file
+    // partial.
+    const hitTheCut = raw.length >= MAX_FILE_SCAN_BYTES;
+    if (utf16 === null) {
+      readWasPartial = raw.indexOf(0) !== -1 || hitTheCut;
+      content = utf8Runs(raw);
     } else {
-      // Every run of text between the NUL bytes, joined by newlines so that no
-      // rule matches across two unrelated runs.
-      const nulIndex = raw.indexOf(0);
-      // Whether the file was read to its end. Recorded here and acted on below,
-      // outside the catch: `block` exits the process, and anything it threw on the
-      // way — a closed stderr, say — would be swallowed by the `catch` and turn a
-      // block into a pass.
-      //
-      // A NUL counts as partial for the `.env` template guard below even though
-      // every run is scanned: the guard turns on whether the contents can speak
-      // for the name, and a file that is part binary cannot.
-      readWasPartial = nulIndex !== -1 || raw.length >= MAX_FILE_SCAN_BYTES;
-      content =
-        nulIndex === -1
-          ? raw.toString("utf8")
-          : raw.toString("utf8").split("\0").join("\n");
+      const text = utf16.bytes.toString("utf16le").replace(/^\uFEFF/, "");
+      const nul = text.indexOf("\0");
+      readWasPartial = nul !== -1 || hitTheCut;
+      const decoded = nul === -1 ? text : text.split("\0").join("\n");
+      // Without a byte-order mark that reading is a guess, and the NUL counts
+      // it rests on cannot tell a UTF-8 file carrying a few NULs from a page of
+      // Japanese UTF-16. Both readings are scanned rather than one of them
+      // chosen: the cost is a second pass over the prefix, and what it buys is
+      // that a wrong guess hides nothing. Sixteen bytes of NUL in front of a
+      // file are otherwise enough to decode the rest of it out of reach of
+      // every rule.
+      content = utf16.fromBom ? decoded : `${decoded}\n${utf8Runs(raw)}`;
     }
   } catch {
     return;
