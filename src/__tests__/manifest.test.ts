@@ -10,7 +10,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { TOOLS_WITHOUT_FILE_OUTPUT } from "../lib/tool-inputs.ts";
+import {
+  PATH_FIELD_NAMES,
+  TOOLS_WITHOUT_FILE_OUTPUT,
+} from "../lib/tool-inputs.ts";
 import { runToolHook } from "./hook-harness.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -59,18 +62,35 @@ describe("hooks.json", () => {
   // Every tool the hook has something to say about has to reach it. The matcher
   // is a regular expression over the tool name, so it is tested by running the
   // names rather than by reading it.
-  const matcher = new RegExp(
-    `^(?:${(events["PreToolUse"] ?? [])[0]?.matcher ?? "(?!)"})$`,
-  );
+  //
+  // Both ways of applying it. Whether Claude Code anchors the match is not
+  // something this repository can check, and the difference is not academic:
+  // unanchored, `NotebookRead` is caught by the substring `Read`, and the
+  // `notebook_path` field this hook reads would be reached by accident. Every
+  // name that has to arrive is written out, so the answer is the same either
+  // way.
+  const source = (events["PreToolUse"] ?? [])[0]?.matcher ?? "(?!)";
+  const anchored = new RegExp(`^(?:${source})$`);
+  const matcher = new RegExp(source);
 
   it.each([
     "Read",
+    "NotebookRead",
     "Bash",
     "Grep",
     "mcp__filesystem__read_text_file",
     "mcp__desktop-commander__start_process",
-  ])("%s reaches the hook", (tool) => {
-    expect(matcher.test(tool)).toBe(true);
+  ])("%s reaches the hook however the matcher is applied", (tool) => {
+    expect(anchored.test(tool), "anchored").toBe(true);
+    expect(matcher.test(tool), "unanchored").toBe(true);
+  });
+
+  // A field the hook knows how to read belongs to a tool that can reach it.
+  // `notebook_path` was handled long before anything said `NotebookRead` was
+  // meant to arrive.
+  it("the notebook path field belongs to a tool the matcher names", () => {
+    expect(PATH_FIELD_NAMES.has("notebookpath")).toBe(true);
+    expect(source).toContain("NotebookRead");
   });
 
   // The other direction, so the matcher is not quietly `.*`: a tool that only
