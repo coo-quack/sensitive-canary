@@ -60,7 +60,7 @@ If the backport PR has conflicts, resolve them manually before merging.
 
 ## Adding a New Detection Rule
 
-1. Add the rule to `src/lib/default-config.json` — define `id`, `description`, `regex`, `category`, and optionally `entropyThreshold` and `flags`. `src/lib/rules.ts` reads that file; it holds the checksum validators, not the rules
+1. Add the rule to `src/lib/default-config.json` — define `id`, `description`, `regex`, `category`, and optionally `entropyThreshold` and `flags`. `src/lib/rules.ts` reads that file; the checksum validators it calls by name live in `src/lib/validators.ts`, which is where a new one goes
 2. Add tests — cover true positives, false negatives, and entropy filtering
    - Add the rule to the `EXAMPLES` table in `src/lib/__tests__/rule-patterns.test.ts`. Every rule needs one value it must find, or the id list proves only that a name is present: four rules shipped with patterns that could be disabled in silence because nothing asked them to match anything
    - The same file pads every example and requires the rule to still match, so a length you guessed too tight fails there rather than in a release. If the format really is exact — a checksum, a fixed-width field — add the id to `LONGER_IS_A_DIFFERENT_THING` with the reason

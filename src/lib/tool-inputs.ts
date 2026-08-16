@@ -141,6 +141,22 @@ function isPathCandidate(key: string, value: string): boolean {
 // an arbitrary tree before a tool call.
 const MAX_PATH_FIELD_DEPTH = 4;
 
+// Input field names that carry something to run rather than something to read.
+// Compared with separators and case removed, the way path field names are.
+export const COMMAND_FIELD_NAMES = new Set([
+  "command",
+  "commands",
+  "cmd",
+  "script",
+  "code",
+  "shellcommand",
+  "commandline",
+]);
+
+// How far into a nested input a command field is looked for. The same depth the
+// path fields use, and for the same reason: a tool wraps its arguments.
+const MAX_COMMAND_FIELD_DEPTH = 4;
+
 export function collectPathFields(
   input: Record<string, unknown>,
   depth = 0,
@@ -180,5 +196,40 @@ export function collectPathFields(
     }
   }
 
+  return found;
+}
+
+// Every command an input carries, whatever shape it arrives in.
+//
+// Reading only top-level strings left two shapes through, and both reach the
+// `.env` name guard by a name with no slash in it, which the path rules do not
+// collect: an argv array (`{"command":["cat",".env"]}`) and a command nested
+// under another key (`{"args":{"command":"cat .env"}}`). Depth-limited the way
+// path fields are, for the same reason.
+//
+// Beside `collectPathFields` rather than in the hook: the two walk the same tree
+// to the same depth and differ only in which field names count, and that
+// question — along with `normalizeFieldName` and both name sets — belongs in one
+// module rather than split across two.
+export function collectCommandFields(
+  input: Record<string, unknown>,
+  depth = 0,
+): string[] {
+  if (depth > MAX_COMMAND_FIELD_DEPTH) return [];
+  const found: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    const named = COMMAND_FIELD_NAMES.has(normalizeFieldName(key));
+    if (named && typeof value === "string") {
+      found.push(value);
+    } else if (named && Array.isArray(value)) {
+      // An argv array is one command line with the spaces taken out.
+      const argv = value.filter((v): v is string => typeof v === "string");
+      if (argv.length > 0) found.push(argv.join(" "));
+    } else if (value !== null && typeof value === "object") {
+      found.push(
+        ...collectCommandFields(value as Record<string, unknown>, depth + 1),
+      );
+    }
+  }
   return found;
 }

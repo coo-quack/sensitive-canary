@@ -28,9 +28,9 @@ import {
   tokenizeCommand,
 } from "./lib/shell.ts";
 import {
+  collectCommandFields,
   collectPathFields,
   isWritingTool,
-  normalizeFieldName,
   TOOLS_WITHOUT_FILE_OUTPUT,
 } from "./lib/tool-inputs.ts";
 import { loadAllowTagsFromTranscript } from "./lib/transcript.ts";
@@ -86,22 +86,6 @@ const MAX_FILE_SCAN_BYTES = 1_048_576; // 1 MiB
 // hook well inside the timeout while making that trick need sixty-four files
 // rather than eight. It does not remove it — written up as a limitation.
 const MAX_TOTAL_SCAN_BYTES = 64 * 1_048_576; // 64 MiB
-
-// Input field names that carry something to run rather than something to read.
-// Compared with separators and case removed, the way path field names are.
-const COMMAND_FIELD_NAMES = new Set([
-  "command",
-  "commands",
-  "cmd",
-  "script",
-  "code",
-  "shellcommand",
-  "commandline",
-]);
-
-// How far into a nested input a command field is looked for. The same depth the
-// path fields use, and for the same reason: a tool wraps its arguments.
-const MAX_COMMAND_FIELD_DEPTH = 4;
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
@@ -291,6 +275,38 @@ function block(
   process.exit(2);
 }
 
+// Scan a piece of text and block if anything survives the tags.
+//
+// Five places did this — an environment variable's value, each end of a file, a
+// Bash command line, and a command carried in a tool input — and each wrote out
+// the same four steps and the same message shape, differing only in the source,
+// the header and the hint. Gathered here so the shape is one thing rather than
+// five things that agree for now.
+//
+// `[allow-secret]` never lifts a PII block, and what holds that is the
+// deduplication key: it carries the category, so one value matched by a rule of
+// each kind stays two findings and the tag removes only its own. Tagging before
+// deduplicating gives the same answer — measured, by swapping the two and
+// watching the suite stay green — and is kept because it is also the order that
+// survives the key ever narrowing back to the value alone.
+function scanTextAndBlock(
+  text: string,
+  source: string,
+  header: string,
+  hintContext: string,
+  allowTags: Set<string>,
+): void {
+  const findings = dedupeFindings(
+    applyAllowTags(scan(text, ENABLED_CATEGORIES), allowTags),
+  );
+  if (findings.length === 0) return;
+  block(
+    source,
+    [header, "", ...findingsToLines(findings)],
+    buildAllowHints(hintContext, findings),
+  );
+}
+
 // ── Core scan logic ───────────────────────────────────────────────────────────
 
 // Characters that make a token a pattern rather than a filename. `{` is here
@@ -411,36 +427,6 @@ function filesDirectlyUnder(candidate: string): string[] {
   }
 }
 
-// Every command an input carries, whatever shape it arrives in.
-//
-// Reading only top-level strings left two shapes through, and both reach the
-// `.env` name guard by a name with no slash in it, which the path rules do not
-// collect: an argv array (`{"command":["cat",".env"]}`) and a command nested
-// under another key (`{"args":{"command":"cat .env"}}`). Depth-limited the way
-// path fields are, for the same reason.
-function collectCommandFields(
-  input: Record<string, unknown>,
-  depth = 0,
-): string[] {
-  if (depth > MAX_COMMAND_FIELD_DEPTH) return [];
-  const found: string[] = [];
-  for (const [key, value] of Object.entries(input)) {
-    const named = COMMAND_FIELD_NAMES.has(normalizeFieldName(key));
-    if (named && typeof value === "string") {
-      found.push(value);
-    } else if (named && Array.isArray(value)) {
-      // An argv array is one command line with the spaces taken out.
-      const argv = value.filter((v): v is string => typeof v === "string");
-      if (argv.length > 0) found.push(argv.join(" "));
-    } else if (value !== null && typeof value === "object") {
-      found.push(
-        ...collectCommandFields(value as Record<string, unknown>, depth + 1),
-      );
-    }
-  }
-  return found;
-}
-
 // Whether a path names something whose bytes can be read to the end.
 //
 // A character device or a FIFO can be opened and read from forever: `cat
@@ -532,18 +518,12 @@ function scanEnvironment(names: string[], allowTags: Set<string>): void {
   for (const varName of names) {
     const value = process.env[varName];
     if (!value) continue;
-    const findings = dedupeFindings(
-      applyAllowTags(scan(value, ENABLED_CATEGORIES), allowTags),
-    );
-    if (findings.length === 0) continue;
-    block(
+    scanTextAndBlock(
+      value,
       "bash command",
-      [
-        `🚫 Blocked: environment variable $${varName} contains sensitive data`,
-        "",
-        ...findingsToLines(findings),
-      ],
-      buildAllowHints("please run the command", findings),
+      `🚫 Blocked: environment variable $${varName} contains sensitive data`,
+      "please run the command",
+      allowTags,
     );
   }
 }
@@ -747,41 +727,23 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   // A second window over the same file, judged on its own: a finding in either
   // end is a finding.
   if (tailContent.length > 0) {
-    const tailFindings = dedupeFindings(
-      applyAllowTags(scan(tailContent, ENABLED_CATEGORIES), allowTags),
+    scanTextAndBlock(
+      tailContent,
+      filePath,
+      "🚫 Blocked: file contains sensitive data",
+      `please read ${forOutput(filePath)}`,
+      allowTags,
     );
-    if (tailFindings.length > 0) {
-      block(
-        filePath,
-        [
-          "🚫 Blocked: file contains sensitive data",
-          "",
-          ...findingsToLines(tailFindings),
-        ],
-        buildAllowHints(`please read ${forOutput(filePath)}`, tailFindings),
-      );
-    }
   }
 
   if (content.length === 0) return;
 
-  // Allow first, then dedupe. The other way round, a value that a secret rule
-  // and a PII rule both match loses the PII finding to deduplication before the
-  // tag is consulted, and `[allow-secret]` then removes the secret finding too —
-  // so the tag lifted a PII block, which the README says it cannot.
-  const findings = dedupeFindings(
-    applyAllowTags(scan(content, ENABLED_CATEGORIES), allowTags),
-  );
-  if (findings.length === 0) return;
-
-  block(
+  scanTextAndBlock(
+    content,
     filePath,
-    [
-      "🚫 Blocked: file contains sensitive data",
-      "",
-      ...findingsToLines(findings),
-    ],
-    buildAllowHints(`please read ${forOutput(filePath)}`, findings),
+    "🚫 Blocked: file contains sensitive data",
+    `please read ${forOutput(filePath)}`,
+    allowTags,
   );
 }
 
@@ -892,20 +854,13 @@ process.stdin.on("end", () => {
 
     scanEnvironment(environmentNamed(command, refs), allowTags);
 
-    const cmdFindings = dedupeFindings(
-      applyAllowTags(scan(command, ENABLED_CATEGORIES), allowTags),
+    scanTextAndBlock(
+      command,
+      "bash command",
+      "🚫 Blocked: bash command contains sensitive data",
+      "please run the command",
+      allowTags,
     );
-    if (cmdFindings.length > 0) {
-      block(
-        "bash command",
-        [
-          "🚫 Blocked: bash command contains sensitive data",
-          "",
-          ...findingsToLines(cmdFindings),
-        ],
-        buildAllowHints("please run the command", cmdFindings),
-      );
-    }
 
     scanPathsLiteralsFirst(refs.paths, allowTags);
     // `rg PATTERN` and `grep -r PATTERN` name nothing and print from the working
@@ -931,20 +886,13 @@ process.stdin.on("end", () => {
     for (const value of collectCommandFields(input)) {
       // What the command says, as well as what it opens. A key in an argument
       // list is a key whichever tool runs the shell.
-      const commandFindings = dedupeFindings(
-        applyAllowTags(scan(value, ENABLED_CATEGORIES), allowTags),
+      scanTextAndBlock(
+        value,
+        `${tool} command`,
+        "🚫 Blocked: tool command contains sensitive data",
+        "please run the command",
+        allowTags,
       );
-      if (commandFindings.length > 0) {
-        block(
-          `${tool} command`,
-          [
-            "🚫 Blocked: tool command contains sensitive data",
-            "",
-            ...findingsToLines(commandFindings),
-          ],
-          buildAllowHints("please run the command", commandFindings),
-        );
-      }
 
       const refs = extractCommandRefs(value);
       // Code is not a command line: `print(open("secrets").read())` has no
