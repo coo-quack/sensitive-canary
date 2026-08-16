@@ -245,7 +245,7 @@
     {
       "id": "pii-email",
       "description": "Email Address",
-      "regex": "(?<!\\b(?:ssh|scp|rsync|sftp)\\b(?:[ \\t]+[^\\s@,;()]+){0,2}[ \\t]+)\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?![0-9]+\\.)(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
+      "regex": "(?<!\\b(?:ssh|scp|rsync|sftp)\\b(?:[ \\t]+[^\\s@,;()]+){0,2}[ \\t]+)\\b(?!(?:git|hg|svn)@)[A-Za-z0-9._%+-]{1,64}@(?![0-9]+\\.)(?!example\\.(?:com|net|org|edu)\\b)(?![A-Za-z0-9.-]{0,255}\\.(?:test|invalid|localhost|local|example)\\b)(?:[A-Za-z0-9-]+\\.)+(?!(?:png|jpg|jpeg|gif|webp|svg|ico|bmp|tiff|tif|css|json|html|htm|xml|yaml|yml|lock|woff|ttf|otf|eot|webm|wav|flac|pdf|zip|tgz|bz|xz)(?![A-Za-z]))[A-Za-z]{2,}(?![A-Za-z0-9.-])(?!:\\S)",
       "category": "pii"
     },
     {

@@ -551,6 +551,37 @@
   documents 16–64 byte keys; `anthropic-key` asked for 95 characters after the
   prefix where the format has 101, truncating the match; and `twilio-sid` had no
   rule for the API Key SID at all
+- Start the scan clock when the payload arrives, not when the process does.
+  Both the five-second file deadline and the scan budget began at module load
+  and counted the wait for stdin against themselves, so a slow handover spent
+  the whole allowance before a file was read: six seconds of delay and nothing
+  was scanned, on an exit code of 0
+- Stop a compaction summary and a skill body from carrying an allow tag. Both
+  are written by the runtime with the user's role, and neither is anyone asking
+  for anything: a summary re-injects earlier turns, so a tag discussed at any
+  point in a conversation came back armed, and a meta line carries file content,
+  so writing a `SKILL.md` was enough to lift every check
+- Treat a fence that never closes as quoting, the way an unclosed synthetic
+  element already was. A paste cut short is still a paste
+- Return a quarter of a value in the block reason rather than eight characters
+  of it. The reason is written to stderr, which is where Claude reads it, so it
+  reaches the API the block exists to keep the value from — of a nine-character
+  password, eight characters were being handed back
+- Skip binaries when a directory is swept, while still scanning one in full when
+  it is named outright. Nobody asked for the files a directory sweep picks up,
+  and a folder of images cost three seconds and reported the compressed bytes as
+  email addresses. Measured: 8 MiB of images, 3,103ms to 131ms
+- Require a NUL imbalance to be near-total before reading a file as UTF-16. An
+  eight-to-one ratio read four real binaries out of seventeen thousand as text,
+  and a key sitting in a JPEG's bytes went unfound because the file decoded to
+  nonsense
+- Stop reading a reference to a value in code as the value. `env-assignment`
+  matched `process.env.API_TOKEN`, `user.password_digest` and `self.api_key`;
+  two in five of the distinct values it matched across thirty thousand real
+  files were one of these
+- Stop reading a Retina asset filename as an email address. `logo@2x.png`
+  satisfied the pattern because `png` is two or more letters. Thirty asset
+  extensions are excluded, none of which is a country code
 - Match card numbers at every length their brand issues. ISO/IEC 7812 allows
   10–19 digits and the pattern encoded one length per brand, so 19-digit
   UnionPay, JCB and Discover cards, 13-digit Visa, and every Maestro card went
@@ -604,6 +635,17 @@
 - Run CI on pushes to `main` and `develop`, not only on pull requests. The
   commit a merge makes belongs to no PR, so nothing built it: two branches that
   are green apart can still be red together
+- The release could not publish, again, and for a new reason. The smoke test now
+  starts each hook through `eval`, and under the `bash -e {0}` GitHub runs every
+  step with, errexit fires inside the pipeline's subshell: a hook exiting 2 on
+  purpose reached the assertion as 1, so all eight blocking assertions failed.
+  `set -uo pipefail` does not clear `-e`, which arrives from the invocation.
+  Measured: without `set +e`, eight errors and the step exits 1
+- Make every step after the publish recoverable. The job was gated on
+  `should_release`, which npm alone decides, so a failure after the publish left
+  the version on npm with no GitHub Release and no catalog sync, and a re-run
+  skipped the job entirely. Only the publish is conditional now; the tag, the
+  release and the sync are idempotent and run every time
 - Run the release smoke test against the commands `hooks/hooks.json` declares,
   as well as against `dist/`. The manifest starts `src/*.ts` under type
   stripping, which is what a plugin install runs and what the gate only checked
