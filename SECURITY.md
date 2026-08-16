@@ -47,7 +47,7 @@ sensitive-canary is a best-effort guard, not a guaranteed security boundary:
 
 All scanned content is processed in memory and immediately discarded. Detected findings are:
 
-- Displayed in the terminal (redacted: first 4 + last 4 chars, middle masked as `****`)
+- Displayed in the terminal, redacted to at most a quarter of the value: an eighth from each end, never more than four characters a side, and nothing at all below eight characters. A twenty-character key shows two characters at each end (`AK****RS`), which is enough to tell two findings apart and not enough to be one
 - Returned to Claude as a structured block reason (redacted)
 - Never written to disk or sent anywhere
 

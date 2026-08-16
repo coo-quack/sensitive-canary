@@ -2,6 +2,25 @@
 
 ## v0.8.0 (2026-08-16)
 
+### Breaking changes
+
+- **Two allow tags no longer add up.** Tags were resolved per category with the
+  first occurrence winning; the last tag now replaces the earlier ones whole.
+  `[allow-secret] [allow-pii]` resolves to the second tag alone, where in 0.7.0
+  it granted both — **`[allow-all]` is how both are asked for**. The change is
+  the other direction being wrong: `[allow-all]` narrowed to `[allow-secret]`
+  went on allowing PII, which is the opposite of what narrowing means and the
+  unsafe one of the two possible mistakes
+- **A tag written by anything other than a person no longer counts.** A line the
+  runtime writes under the user's role — a background task reporting back, most
+  often — is skipped, so an agent's report that quotes `[allow-all]` no longer
+  lifts the guard for the next tool call. A workflow that relied on a tag
+  arriving from a subagent's output has to write the tag in a prompt instead
+- **A tag between two fenced blocks is read as quoted.** Text from the first
+  fence marker in a message to the last is quoting, where before the markers
+  were paired off and the span between the second and third read as typed. A tag
+  before the first fence or after the last still counts
+
 ### Features
 
 - Parse Bash commands as shell syntax rather than by splitting on whitespace.
@@ -109,6 +128,51 @@
 
 ### Fixes
 
+- Read a file both ways when its encoding is a guess. Eight NUL pairs — sixteen
+  bytes — in front of a UTF-8 file were enough for `detectUtf16` to call it
+  UTF-16, and the rest of it then decoded into characters no rule matches. The
+  counts cannot separate the two cases: a UTF-8 file with a few NULs on one side
+  of its pairs looks exactly like a page of Japanese UTF-16, where `一` (U+4E00)
+  puts a NUL on the minority side. A verdict that did not come from a
+  byte-order mark is marked as a guess and both readings are scanned. The same
+  cap was excluding real documents: thirty lines of Japanese with one `一`
+  apiece were not read as UTF-16 at all
+- Keep an `.env` in a swept directory whatever its bytes look like. The sweep
+  skips binaries so that a folder of images is not ground through every rule,
+  and that skip ran before the name guard, so eight bytes of NUL at the head of
+  a `.env` took the strongest guard in the tool out of the sweep
+- Do not honour a tag written by anything other than a person. A background task
+  reporting back arrives under the user's role carrying an agent's prose, and
+  prose about these tags was enough — a report quoting the documentation armed
+  the guard it was describing. The transcript says which lines are which, and
+  that is what the reader asks now
+- Read the run from the first fence marker to the last as quoted. Pairing the
+  markers off left the span between the second and third readable as typed, and
+  a pasted markdown document with a code block inside it puts a quoted tag in
+  exactly that span
+- Scan somewhere when a search names no path. `rg pattern`, `grep -r pattern`
+  and `Grep {pattern}` with no `path` all print from the working directory, and
+  with no field to collect there was nothing to scan. Judged on names alone: a
+  directory nobody named is every repository anyone searches, and reading their
+  contents stopped a plain `rg TODO` in four of twelve checkouts
+- Correct the boundaries of six rules. Discover's `65` range stopped at 6589;
+  the card alternatives all assumed groups of four, where Amex prints 4-6-5 and
+  Diners 4-6-4; Square's exact length meant one character over the guess stopped
+  the token matching at all rather than matching partly; `twilio-sid` had no
+  word boundary, so a certificate fingerprint was an Account SID;
+  `telegram-bot-token` capped its secret part at 40 and went invisible at 41;
+  and `pii-email` excluded `zip` at the TLD position as though a list of file
+  extensions were a list of domains
+- Stop treating every dotted value as a reference to code. `isNotSecretShaped`
+  waved through anything shaped `a.b.c`, and dotted credentials exist. What
+  separates them is that a name is words: measured over 147,643 dotted
+  identifiers from source on this machine, 0.06% fall below a mean word length
+  of 2.5, and the ones that do are JWTs
+- Redact by code point. Slicing by code unit cut a surrogate pair in half and
+  wrote a lone surrogate to the terminal
+- Match the placeholder rule's connection-string pattern once rather than three
+  times, and bound its scheme: an unbounded `\w+` in front of a literal that is
+  usually absent is quadratic in the length of a value someone else writes
 - Make the email rule near-linear on its worst input. The local part
   (`[A-Za-z0-9._%+-]+`) spans the word boundary at every dot, so on a long run
   of digits and separators with no `@` — a log full of IP addresses or version
