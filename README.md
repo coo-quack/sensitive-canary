@@ -26,7 +26,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **74 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **76 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
 - **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP, EU/KR and Chinese postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough. RFC 1918 private addresses are not matched at all — they are non-routable, they identify nothing outside the network they belong to, and they fill the inventories, manifests and ssh configs this tool is most often pointed at
 - **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`, `user@host:path`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work. A template is exempt only when its contents can be read whole. One holding a NUL byte, running past the per-file cut, reached after the call's budget or deadline, or that is not a regular file at all is blocked on its name, since the contents are what the exemption relies on. A template name that exists on no disk is not blocked — there is nothing to read and nothing to leak
@@ -357,7 +357,7 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 
 ## Detection rules
 
-### Secrets (50 rules)
+### Secrets (52 rules)
 
 | Rule ID | Description |
 |---|---|
@@ -375,6 +375,8 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `aws-access-key` | AWS Access Key ID |
 | `gcp-api-key` | Google Cloud API Key |
 | `private-key` | PEM Private Key (RSA / EC / DSA / PGP / OpenSSH) |
+| `private-key-base64` | PEM private key that has been base64-encoded — how one appears in a kubeconfig, a Kubernetes Secret or a Terraform state, where the `-----BEGIN` header never shows in the text |
+| `url-basic-auth` | Credentials in the userinfo field of an http(s) URL — a git remote, a `.netrc`, a private registry, a `curl` invocation. RFC 3986 deprecates the form for this reason |
 | `github-pat` | GitHub Personal Access Token |
 | `github-fine-grained` | GitHub Fine-Grained Token |
 | `gitlab-pat` | GitLab Personal Access Token |
