@@ -14,7 +14,7 @@ import {
   IN_PLACE_EDITORS,
   isInPlaceFlag,
   PATTERN_SUPPLYING_FLAGS,
-} from "../bash-commands.ts";
+} from "../command-tables.ts";
 import {
   collectPathFields,
   isWritingTool,

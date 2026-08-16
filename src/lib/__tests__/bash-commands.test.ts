@@ -13,10 +13,10 @@
 // deletion, and only the pair covers both directions.
 
 import { describe, expect, it } from "vitest";
+import { extractCommandRefs } from "../bash-commands.ts";
 import {
   ARGUMENT_ONLY_COMMANDS,
   COUNT_ONLY_COMMANDS,
-  extractCommandRefs,
   FILE_READ_COMMANDS,
   GIT_GLOBAL_FLAGS_WITH_OPERAND,
   GIT_READ_SUBCOMMANDS,
@@ -26,7 +26,7 @@ import {
   POSIX_SHELLS,
   WRAPPER_COMMANDS,
   WRITE_TARGET_FLAGS,
-} from "../bash-commands.ts";
+} from "../command-tables.ts";
 
 const paths = (command: string): string[] => extractCommandRefs(command).paths;
 

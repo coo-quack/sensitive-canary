@@ -148,6 +148,61 @@ export function useFixtureDir(label: string): FixtureWriter {
   });
 }
 
+// A transcript file, in the shape Claude Code writes: one JSON object per line.
+//
+// Beside the fixture directory rather than inside each test file, because four
+// files were writing transcripts and three of them had their own copy of this.
+// A tag reaching the hook from somewhere the user did not type it is the defect
+// these are for, and a second implementation is a second thing to keep right.
+export interface TranscriptWriter {
+  // Plain user messages, in order. The last one is what the hook reads.
+  (userMessages: string[]): string;
+  // Rows written out as given, for the lines the runtime writes itself: a
+  // compaction summary, a meta line, a task notification.
+  raw: (rows: unknown[]) => string;
+  // Text turns and tool results interleaved, to say what came after what.
+  withToolResults: (
+    entries: Array<{ text: string } | { toolResult: string }>,
+  ) => string;
+}
+
+export function useTranscripts(fixture: FixtureWriter): TranscriptWriter {
+  let sequence = 0;
+  const writeLines = (lines: string[]): string =>
+    fixture(`transcript-${++sequence}.jsonl`, lines.join("\n"));
+
+  const plain = (userMessages: string[]): string =>
+    writeLines(
+      userMessages.map((content) =>
+        JSON.stringify({ type: "user", message: { role: "user", content } }),
+      ),
+    );
+
+  return Object.assign(plain, {
+    raw: (rows: unknown[]): string =>
+      writeLines(rows.map((r) => JSON.stringify(r))),
+    withToolResults: (
+      entries: Array<{ text: string } | { toolResult: string }>,
+    ): string =>
+      writeLines(
+        entries.map((entry) =>
+          "text" in entry
+            ? JSON.stringify({
+                type: "user",
+                message: { role: "user", content: entry.text },
+              })
+            : JSON.stringify({
+                type: "user",
+                message: {
+                  role: "user",
+                  content: [{ type: "tool_result", content: entry.toolResult }],
+                },
+              }),
+        ),
+      ),
+  });
+}
+
 // Assembled so the full strings never appear in a test file's source. The
 // integration test deliberately uses neither: a canonical key is recited from
 // memory by a live session, which its leak assertion cannot tell from a leak.
