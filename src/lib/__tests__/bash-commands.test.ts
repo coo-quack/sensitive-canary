@@ -105,6 +105,46 @@ describe("commands whose first operand is a pattern or a script", () => {
   );
 });
 
+// A searcher given no file searches where it runs. `rg PATTERN` is the ordinary
+// way to search a repository and names nothing, so there is no operand to
+// collect and the tree it prints from went unaccounted for.
+describe("a search that names no file", () => {
+  const searchesCwd = (command: string): boolean =>
+    extractCommandRefs(command).searchesWorkingDirectory;
+
+  it.each(["rg", "ag", "ack", "ugrep"])("%s alone searches here", (cmd) => {
+    expect(searchesCwd(`${cmd} pattern`)).toBe(true);
+  });
+
+  it.each(["rg", "ag", "ack", "ugrep"])(
+    "%s with a path named does not",
+    (cmd) => {
+      expect(searchesCwd(`${cmd} pattern src/`)).toBe(false);
+    },
+  );
+
+  // `grep` reads stdin unless it is asked to recurse, so the flag is what puts
+  // it in this class, one command at a time.
+  it.each(["grep -r", "grep -R", "grep --recursive", "grep -rn", "grep -in"])(
+    "`%s pattern` is judged on whether it recurses",
+    (prefix) => {
+      expect(searchesCwd(`${prefix} pattern`)).toBe(prefix !== "grep -in");
+    },
+  );
+
+  it("a plain grep reads stdin rather than the tree", () => {
+    expect(searchesCwd("grep pattern")).toBe(false);
+  });
+
+  it("a recursive grep with a path named does not search here", () => {
+    expect(searchesCwd("grep -r pattern src/")).toBe(false);
+  });
+
+  it("a flag after -- is an operand, not a request to recurse", () => {
+    expect(searchesCwd("grep pattern -- -r")).toBe(false);
+  });
+});
+
 describe("wrappers", () => {
   it.each([...WRAPPER_COMMANDS])(
     "%s is stepped past to reach the command it runs",

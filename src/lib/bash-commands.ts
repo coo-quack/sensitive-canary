@@ -374,6 +374,40 @@ export interface CommandRefs {
   envVars: string[];
   // Whether the command dumps the whole environment (bare `env` / `printenv`).
   dumpsEnvironment: boolean;
+  // Whether the command searches the working directory because it was given no
+  // file to search. `rg PATTERN` is the ordinary way to search a repository and
+  // names nothing, so there is no operand to collect and the whole tree it
+  // prints from went unscanned.
+  searchesWorkingDirectory: boolean;
+}
+
+// Searchers that walk the working directory when handed no path. The `grep`
+// family is not here: it reads stdin unless `-r` is given, and that flag is
+// what puts it in this class for the length of one command.
+const RECURSIVE_BY_DEFAULT = new Set(["rg", "ag", "ack", "ugrep"]);
+
+const GREP_FAMILY = new Set([
+  "grep",
+  "egrep",
+  "fgrep",
+  "zgrep",
+  "zegrep",
+  "zfgrep",
+]);
+
+// `-r`, `-R`, `--recursive`, and the letter inside a bundle such as `-rn`. A
+// bundle is read letter by letter because `grep -rn PATTERN` is how it is
+// usually typed.
+function asksForRecursion(operands: ShellToken[]): boolean {
+  for (const tok of operands) {
+    if (tok.redirect) continue;
+    const v = tok.value;
+    if (v === "--recursive" || v === "--dereference-recursive") return true;
+    if (v === "--") break;
+    if (!v.startsWith("-") || v.startsWith("--") || v.length < 2) continue;
+    if (/[rR]/.test(v.slice(1))) return true;
+  }
+  return false;
 }
 
 // Fold one set of refs into another. A command line yields refs from several
@@ -384,6 +418,8 @@ function mergeRefs(into: CommandRefs, refs: CommandRefs): void {
   into.paths.push(...refs.paths);
   into.envVars.push(...refs.envVars);
   into.dumpsEnvironment = into.dumpsEnvironment || refs.dumpsEnvironment;
+  into.searchesWorkingDirectory =
+    into.searchesWorkingDirectory || refs.searchesWorkingDirectory;
 }
 
 // What this hook knows about how a command treats its operands.
@@ -643,7 +679,12 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
 // Everything a Bash command reveals that the hook can inspect before it runs:
 // the files whose contents it may print, and the environment it may expose.
 export function extractCommandRefs(command: string, depth = 0): CommandRefs {
-  const refs: CommandRefs = { paths: [], envVars: [], dumpsEnvironment: false };
+  const refs: CommandRefs = {
+    paths: [],
+    envVars: [],
+    dumpsEnvironment: false,
+    searchesWorkingDirectory: false,
+  };
 
   if (depth > MAX_NESTING_DEPTH) return refs;
 
@@ -667,13 +708,19 @@ export function extractCommandRefs(command: string, depth = 0): CommandRefs {
     paths: [...new Set(refs.paths)],
     envVars: [...new Set(refs.envVars)],
     dumpsEnvironment: refs.dumpsEnvironment,
+    searchesWorkingDirectory: refs.searchesWorkingDirectory,
   };
 }
 
 // File paths one segment of a command line may print, plus anything found inside
 // inline program text it carries.
 function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
-  const refs: CommandRefs = { paths: [], envVars: [], dumpsEnvironment: false };
+  const refs: CommandRefs = {
+    paths: [],
+    envVars: [],
+    dumpsEnvironment: false,
+    searchesWorkingDirectory: false,
+  };
 
   const start = findCommandIndex(tokens);
   const cmdToken = tokens[start];
@@ -878,6 +925,18 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     ) {
       refs.paths.push(tok.value);
     }
+  }
+
+  // A searcher handed no file searches where it is run. `rg PATTERN` and
+  // `grep -r PATTERN` are the ordinary forms and name nothing, so the loop above
+  // collects the pattern and stops with no path — and the tree they print from
+  // is the working directory. The caller is what knows which directory that is.
+  if (
+    refs.paths.length === 0 &&
+    (RECURSIVE_BY_DEFAULT.has(cmd) ||
+      (GREP_FAMILY.has(cmd) && asksForRecursion(operands)))
+  ) {
+    refs.searchesWorkingDirectory = true;
   }
 
   return refs;

@@ -79,6 +79,45 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.blocked).toBe(true);
     });
 
+    // `Grep {pattern}` with no `path` is the form Claude reaches for first, and
+    // it searches wherever the tool runs. With no field to collect there was
+    // nothing to scan, so the directory the search prints from was the one
+    // directory never looked at.
+    it("blocks a pathless search when a .env sits where it runs", () => {
+      const dir = writeFixture.path("grep-nopath-env");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, ".env"), `TOKEN=${TOKEN_VALUE}\n`, "utf8");
+      const result = runToolHook("Grep", { pattern: "TODO" }, { cwd: dir });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // Names only, and this is the case that says so. A directory nobody named is
+    // every repository anyone searches; content-scanning those stopped a plain
+    // `rg TODO` in a third of the checkouts it was measured against, because a
+    // changelog quoting a connection string is enough.
+    it("allows a pathless search over ordinary files that mention secrets", () => {
+      const dir = writeFixture.path("grep-nopath-prose");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "CHANGELOG.md"),
+        `- redact a key such as ${AWS_KEY} in the terminal\n`,
+        "utf8",
+      );
+      const result = runToolHook("Grep", { pattern: "TODO" }, { cwd: dir });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // A path that was named keeps the content scan: the user pointed at the
+    // directory, and reading it is answering what they asked.
+    it("still content-scans a directory the search names", () => {
+      const dir = writeFixture.path("grep-named-prose");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "notes.md"), `key=${AWS_KEY}\n`, "utf8");
+      const result = runGrepHook(dir);
+      expect(result.exitCode).toBe(2);
+    });
+
     // The other direction, so the case above is not passing on the sweep having
     // stopped skipping binaries altogether.
     it("still allows a directory of binaries with no env name", () => {

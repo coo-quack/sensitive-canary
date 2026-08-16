@@ -83,6 +83,21 @@ interface TranscriptLine {
   message?: Message;
 }
 
+// Whether a tool is searching, and named nothing to search. `Grep` is the one
+// Claude Code ships; an MCP server offering the same thing is recognised by the
+// shape of its input rather than by name, since the names are the server's to
+// choose. A pattern with no path is a search of the working directory.
+function searchesWithoutAPath(
+  tool: string,
+  input: Record<string, unknown>,
+): boolean {
+  const searchTerm =
+    typeof input["pattern"] === "string" ||
+    typeof input["query"] === "string" ||
+    typeof input["regex"] === "string";
+  return searchTerm && (tool === "Grep" || tool.startsWith("mcp__"));
+}
+
 // Whether a transcript line records something a person typed.
 //
 // The field is only present on lines that have one, so a line without it is
@@ -635,16 +650,36 @@ function isRegularFile(candidate: string): boolean {
 function scanIfRegularFile(
   candidate: string | undefined,
   allowTags: Set<string>,
+  options: { namesOnly?: boolean } = {},
 ): void {
   if (!candidate) return;
   for (const p of expandCandidate(candidate)) {
-    if (isRegularFile(p)) scanFile(p, allowTags);
-    else for (const child of filesDirectlyUnder(p)) scanFile(child, allowTags);
+    if (isRegularFile(p)) {
+      if (options.namesOnly)
+        blockUnreadEnvFile(p, allowTags, SEARCH_ROOT_ENV_REASON);
+      else scanFile(p, allowTags);
+      continue;
+    }
+    for (const child of filesDirectlyUnder(p)) {
+      if (options.namesOnly)
+        blockUnreadEnvFile(child, allowTags, SEARCH_ROOT_ENV_REASON);
+      else scanFile(child, allowTags);
+    }
   }
 }
 
+const UNREAD_ENV_REASON =
+  "Its contents were not read — it is not a regular file, or the scan for this call had already stopped — so the name is what decides.";
+
+const SEARCH_ROOT_ENV_REASON =
+  "The search names no path, so it runs here and prints from whatever it matches. This file was not read; it is the name that decides.";
+
 // A `.env` file that will not be read is judged on its name, template or not.
-function blockUnreadEnvFile(filePath: string, allowTags: Set<string>): void {
+function blockUnreadEnvFile(
+  filePath: string,
+  allowTags: Set<string>,
+  reason: string = UNREAD_ENV_REASON,
+): void {
   if (!isEnvName(filePath) || !ENABLED_CATEGORIES.has("secret")) return;
   // A path that names nothing has nothing to leak. `cat .env.example` in a
   // checkout without one is an ordinary command, and the plain `.env` guard
@@ -653,11 +688,7 @@ function blockUnreadEnvFile(filePath: string, allowTags: Set<string>): void {
   if (allowTags.has("secret") || allowTags.has("all")) return;
   block(
     filePath,
-    [
-      ENV_BLOCK_REASON,
-      "",
-      "Its contents were not read — it is not a regular file, or the scan for this call had already stopped — so the name is what decides.",
-    ],
+    [ENV_BLOCK_REASON, "", reason],
     buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
   );
 }
@@ -1147,6 +1178,12 @@ process.stdin.on("end", () => {
     }
 
     scanPathsLiteralsFirst(refs.paths, allowTags);
+    // `rg PATTERN` and `grep -r PATTERN` name nothing and print from the working
+    // directory. Judged on names alone, for the reason set out where the same
+    // thing is done for the search tools.
+    if (refs.searchesWorkingDirectory) {
+      scanIfRegularFile(baseDirectory, allowTags, { namesOnly: true });
+    }
 
     process.exit(0);
   }
@@ -1203,8 +1240,24 @@ process.stdin.on("end", () => {
     // what it is handed — so the command fields above are read whatever the name
     // says, and only the path fields are exempt.
     if (!isWritingTool(tool)) {
-      for (const candidate of collectPathFields(input)) {
+      const candidates = collectPathFields(input);
+      for (const candidate of candidates) {
         scanIfRegularFile(candidate, allowTags);
+      }
+      // A search tool given no path searches where it is run, and that is its
+      // ordinary form: `Grep {pattern}` with no `path` is what Claude reaches
+      // for first. With no field to collect there is nothing to scan, so the
+      // directory the search prints from is the one directory never looked at.
+      //
+      // Names only. A directory the user pointed at is one they asked about, and
+      // reading its files is answering the question they asked; a directory
+      // nobody named is every repository anyone searches, and content-scanning
+      // those stopped an ordinary `rg TODO` in a third of the checkouts on this
+      // machine — a README quoting a connection string is enough. The name guard
+      // keeps the case worth keeping, since a `.env` sitting in the search root
+      // is both the likeliest leak and the one no pattern has to match for.
+      if (candidates.length === 0 && searchesWithoutAPath(tool, input)) {
+        scanIfRegularFile(baseDirectory, allowTags, { namesOnly: true });
       }
     }
   }
