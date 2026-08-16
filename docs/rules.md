@@ -324,6 +324,7 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | Name | Algorithm |
 |------|-----------|
 | `luhn` | Luhn checksum, and not a card number the payment gateways publish as test data |
+| `aws-key` | Not a key ending in `EXAMPLE`, which is how AWS writes every key in its documentation |
 | `phone-jp` | Ten or eleven digits beginning with 0, excluding the 0120 and 0800 freephone prefixes, which belong to a business |
 | `mynumber-jp` | Japanese Individual Number (My Number) |
 | `nir-fr` | French NIR / Social Security Number |

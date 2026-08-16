@@ -338,7 +338,7 @@ User rules support the same fields as built-in rules:
 
 Available validators (referenced by name in the `validate` field):
 
-`luhn`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`
+`luhn`, `aws-key`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`
 
 ### Overriding the context window globally
 

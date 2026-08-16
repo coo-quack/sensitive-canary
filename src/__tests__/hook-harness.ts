@@ -151,7 +151,13 @@ export function useFixtureDir(label: string): FixtureWriter {
 // Assembled so the full strings never appear in a test file's source. The
 // integration test deliberately uses neither: a canonical key is recited from
 // memory by a live session, which its leak assertion cannot tell from a leak.
-export const AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
+//
+// Not AWS's documented `…EXAMPLE` key, which the `aws-key` validator now treats
+// as the documentation it is. A fixture that must be blocked has to be a shape
+// the rule still reports.
+export const AWS_KEY = ["AKIA", "3QF7TZ9KLMN2", "PQRS"].join("");
+// AWS's own, which must not be reported.
+export const AWS_DOC_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
 export const TOKEN_VALUE = [
   "ghp_",
   "1234567890abcdefghij",

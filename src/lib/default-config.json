@@ -5,7 +5,8 @@
       "id": "aws-access-key",
       "description": "AWS Access Key ID",
       "regex": "\\b(A3T[A-Z0-9]|AKIA|ABIA|ACCA|APKA|ASCA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\\b",
-      "category": "secret"
+      "category": "secret",
+      "validate": "aws-key"
     },
     {
       "id": "gcp-api-key",

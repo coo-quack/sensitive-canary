@@ -579,6 +579,13 @@
   matched `process.env.API_TOKEN`, `user.password_digest` and `self.api_key`;
   two in five of the distinct values it matched across thirty thousand real
   files were one of these
+- Read AWS's documented keys as documentation. AWS writes `EXAMPLE` where the
+  random part would end — `AKIAIOSFODNN7EXAMPLE` and its siblings — and those
+  appear in every setup guide and in every README that copies one, where a block
+  reads exactly like a block on a live key. The new `aws-key` validator rejects
+  the suffix; a real key whose last seven characters spell it is one in
+  thirty-six to the seventh. This project's own README, installation page and
+  getting-started page were among the files it made unreadable
 - Stop reading a Retina asset filename as an email address. `logo@2x.png`
   satisfied the pattern because `png` is two or more letters. Thirty asset
   extensions are excluded, none of which is a country code

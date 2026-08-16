@@ -28,6 +28,10 @@ import {
   validateSpanishNIF,
 } from "../rules.ts";
 
+// Not AWS's documented `…EXAMPLE` key, which the `aws-key`
+// validator reads as documentation rather than a credential.
+const AWS_KEY = ["AKIA", "3QF7TZ9KLMN2", "PQRS"].join("");
+
 // The shipped rules, read from disk the way rules.ts reads them, so the cases
 // generated below walk what is released rather than a list kept in step by hand.
 const DEFAULT_RULES: RuleConfig[] = (
@@ -127,7 +131,7 @@ describe("redact", () => {
   });
 
   it("shows the ends, so two findings can be told apart", () => {
-    expect(redact("AKIAIOSFODNN7EXAMPLE")).toBe("AK****LE");
+    expect(redact("AKIAQQQQQQQQQQQQQAAA")).toBe("AK****AA");
     expect(redact("AKIAQQQQQQQQQQQQQZZZ")).toBe("AK****ZZ");
   });
 });
@@ -136,7 +140,7 @@ describe("redact", () => {
 
 describe("scan — secrets", () => {
   it("detects an AWS Access Key ID", () => {
-    const findings = scan("key=AKIAIOSFODNN7EXAMPLE");
+    const findings = scan(`key=${AWS_KEY}`);
     expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
   });
 
@@ -540,7 +544,7 @@ describe("parseCategories", () => {
 // ── scan: category filter ─────────────────────────────────────────────────────
 
 describe("scan — category filter", () => {
-  const text = "key=AKIAIOSFODNN7EXAMPLE card: 4532015112830366";
+  const text = `key=${AWS_KEY} card: 4532015112830366`;
 
   it("scans all categories by default", () => {
     const findings = scan(text);
@@ -1084,7 +1088,7 @@ describe("a value written to be replaced", () => {
   // The list is deliberately short of `example`: AWS documents a key that ends
   // in it, and that key is still a key.
   it.each([
-    "key=AKIAIOSFODNN7EXAMPLE",
+    `key=${AWS_KEY}`,
     "aws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
     "POSTGRES_PASSWORD: Sup3rS3cretDbPassw0rd",
     "export GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
@@ -1615,7 +1619,7 @@ describe("what must still be a finding", () => {
       "contact alice@analytical-engines.org about the invoice",
       "a real address",
     ],
-    ["key=AKIAIOSFODNN7EXAMPLE", "an AWS key"],
+    [`key=${AWS_KEY}`, "an AWS key"],
     ["POSTGRES_PASSWORD: Sup3rS3cretDbPassw0rd", "a compose password"],
     ['  "client_secret": "Xk9mP2qR7vL4nW1sYj3c"', "a JSON secret"],
     [
@@ -1637,7 +1641,7 @@ describe("what must still be a finding", () => {
 // find anything.
 describe("every rule catches something", () => {
   const EXAMPLES: Record<string, string> = {
-    "aws-access-key": "AKIAIOSFODNN7EXAMPLE",
+    "aws-access-key": `${AWS_KEY}`,
     "gcp-api-key": `AIzaSyC${"A".repeat(32)}`,
     "github-pat": `ghp_${"A".repeat(36)}`,
     "github-fine-grained": `github_pat_${"A".repeat(82)}`,
@@ -1974,11 +1978,22 @@ describe("the credential shapes the rules used to miss", () => {
 
   describe("aws-access-key knows the prefixes it was missing", () => {
     it.each(["ABIA", "ACCA", "APKA", "ASCA", "AKIA"])("%s", (prefix) => {
-      expect(hits(`${prefix}IOSFODNN7EXAMPLE`, "aws-access-key")).toBe(true);
+      expect(hits(`${prefix}3QF7TZ9KLMN2PQRS`, "aws-access-key")).toBe(true);
     });
 
     it("a four-letter run that is not a prefix is not a key", () => {
-      expect(hits("AZZAIOSFODNN7EXAMPLE", "aws-access-key")).toBe(false);
+      expect(hits("AZZA3QF7TZ9KLMN2PQRS", "aws-access-key")).toBe(false);
+    });
+
+    // AWS writes `EXAMPLE` where the random part would end, in every setup
+    // guide it publishes. A block on one of those reads exactly like a block on
+    // a live key, and this project's own documentation is full of them.
+    it.each([
+      ["the documented access key", ["AKIA", "IOSFODNN7", "EXAMPLE"].join("")],
+      ["the documented session key", ["ASIA", "IOSFODNN7", "EXAMPLE"].join("")],
+      ["another from the docs", ["AKIA", "I44QH8DHB", "EXAMPLE"].join("")],
+    ])("%s is documentation, not a credential", (_label, key) => {
+      expect(hits(key, "aws-access-key")).toBe(false);
     });
   });
 
@@ -2062,7 +2077,7 @@ describe("the scan budget spans every call in the invocation", () => {
 
   it("a call made after the budget is spent throws rather than returning clean", () => {
     beginScanBudget(0);
-    expect(() => scan("key=AKIAIOSFODNN7EXAMPLE")).toThrow(ScanBudgetExceeded);
+    expect(() => scan(`key=${AWS_KEY}`)).toThrow(ScanBudgetExceeded);
   });
 
   it("repeated calls draw on one budget", () => {
@@ -2077,7 +2092,7 @@ describe("the scan budget spans every call in the invocation", () => {
 
   it("with no budget begun, a call gets the whole of one", () => {
     beginScanBudget(null);
-    expect(scan("key=AKIAIOSFODNN7EXAMPLE").map((f) => f.ruleId)).toContain(
+    expect(scan(`key=${AWS_KEY}`).map((f) => f.ruleId)).toContain(
       "aws-access-key",
     );
   });
@@ -2086,7 +2101,7 @@ describe("the scan budget spans every call in the invocation", () => {
     beginScanBudget(0);
     expect(() => scan("anything")).toThrow(ScanBudgetExceeded);
     beginScanBudget();
-    expect(scan("key=AKIAIOSFODNN7EXAMPLE")).not.toHaveLength(0);
+    expect(scan(`key=${AWS_KEY}`)).not.toHaveLength(0);
   });
 });
 

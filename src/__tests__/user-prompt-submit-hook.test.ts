@@ -67,7 +67,7 @@ describe("user-prompt-submit-hook — the shapes a prompt arrives in", () => {
 });
 
 describe("user-prompt-submit-hook — how much of the prompt is scanned", () => {
-  const KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
+  const KEY = AWS_KEY;
 
   it.each([
     ["8 KB", 8 * 1024],
@@ -179,14 +179,12 @@ describe("user-prompt-submit-hook — allow (exit 0)", () => {
   });
 
   it("passes with [allow-all] tag even if secret is present", () => {
-    const { exitCode } = runHook("[allow-all] my key is AKIAIOSFODNN7EXAMPLE");
+    const { exitCode } = runHook(`[allow-all] my key is ${AWS_KEY}`);
     expect(exitCode).toBe(0);
   });
 
   it("passes with [allow-secret] tag when only secrets are present", () => {
-    const { exitCode } = runHook(
-      "[allow-secret] my key is AKIAIOSFODNN7EXAMPLE",
-    );
+    const { exitCode } = runHook(`[allow-secret] my key is ${AWS_KEY}`);
     expect(exitCode).toBe(0);
   });
 
@@ -200,7 +198,7 @@ describe("user-prompt-submit-hook — allow (exit 0)", () => {
 
 describe("user-prompt-submit-hook — block (exit 2)", () => {
   it("blocks a prompt with an AWS access key", () => {
-    const { exitCode, stderr } = runHook("my key is AKIAIOSFODNN7EXAMPLE");
+    const { exitCode, stderr } = runHook(`my key is ${AWS_KEY}`);
     expect(exitCode).toBe(2);
     expect(stderr).toContain("aws-access-key");
     expect(stderr).toContain("blocked");
@@ -229,7 +227,7 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
   });
 
   it("shows [allow-secret] and [allow-all] hints for a secret", () => {
-    const { stderr } = runHook("key=AKIAIOSFODNN7EXAMPLE");
+    const { stderr } = runHook(`key=${AWS_KEY}`);
     expect(stderr).toContain("[allow-secret]");
     expect(stderr).toContain("[allow-all]");
   });
@@ -242,7 +240,7 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
 
   it("shows both [allow-secret] and [allow-pii] hints when both are detected", () => {
     const { stderr } = runHook(
-      "key=AKIAIOSFODNN7EXAMPLE and email ada@analytical-engines.org",
+      `key=${AWS_KEY} and email ada@analytical-engines.org`,
     );
     expect(stderr).toContain("[allow-secret]");
     expect(stderr).toContain("[allow-pii]");
@@ -250,14 +248,14 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
   });
 
   it("deduplicates the same secret appearing multiple times", () => {
-    const { stderr } = runHook("A=AKIAIOSFODNN7EXAMPLE B=AKIAIOSFODNN7EXAMPLE");
+    const { stderr } = runHook(`A=${AWS_KEY} B=${AWS_KEY}`);
     // aws-access-key finding should appear only once in the output
     const count = (stderr ?? "").split("aws-access-key").length - 1;
     expect(count).toBe(1);
   });
 
   it("[allow-pii] does not bypass a secret block", () => {
-    const { exitCode } = runHook("[allow-pii] my key is AKIAIOSFODNN7EXAMPLE");
+    const { exitCode } = runHook(`[allow-pii] my key is ${AWS_KEY}`);
     expect(exitCode).toBe(2);
   });
 
@@ -270,7 +268,7 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
 
   it("[allow-secret] with mixed content still blocks PII", () => {
     const { exitCode } = runHook(
-      "[allow-secret] key=AKIAIOSFODNN7EXAMPLE and email ada@analytical-engines.org",
+      `[allow-secret] key=${AWS_KEY} and email ada@analytical-engines.org`,
     );
     expect(exitCode).toBe(2);
   });
@@ -278,9 +276,7 @@ describe("user-prompt-submit-hook — block (exit 2)", () => {
 
 describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
   it("[mask-secret] with secret shows the actual tag in message", () => {
-    const { exitCode, stderr } = runHook(
-      "[mask-secret] my key is AKIAIOSFODNN7EXAMPLE",
-    );
+    const { exitCode, stderr } = runHook(`[mask-secret] my key is ${AWS_KEY}`);
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
     expect(stderr).toContain("[mask-secret]");
@@ -298,9 +294,7 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
   });
 
   it("[mask-all] with any sensitive data shows masking not supported", () => {
-    const { exitCode, stderr } = runHook(
-      "[mask-all] my key is AKIAIOSFODNN7EXAMPLE",
-    );
+    const { exitCode, stderr } = runHook(`[mask-all] my key is ${AWS_KEY}`);
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
     expect(stderr).toContain("[mask-all]");
@@ -316,9 +310,7 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
   });
 
   it("[mask-pii] with only secrets falls through to normal block", () => {
-    const { exitCode, stderr } = runHook(
-      "[mask-pii] my key is AKIAIOSFODNN7EXAMPLE",
-    );
+    const { exitCode, stderr } = runHook(`[mask-pii] my key is ${AWS_KEY}`);
     expect(exitCode).toBe(2);
     expect(stderr).not.toContain("prompt masking is not supported");
     expect(stderr).toContain("sensitive data detected");
@@ -330,9 +322,7 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
   });
 
   it("[mask-unknown] with sensitive data falls through to normal block", () => {
-    const { exitCode, stderr } = runHook(
-      "[mask-unknown] my key is AKIAIOSFODNN7EXAMPLE",
-    );
+    const { exitCode, stderr } = runHook(`[mask-unknown] my key is ${AWS_KEY}`);
     expect(exitCode).toBe(2);
     expect(stderr).not.toContain("prompt masking is not supported");
     expect(stderr).toContain("sensitive data detected");
@@ -342,14 +332,14 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
 describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
   it("[allow-secret] before [mask-secret] → passes through (exit 0)", () => {
     const { exitCode } = runHook(
-      "[allow-secret] [mask-secret] my key is AKIAIOSFODNN7EXAMPLE",
+      `[allow-secret] [mask-secret] my key is ${AWS_KEY}`,
     );
     expect(exitCode).toBe(0);
   });
 
   it("[mask-secret] before [allow-secret] → shows masking not supported (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[mask-secret] [allow-secret] my key is AKIAIOSFODNN7EXAMPLE",
+      `[mask-secret] [allow-secret] my key is ${AWS_KEY}`,
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
@@ -357,14 +347,14 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 
   it("[allow-all] before [mask-secret] → passes through (exit 0)", () => {
     const { exitCode } = runHook(
-      "[allow-all] [mask-secret] my key is AKIAIOSFODNN7EXAMPLE",
+      `[allow-all] [mask-secret] my key is ${AWS_KEY}`,
     );
     expect(exitCode).toBe(0);
   });
 
   it("[mask-all] before [allow-secret] → shows masking not supported (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[mask-all] [allow-secret] my key is AKIAIOSFODNN7EXAMPLE",
+      `[mask-all] [allow-secret] my key is ${AWS_KEY}`,
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
@@ -372,7 +362,7 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 
   it("[allow-secret] [mask-pii] → secret allowed, pii masked → masking not supported (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[allow-secret] [mask-pii] key AKIAIOSFODNN7EXAMPLE email ada@analytical-engines.org",
+      `[allow-secret] [mask-pii] key ${AWS_KEY} email ada@analytical-engines.org`,
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
@@ -382,7 +372,7 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 
   it("[mask-pii] [allow-secret] → secret: allow, pii: mask → masking not supported for email (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[mask-pii] [allow-secret] key AKIAIOSFODNN7EXAMPLE email ada@analytical-engines.org",
+      `[mask-pii] [allow-secret] key ${AWS_KEY} email ada@analytical-engines.org`,
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("prompt masking is not supported");
@@ -391,7 +381,7 @@ describe("user-prompt-submit-hook — first-occurrence tag priority", () => {
 
   it("[allow-pii] before [mask-pii] → pii allowed, secret still blocked (exit 2)", () => {
     const { exitCode, stderr } = runHook(
-      "[allow-pii] [mask-pii] key AKIAIOSFODNN7EXAMPLE email ada@analytical-engines.org",
+      `[allow-pii] [mask-pii] key ${AWS_KEY} email ada@analytical-engines.org`,
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("sensitive data detected");
@@ -413,7 +403,7 @@ describe("user-prompt-submit-hook — malformed input", () => {
 
 describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   it("pii-only: passes a prompt containing only secrets", () => {
-    const { exitCode } = runHook("my key is AKIAIOSFODNN7EXAMPLE", {
+    const { exitCode } = runHook(`my key is ${AWS_KEY}`, {
       env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
     });
     expect(exitCode).toBe(0);
@@ -435,7 +425,7 @@ describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("secret-only: still blocks a prompt containing secrets", () => {
-    const { exitCode, stderr } = runHook("my key is AKIAIOSFODNN7EXAMPLE", {
+    const { exitCode, stderr } = runHook(`my key is ${AWS_KEY}`, {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
     expect(exitCode).toBe(2);
@@ -444,7 +434,7 @@ describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
 
   it("unset: blocks both secrets and PII (default behavior)", () => {
     const { exitCode, stderr } = runHook(
-      "key AKIAIOSFODNN7EXAMPLE card 4532015112830366",
+      `key ${AWS_KEY} card 4532015112830366`,
     );
     expect(exitCode).toBe(2);
     expect(stderr).toContain("aws-access-key");
