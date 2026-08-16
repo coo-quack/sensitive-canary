@@ -1,0 +1,101 @@
+name: Deprecate a version
+
+# Deprecating a published version is a write to the registry, which npm gates
+# the same way it gates publishing: this package requires either an interactive
+# 2FA code or a granular token with bypass 2fa enabled. A maintainer without 2FA
+# configured has no way to produce the first, and the token that satisfies the
+# second lives in Actions secrets and cannot be read back out. So the write
+# happens here, where that secret already is — the same one `release.yml`
+# publishes with.
+#
+# Run it from the Actions tab: pick the version, write the message a user will
+# see next to it in `npm install` output.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deprecate, without a leading v (e.g. 0.7.0)"
+        required: true
+        type: string
+      message:
+        description: "What is wrong with it and what to use instead"
+        required: true
+        type: string
+
+permissions: {}
+
+# Two dispatches at once would race over the same packument.
+concurrency:
+  group: npm-deprecate
+  cancel-in-progress: false
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+          registry-url: "https://registry.npmjs.org"
+
+      # Nothing is checked out: this reads and writes the registry, not the
+      # tree. The package name is written here rather than read from
+      # `package.json` for that reason, matching the `check` job in
+      # `release.yml`, which names it the same way.
+      - name: the version is one that exists
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -uo pipefail
+          # Anchored at both ends. A pattern anchored only at the front accepts
+          # anything after a valid prefix, and this value reaches a shell below.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::not a version: '$VERSION'"
+            exit 1
+          fi
+          # A typo would otherwise deprecate nothing and report success.
+          if ! npm view "@coo-quack/sensitive-canary@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::@coo-quack/sensitive-canary@$VERSION is not published."
+            exit 1
+          fi
+          echo "PACKAGE=@coo-quack/sensitive-canary@$VERSION" >> "$GITHUB_ENV"
+
+      # Read through `env:` rather than spliced in as `${{ }}`. The expression
+      # is substituted before bash parses the line, so a message carrying a
+      # quote or a semicolon would otherwise be read as shell.
+      - name: Deprecate
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          set -uo pipefail
+          if [ -z "${MESSAGE//[[:space:]]/}" ]; then
+            # npm reads an empty message as "undeprecate". That is a different
+            # operation and not the one this workflow is named for.
+            echo "::error::the message is empty — that would undeprecate instead."
+            exit 1
+          fi
+          npm deprecate "$PACKAGE" "$MESSAGE"
+
+      # npm accepting the write is not the same as the registry serving it, and
+      # a deprecation that silently did not take would otherwise be reported
+      # here as done.
+      - name: the registry serves the deprecation
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3 4 5; do
+            got=$(npm view "$PACKAGE" deprecated 2>/dev/null || true)
+            if [ -n "$got" ]; then
+              echo "$PACKAGE is deprecated:"
+              echo "  $got"
+              exit 0
+            fi
+            echo "not visible yet (attempt $attempt), waiting"
+            sleep 10
+          done
+          echo "::error::$PACKAGE still reads as not deprecated."
+          exit 1
