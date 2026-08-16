@@ -772,6 +772,14 @@
   green
 - Install with `--frozen-lockfile` in CI. A lockfile CI is allowed to rewrite is
   a lockfile CI does not check
+- Take CodeQL off GitHub's default setup and run it from `codeql.yml`. Default
+  setup only analyses a pull request whose base is the default or a protected
+  branch, so a PR stacked on another feature branch was never scanned — the same
+  gap `ci.yml` had, and the branches it covers cannot be configured. The new
+  workflow analyses pull requests, pushes to `main` and `develop`, and a weekly
+  schedule, because an advisory lands after a change merges rather than only
+  alongside one. The two setups cannot coexist: default setup has to be off for
+  these analyses to be accepted
 - Fail the lint on warnings, and check `docs/.vitepress/` the way `src/` is
   checked. `biome lint` exits 0 on a warning, so the dead `tokenize` in
   `src/lib/rules.ts` — superseded by `contextTokens`, and carrying a comment

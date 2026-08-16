@@ -480,10 +480,12 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
 // the block was a false positive.
 // README: "[allow-secret] does not bypass PII blocks (and vice versa)."
 //
-// Deduplication keys on the value, so a string that a secret rule and a PII rule
-// both match yields two findings with the same value. Deduplicating first threw
-// the PII one away, and the tag then removed what was left — so the tag lifted a
-// PII block. Allow first, then dedupe.
+// A string that a secret rule and a PII rule both match yields two findings with
+// the same value, and they stay two because the deduplication key carries the
+// category. Collapse them on the value alone and one category is thrown away
+// before any tag is read, which is a tag lifting the other category's block.
+// `dedupeFindings` is where that key is guarded; this is the same promise seen
+// from the outside, on a real value and through the hook.
 describe("pre-tool-use-hook — a tag lifts only its own category", () => {
   const writeFixture = useFixtureDir("tag-categories");
 
