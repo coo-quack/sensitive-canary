@@ -167,25 +167,32 @@ jobs:
           # read it. Emptying it left every other gate green.
           set -uo pipefail
           node -e '
-            const { readFileSync, existsSync } = require("node:fs");
+            const { readFileSync, existsSync, writeFileSync } = require("node:fs");
             const root = process.env.ARTIFACT_ROOT;
             const manifest = JSON.parse(readFileSync(`${root}/hooks/hooks.json`, "utf8"));
             const events = Object.keys(manifest.hooks ?? {});
             for (const want of ["PreToolUse", "UserPromptSubmit"]) {
               if (!events.includes(want)) throw new Error(`hooks.json declares no ${want}`);
             }
-            const commands = Object.values(manifest.hooks)
-              .flat()
-              .flatMap((entry) => entry.hooks ?? [])
-              .map((hook) => hook.command);
-            if (commands.length < 2) throw new Error("hooks.json declares no commands");
-            for (const command of commands) {
-              const match = command.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"\s]+)/);
-              if (!match) throw new Error(`no CLAUDE_PLUGIN_ROOT path in: ${command}`);
-              const target = `${root}/${match[1]}`;
-              if (!existsSync(target)) throw new Error(`hooks.json points at a missing ${match[1]}`);
+            let count = 0;
+            for (const [event, entries] of Object.entries(manifest.hooks)) {
+              const commands = entries.flatMap((entry) => entry.hooks ?? []).map((h) => h.command);
+              if (commands.length === 0) throw new Error(`hooks.json declares no command for ${event}`);
+              for (const command of commands) {
+                const match = command.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"\s]+)/);
+                if (!match) throw new Error(`no CLAUDE_PLUGIN_ROOT path in: ${command}`);
+                if (!existsSync(`${root}/${match[1]}`))
+                  throw new Error(`hooks.json points at a missing ${match[1]}`);
+              }
+              count += commands.length;
+              // Resolved and written out so the next step runs the command
+              // itself rather than a stand-in for it.
+              writeFileSync(
+                `/tmp/hookcmd-${event}`,
+                `${commands[0].replaceAll("${CLAUDE_PLUGIN_ROOT}", root)}\n`,
+              );
             }
-            console.log(`hooks.json: ${commands.length} commands, all present`);
+            console.log(`hooks.json: ${count} commands, all present`);
           '
 
       - name: the published hooks run, and still block
@@ -200,40 +207,61 @@ jobs:
           set -uo pipefail
           key="AKIA""IOSFODNN7EXAMPLE"
           fail=0
+
+          # Both ways in. `dist/*.js` is what the npm instructions point at; a
+          # plugin install runs whatever `hooks/hooks.json` declares, which is a
+          # different loader over a different file. The plugin commands are read
+          # back from the manifest rather than restated here, so the two cannot
+          # drift apart.
+          pre_plugin=$(cat /tmp/hookcmd-PreToolUse)
+          prompt_plugin=$(cat /tmp/hookcmd-UserPromptSubmit)
+          echo "plugin PreToolUse:       $pre_plugin"
+          echo "plugin UserPromptSubmit: $prompt_plugin"
+
           check() {
-            local want=$1 label=$2 hook=$3 payload=$4 status=0
-            printf '%s' "$payload" | node "$ARTIFACT_ROOT/$hook" > /dev/null || status=$?
-            if [ "$status" -ne "$want" ]; then
-              echo "::error::$label — expected exit $want, got $status"
-              fail=1
-            fi
+            local want=$1 which=$2 label=$3 payload=$4 status=0 flavour command
+            for flavour in npm plugin; do
+              case "$flavour:$which" in
+                npm:pre)       command="node \"$ARTIFACT_ROOT/dist/pre-tool-use-hook.js\"" ;;
+                npm:prompt)    command="node \"$ARTIFACT_ROOT/dist/user-prompt-submit-hook.js\"" ;;
+                plugin:pre)    command=$pre_plugin ;;
+                plugin:prompt) command=$prompt_plugin ;;
+              esac
+              status=0
+              printf '%s' "$payload" | eval "$command" > /dev/null 2>&1 || status=$?
+              if [ "$status" -ne "$want" ]; then
+                echo "::error::[$flavour] $label — expected exit $want, got $status"
+                fail=1
+              fi
+            done
           }
+
           printf 'key=%s\n' "$key" > /tmp/smoke-secret.txt
           printf 'ok\n' > /tmp/smoke-clean.txt
           mkdir -p /tmp/smoke-env
           printf 'TOKEN=real\n' > /tmp/smoke-env/.env
           printf 'TOKEN=your-token-here\n' > /tmp/smoke-env/.env.example
-          check 0 "a clean command must be allowed" dist/pre-tool-use-hook.js \
+          check 0 pre "a clean command must be allowed" \
             '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
-          # Without this, every assertion made of the prompt hook was that it
-          # exits 2, and a hook that exits 2 unconditionally would have shipped
-          # green — blocking every prompt the user types.
-          check 0 "a clean prompt must be allowed" dist/user-prompt-submit-hook.js \
+          # Every other assertion made of the prompt hook is that it exits 2, and
+          # a hook that exits 2 unconditionally would pass all of them while
+          # blocking every prompt the user types.
+          check 0 prompt "a clean prompt must be allowed" \
             '{"prompt":"list the files in this directory"}'
-          check 0 "a clean file must be allowed" dist/pre-tool-use-hook.js \
+          check 0 pre "a clean file must be allowed" \
             '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-clean.txt"}}'
-          check 2 "a secret in a prompt must be blocked" dist/user-prompt-submit-hook.js \
+          check 2 prompt "a secret in a prompt must be blocked" \
             "$(printf '{"prompt":"key=%s"}' "$key")"
-          check 2 "a secret in a file must be blocked" dist/pre-tool-use-hook.js \
+          check 2 pre "a secret in a file must be blocked" \
             '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-secret.txt"}}'
-          check 2 "a secret in a command must be blocked" dist/pre-tool-use-hook.js \
+          check 2 pre "a secret in a command must be blocked" \
             "$(printf '{"tool_name":"Bash","tool_input":{"command":"echo %s"}}' "$key")"
-          check 2 "an env file must be blocked by name" dist/pre-tool-use-hook.js \
+          check 2 pre "an env file must be blocked by name" \
             '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-env/.env"}}'
           # The other direction of the same guard: a template of placeholders is
           # a file users are told to commit, and blocking it is what gets the
           # plugin uninstalled.
-          check 0 "a template of placeholders must be allowed" dist/pre-tool-use-hook.js \
+          check 0 pre "a template of placeholders must be allowed" \
             '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-env/.env.example"}}'
           exit "$fail"
 
