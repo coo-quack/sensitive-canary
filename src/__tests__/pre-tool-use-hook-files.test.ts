@@ -606,3 +606,65 @@ describe("pre-tool-use-hook — UTF-16", () => {
     expect(runHook("Read", p).exitCode).toBe(0);
   });
 });
+
+// The five-second deadline, which nothing reached.
+//
+// Two clocks bound one invocation: a ten-second scan budget, which throws, and
+// this one, which stops reading between files. Only the budget had a case, so
+// the deadline could be deleted or its comparison inverted and the whole suite
+// stayed green — on a guard whose job is to keep the hook inside Claude Code's
+// PreToolUse timeout, because a hook killed by that timeout does not block.
+//
+// What makes it observable is the `.env` fallback. A file skipped for time is
+// silently not scanned, which reads the same as a file that was clean; an
+// `.env` reached after the deadline is blocked on its name instead.
+describe("pre-tool-use-hook — the deadline between files", () => {
+  const writeFixture = useFixtureDir("deadline");
+
+  // A rule that backtracks, so a modest file costs seconds rather than
+  // milliseconds. Several files rather than one big one: the deadline is
+  // checked between files, and a single file long enough to pass it also runs
+  // past the scan budget, which throws first and proves the wrong guard.
+  it("an .env reached after the deadline is blocked on its name", () => {
+    const slowConfig = writeFixture(
+      "slow.json",
+      JSON.stringify({
+        rules: Array.from({ length: 8 }, (_, i) => ({
+          id: `slow-${i}`,
+          description: "deliberately slow",
+          regex:
+            "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+          category: "secret",
+        })),
+      }),
+    );
+    const slow = [1, 2, 3].map((n) =>
+      writeFixture(`slow-${n}.txt`, "eyJ".repeat(7_000)),
+    );
+    // A template name, so the plain `.env` guard does not decide it: this one
+    // is exempt while its contents can be read, and blocked on its name when
+    // they cannot. That is what makes the deadline observable.
+    const env = writeFixture(
+      ".env.after-deadline.example",
+      "TOKEN=your-token-here\n",
+    );
+
+    // Named in order, which `scanPathsLiteralsFirst` keeps, so the deadline is
+    // spent before the `.env` is reached.
+    const result = runBashHook(`cat ${slow.join(" ")} ${env}`, {
+      env: { SENSITIVE_CANARY_CONFIG: slowConfig },
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.reason).toContain(
+      "the scan for this call had already stopped",
+    );
+  }, 30_000);
+
+  // The other direction, so the case above is not passing on the `.env` name
+  // alone: given time to read it, a template of placeholders is allowed.
+  it("the same .env is read when there is time to read it", () => {
+    const env = writeFixture(".env.in-time.example", "TOKEN=your-token-here\n");
+    expect(runBashHook(`cat ${env}`).exitCode).toBe(0);
+  });
+});

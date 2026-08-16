@@ -139,10 +139,28 @@ describe("user-prompt-submit-hook — an unforeseen error", () => {
     },
   );
 
-  it("the handler is installed", () => {
-    const source = readFileSync(HOOK, "utf8");
-    expect(source).toContain('process.on("uncaughtException"');
-    expect(source).toContain('process.on("unhandledRejection"');
+  // Both hooks register the same two handlers, from one place. Asserted on the
+  // shared module rather than on each hook's own text: reading the hook's source
+  // for the string pinned where the registration was written, so moving it broke
+  // the test while the behaviour it stands for was unchanged.
+  it("both hooks register the handler", () => {
+    const shared = readFileSync(
+      fileURLToPath(new URL("../lib/fail-closed.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(shared).toContain('process.on("uncaughtException"');
+    expect(shared).toContain('process.on("unhandledRejection"');
+
+    for (const hook of [
+      "../pre-tool-use-hook.ts",
+      "../user-prompt-submit-hook.ts",
+    ]) {
+      const source = readFileSync(
+        fileURLToPath(new URL(hook, import.meta.url)),
+        "utf8",
+      );
+      expect(source, hook).toContain("blockOnUnhandledError()");
+    }
   });
 });
 
@@ -439,4 +457,46 @@ describe("user-prompt-submit-hook — SENSITIVE_CANARY_CATEGORIES", () => {
     expect(stderr).toContain("aws-access-key");
     expect(stderr).toContain("pii-credit-card");
   });
+});
+
+// Which channel the prompt hook answers on.
+//
+// Writing to both channels leaves the documented one dead: stdout wins and
+// stderr is discarded when both carry text. The PreToolUse hook has this fixed;
+// this one did not, so a payload could come back on stdout and every other case
+// in this file would still pass.
+describe("user-prompt-submit-hook — the channel it answers on", () => {
+  it("reports the reason on stderr and writes nothing to stdout", () => {
+    const { exitCode, stdout, stderr } = runHook(`my key is ${AWS_KEY}`);
+    expect(exitCode).toBe(2);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("allow-secret");
+  });
+
+  // An allowed prompt cannot be recognised by an empty stderr: node's type
+  // stripping is experimental, so it warns there on every run. What must be
+  // empty is stdout, and what must be absent from stderr is a block.
+  it("says nothing about a block when the prompt is allowed", () => {
+    const { exitCode, stdout, stderr } = runHook("list the files here");
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe("");
+    expect(stderr).not.toContain("allow-secret");
+    expect(stderr).not.toContain("blocked");
+  });
+
+  // A scan that cannot finish is not a scan that found nothing. The budget
+  // throws, and the throw has to stop the prompt rather than let it through —
+  // the same contract the tool hook has, on the hook that sees what the user
+  // typed.
+  it("a scan that cannot finish stops the prompt", () => {
+    const config = fileURLToPath(
+      new URL("./fixtures/slow-rules.json", import.meta.url),
+    );
+    const { exitCode, stderr } = runHook(`x ${"eyJ".repeat(21_845)}`, {
+      env: { SENSITIVE_CANARY_CONFIG: config },
+    });
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("the check could not complete");
+    expect(stderr).not.toContain("sensitive data detected");
+  }, 120_000);
 });

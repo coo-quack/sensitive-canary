@@ -5,8 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractCommandRefs } from "./lib/bash-commands.ts";
+import type { CommandRefs } from "./lib/command-tables.ts";
 import { detectUtf16, looksBinary, utf8Runs } from "./lib/encoding.ts";
+import { blockOnUnhandledError, failClosed } from "./lib/fail-closed.ts";
 import {
+  allowTagLines,
   applyAllowTags,
   dedupeFindings,
   findingsToLines,
@@ -32,30 +35,7 @@ import {
 } from "./lib/tool-inputs.ts";
 import { loadAllowTagsFromTranscript } from "./lib/transcript.ts";
 
-// A hook that crashes exits 1, and only exit 2 blocks — so until now any
-// unforeseen error was a silent pass, which is the failure this whole tool
-// exists to prevent. What went wrong is unknown at this point, and "unknown" is
-// not "safe": the check did not finish, so the call is stopped rather than let
-// through. `[allow-all]` gets past it, and the message says the check failed
-// rather than claiming a finding.
-function failClosed(error: unknown): never {
-  try {
-    process.stderr.write(
-      `\n🐤 sensitive-canary: the check could not complete — ${
-        error instanceof Error ? error.message : String(error)
-      }\n\n` +
-        "  Nothing was scanned, so nothing can be vouched for. Stopping rather\n" +
-        "  than passing it through. Add [allow-all] to your prompt to proceed\n" +
-        "  anyway, and please report this.\n",
-    );
-  } catch {
-    // A closed stderr must not turn the block back into a pass.
-  }
-  process.exit(2);
-}
-
-process.on("uncaughtException", failClosed);
-process.on("unhandledRejection", failClosed);
+blockOnUnhandledError();
 
 interface HookInput {
   transcript_path?: string;
@@ -78,11 +58,11 @@ function searchesWithoutAPath(
   tool: string,
   input: Record<string, unknown>,
 ): boolean {
-  const searchTerm =
+  const hasSearchTerm =
     typeof input["pattern"] === "string" ||
     typeof input["query"] === "string" ||
     typeof input["regex"] === "string";
-  return searchTerm && (tool === "Grep" || tool.startsWith("mcp__"));
+  return hasSearchTerm && (tool === "Grep" || tool.startsWith("mcp__"));
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -233,11 +213,7 @@ function buildAllowHints(
     showAllTags || findings.some((f) => f.category === "secret");
   const hasPii = showAllTags || findings.some((f) => f.category === "pii");
 
-  const lines: string[] = [];
-  if (hasSecret) lines.push("  [allow-secret]  — allow secrets");
-  if (hasPii) lines.push("  [allow-pii]     — allow PII");
-  lines.push("  [allow-all]     — bypass all sensitive-canary checks");
-  lines.push("");
+  const lines = [...allowTagLines(findings, { showAll: showAllTags }), ""];
 
   const example =
     hasSecret && hasPii
@@ -533,6 +509,18 @@ function blockUnreadEnvFile(
     [ENV_BLOCK_REASON, "", reason],
     buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
   );
+}
+
+// The variables a command puts in play: the ones it names, plus the ones the
+// command line references directly. A bare `env` or `printenv` prints
+// everything, so there the answer is every variable there is.
+//
+// Asked in two places — the Bash branch and the tool that runs a shell through
+// an input field — and a difference between them would be a difference in what
+// each of those two paths protects.
+function environmentNamed(commandText: string, refs: CommandRefs): string[] {
+  if (refs.dumpsEnvironment) return Object.keys(process.env);
+  return [...new Set([...extractEnvVarNames(commandText), ...refs.envVars])];
 }
 
 // The values a command would print, whichever tool is running it.
@@ -899,12 +887,7 @@ process.stdin.on("end", () => {
     }
     const refs = extractCommandRefs(command);
 
-    // A bare `env` or `printenv` prints everything, so every variable is in play.
-    const envVarNames = refs.dumpsEnvironment
-      ? Object.keys(process.env)
-      : [...new Set([...extractEnvVarNames(command), ...refs.envVars])];
-
-    scanEnvironment(envVarNames, allowTags);
+    scanEnvironment(environmentNamed(command, refs), allowTags);
 
     const cmdFindings = dedupeFindings(
       applyAllowTags(scan(command, ENABLED_CATEGORIES), allowTags),
@@ -971,12 +954,7 @@ process.stdin.on("end", () => {
       // has always scanned the variables a command would print; a tool that
       // runs a shell was collected for paths and nothing else, so
       // `{"command":"printenv"}` handed the environment back whole.
-      scanEnvironment(
-        refs.dumpsEnvironment
-          ? Object.keys(process.env)
-          : [...new Set([...extractEnvVarNames(value), ...refs.envVars])],
-        allowTags,
-      );
+      scanEnvironment(environmentNamed(value, refs), allowTags);
     }
 
     // The write-verb exemption is about a tool's *output*: naming a file it only

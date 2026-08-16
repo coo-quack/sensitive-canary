@@ -9,6 +9,7 @@ import {
   applyAllowTags,
   dedupeFindings,
   findingsToLines,
+  MAX_FINDING_LINES,
   parseAllowTags,
   resolveTagPriority,
 } from "../inspector.ts";
@@ -335,5 +336,48 @@ describe("findingsToLines", () => {
     ];
     const lines = findingsToLines(findings);
     expect(lines[0]).toBe("  [PII] Email Address (pii-email): user****");
+  });
+});
+
+// The cap on how many findings are printed.
+//
+// A rule that matches everywhere once produced forty thousand lines of stderr,
+// which buries the block it is explaining and is itself a way of hiding one.
+// Neither the cap nor the line that says what was left out was fixed by a test,
+// so both could move or vanish without anything noticing.
+describe("how many findings are printed", () => {
+  const finding = (n: number): Finding => ({
+    ruleId: `rule-${n}`,
+    description: `Rule ${n}`,
+    category: "secret",
+    matchRedacted: "ab****yz",
+    secretValue: `value-${n}`,
+  });
+
+  const linesFor = (count: number): string[] =>
+    findingsToLines(Array.from({ length: count }, (_, i) => finding(i)));
+
+  it("prints every finding when there are few", () => {
+    expect(linesFor(3)).toHaveLength(3);
+  });
+
+  // The boundary itself, from both sides: at the cap nothing is elided, one
+  // over it the extra line appears.
+  it("prints exactly the cap with nothing added", () => {
+    const lines = linesFor(MAX_FINDING_LINES);
+    expect(lines).toHaveLength(MAX_FINDING_LINES);
+    expect(lines.join("\n")).not.toContain("more");
+  });
+
+  it("says how many it left out", () => {
+    const lines = linesFor(MAX_FINDING_LINES + 1);
+    expect(lines).toHaveLength(MAX_FINDING_LINES + 1);
+    expect(lines[lines.length - 1]).toBe("  … and 1 more");
+  });
+
+  it("counts the ones it left out", () => {
+    const lines = linesFor(MAX_FINDING_LINES + 4_000);
+    expect(lines).toHaveLength(MAX_FINDING_LINES + 1);
+    expect(lines[lines.length - 1]).toBe("  … and 4000 more");
   });
 });

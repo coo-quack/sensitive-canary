@@ -192,9 +192,31 @@ export function dedupeFindings(findings: Finding[]): Finding[] {
   });
 }
 
+// Which tags a block should suggest, given what it found.
+//
+// Three places write these lines — the tool hook's hint builder, and the prompt
+// hook's mask and block paths — with only the indentation differing. Written
+// out three times, a change to the wording reaches whichever copy the author
+// happened to be looking at, and the tag a user is told to add is the one thing
+// in the message that has to be right.
+export function allowTagLines(
+  findings: Finding[],
+  options: { indent?: string; showAll?: boolean } = {},
+): string[] {
+  const indent = options.indent ?? "  ";
+  const showAll = options.showAll ?? false;
+  const lines: string[] = [];
+  if (showAll || findings.some((f) => f.category === "secret"))
+    lines.push(`${indent}[allow-secret]  — allow secrets`);
+  if (showAll || findings.some((f) => f.category === "pii"))
+    lines.push(`${indent}[allow-pii]     — allow PII`);
+  lines.push(`${indent}[allow-all]     — bypass all sensitive-canary checks`);
+  return lines;
+}
+
 // One line per finding, capped. A rule that matches everywhere produced forty
 // thousand lines of stderr, which buries the block it is trying to explain.
-const MAX_FINDING_LINES = 50;
+export const MAX_FINDING_LINES = 50;
 
 export function findingsToLines(findings: Finding[]): string[] {
   const lines = findings.slice(0, MAX_FINDING_LINES).map((f) => {
