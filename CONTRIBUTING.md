@@ -61,9 +61,10 @@ If the backport PR has conflicts, resolve them manually before merging.
 ## Adding a New Detection Rule
 
 1. Add the rule to `src/lib/default-config.json` — define `id`, `description`, `regex`, `category`, and optionally `entropyThreshold` and `flags`. `src/lib/rules.ts` reads that file; it holds the checksum validators, not the rules
-2. Add tests to `src/lib/__tests__/rules.test.ts` — cover true positives, false negatives, and entropy filtering
-   - Add the rule to the `EXAMPLES` table in the same file. Every rule needs one value it must find, or the id list proves only that a name is present: four rules shipped with patterns that could be disabled in silence because nothing asked them to match anything
-   - If the pattern carries a `*`, `+` or `{n,}` on a character class, work out what input makes it backtrack and add that shape to `no rule is quadratic` in the same file. A pattern that does not return is a way past the hook, not a slow scan — see the note in `docs/rules.md`
+2. Add tests — cover true positives, false negatives, and entropy filtering
+   - Add the rule to the `EXAMPLES` table in `src/lib/__tests__/rule-patterns.test.ts`. Every rule needs one value it must find, or the id list proves only that a name is present: four rules shipped with patterns that could be disabled in silence because nothing asked them to match anything
+   - The same file pads every example and requires the rule to still match, so a length you guessed too tight fails there rather than in a release. If the format really is exact — a checksum, a fixed-width field — add the id to `LONGER_IS_A_DIFFERENT_THING` with the reason
+   - If the pattern carries a `*`, `+` or `{n,}` on a character class, work out what input makes it backtrack and add that shape to `no rule is quadratic` in `src/lib/__tests__/rules.test.ts`. A pattern that does not return is a way past the hook, not a slow scan — see the note in `docs/rules.md`
 3. Update `README.md` — add to the detection rules table
 4. Update `docs/rules.md` — add full reference entry
 5. Update `CHANGELOG.md` — add the rule under `## Unreleased` (see [Changelog](#changelog))

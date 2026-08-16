@@ -155,6 +155,13 @@
   with no field to collect there was nothing to scan. Judged on names alone: a
   directory nobody named is every repository anyone searches, and reading their
   contents stopped a plain `rg TODO` in four of twelve checkouts
+- Stop the search for the wrapped command at a command that prints its
+  arguments. `sudo echo cat secrets` resolved to the `cat` sitting in echo's
+  arguments and scanned a file the command never opens, so `echo`, `printf`,
+  `true`, `false` and `:` end the descent
+- Leave the output file of `sort -o out.txt in.txt` and its siblings
+  (`shuf -o`, `iconv -o`, `tee`) out of the scan. The operand a flag names as a
+  destination is written, not printed, so naming it is not a read
 - Correct the boundaries of six rules. Discover's `65` range stopped at 6589;
   the card alternatives all assumed groups of four, where Amex prints 4-6-5 and
   Diners 4-6-4; Square's exact length meant one character over the guess stopped
