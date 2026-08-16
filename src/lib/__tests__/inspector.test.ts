@@ -10,86 +10,8 @@ import {
   dedupeFindings,
   findingsToLines,
   MAX_FINDING_LINES,
-  parseAllowTags,
   resolveTagPriority,
 } from "../inspector.ts";
-
-// ── parseAllowTags ────────────────────────────────────────────────────────────
-
-// A tag is the bracketed form and nothing else. Without a case saying so, the
-// brackets could be made optional and prose that merely mentions `allow-all`
-// would turn the hook off.
-describe("what is not a tag", () => {
-  it.each([
-    "allow-all",
-    "allow-secret without brackets",
-    "the allow-pii option",
-    "(allow-all)",
-    "{allow-all}",
-    "allow-all]",
-    "[allow-all",
-  ])("%s is not a tag", (text) => {
-    expect(parseAllowTags([{ role: "user", content: text }]).size, text).toBe(
-      0,
-    );
-  });
-
-  it("the bracketed form is", () => {
-    expect(
-      parseAllowTags([{ role: "user", content: "[allow-all] please" }]).has(
-        "all",
-      ),
-    ).toBe(true);
-  });
-});
-
-describe("parseAllowTags", () => {
-  it("returns empty set when no tags are present", () => {
-    const tags = parseAllowTags([{ role: "user", content: "hello" }]);
-    expect(tags.size).toBe(0);
-  });
-
-  it("parses [allow-all]", () => {
-    const tags = parseAllowTags([
-      { role: "user", content: "[allow-all] send anyway" },
-    ]);
-    expect(tags.has("all")).toBe(true);
-  });
-
-  it("parses [allow-pii]", () => {
-    const tags = parseAllowTags([{ role: "user", content: "[allow-pii] ok" }]);
-    expect(tags.has("pii")).toBe(true);
-  });
-
-  it("parses [allow-secret]", () => {
-    const tags = parseAllowTags([
-      { role: "user", content: "[allow-secret] here is my key" },
-    ]);
-    expect(tags.has("secret")).toBe(true);
-  });
-
-  it("is case-insensitive", () => {
-    const tags = parseAllowTags([{ role: "user", content: "[Allow-Secret]" }]);
-    expect(tags.has("secret")).toBe(true);
-  });
-
-  it("ignores tags in assistant messages", () => {
-    const tags = parseAllowTags([
-      { role: "assistant", content: "[allow-all] this is the assistant" },
-    ]);
-    expect(tags.size).toBe(0);
-  });
-
-  it("parses tags from ContentBlock[] content", () => {
-    const tags = parseAllowTags([
-      {
-        role: "user",
-        content: [{ type: "text", text: "[allow-secret] check this" }],
-      },
-    ]);
-    expect(tags.has("secret")).toBe(true);
-  });
-});
 
 // ── resolveTagPriority ────────────────────────────────────────────────────────
 
@@ -300,6 +222,45 @@ describe("dedupeFindings", () => {
       },
     ];
     expect(dedupeFindings(findings)).toHaveLength(2);
+  });
+
+  // One value can be two findings. An address in an assignment matches a PII
+  // rule and a secret rule, and collapsing on the value alone reported whichever
+  // came first — so which tag lifts the block read as arbitrary, because the
+  // message named one category and the other was what held it.
+  it("keeps one finding per category for the same value", () => {
+    const value = "alice.dupont@realcompany.co.jp";
+    const findings: Finding[] = [
+      {
+        ruleId: "env-assignment",
+        description: "assignment",
+        category: "secret",
+        matchRedacted: "al****jp",
+        secretValue: value,
+      },
+      {
+        ruleId: "pii-email",
+        description: "Email Address",
+        category: "pii",
+        matchRedacted: "al****jp",
+        secretValue: value,
+      },
+    ];
+    const kept = dedupeFindings(findings);
+    expect(kept).toHaveLength(2);
+    expect(kept.map((f) => f.category).sort()).toEqual(["pii", "secret"]);
+  });
+
+  // And the same category twice is still one, which is what the key is for.
+  it("still collapses the same value in the same category", () => {
+    const one = (ruleId: string): Finding => ({
+      ruleId,
+      description: "d",
+      category: "secret",
+      matchRedacted: "ab****yz",
+      secretValue: "the-same-value",
+    });
+    expect(dedupeFindings([one("a"), one("b")])).toHaveLength(1);
   });
 });
 

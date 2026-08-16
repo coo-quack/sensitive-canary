@@ -155,6 +155,14 @@
   with no field to collect there was nothing to scan. Judged on names alone: a
   directory nobody named is every repository anyone searches, and reading their
   contents stopped a plain `rg TODO` in four of twelve checkouts
+- Name `NotebookRead` in the hook matcher. It reached the hook only because
+  `Read` is a substring of it, and the `notebook_path` field the hook reads was
+  being served by that accident: anchoring the match, or a rename, would have
+  dropped notebooks with nothing to say so
+- Count one finding per category rather than per value. A value that a secret
+  rule and a PII rule both match is two findings, and collapsing on the value
+  alone reported whichever came first — so the block named one category while
+  the other was what held it, and which tag lifts it read as arbitrary
 - Stop the search for the wrapped command at a command that prints its
   arguments. `sudo echo cat secrets` resolved to the `cat` sitting in echo's
   arguments and scanned a file the command never opens, so `echo`, `printf`,

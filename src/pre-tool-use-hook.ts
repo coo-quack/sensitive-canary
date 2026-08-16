@@ -582,9 +582,8 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   if (shouldBlockEnvFile(filePath)) {
     // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
     // secret category is on — so the tag that lifts it has to be one that allows
-    // secrets. Any tag at all used to lift it, and `parseAllowTags` reads
-    // `[allow-<anything>]`, so `[allow-banana]` and a mistyped `[allow-pi]` both
-    // turned the guard off.
+    // secrets. Asking only whether any tag was present let `[allow-banana]` and
+    // a mistyped `[allow-pi]` turn it off.
     //
     // Lifting the name guard is not permission to skip the file: `[allow-secret]`
     // says nothing about the PII in it, and returning here skipped the content
