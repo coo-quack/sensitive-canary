@@ -212,7 +212,7 @@ jobs:
           # blocking assertion fails and the release cannot publish.
           set +e
           set -uo pipefail
-          key="AKIA""IOSFODNN7EXAMPLE"
+          key="AKIA""3QF7TZ9KLMN2PQRS"
           fail=0
 
           # Both ways in. `dist/*.js` is what the npm instructions point at; a

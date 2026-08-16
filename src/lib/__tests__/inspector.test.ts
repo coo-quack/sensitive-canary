@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Finding } from "../inspector.ts";
+
+// Not AWS's documented `…EXAMPLE` key, which the `aws-key`
+// validator reads as documentation rather than a credential.
+const AWS_KEY = ["AKIA", "3QF7TZ9KLMN2", "PQRS"].join("");
+
 import {
   applyAllowTags,
   dedupeFindings,
@@ -289,7 +294,7 @@ describe("findingsToLines", () => {
         description: "AWS Access Key ID",
         category: "secret",
         matchRedacted: "AKIA****MPLE",
-        secretValue: "AKIAIOSFODNN7EXAMPLE",
+        secretValue: `${AWS_KEY}`,
         score: 1,
       },
     ];

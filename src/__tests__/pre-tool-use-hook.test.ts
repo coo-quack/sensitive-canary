@@ -179,7 +179,7 @@ describe("pre-tool-use-hook — clean file", () => {
 
 describe("pre-tool-use-hook — sensitive content blocking", () => {
   it("blocks a file containing an AWS key", () => {
-    const p = writeFixture("config.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
+    const p = writeFixture("config.txt", `AWS_KEY=${AWS_KEY}\n`);
     const { exitCode, blocked, reason } = runHook("Read", p);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
@@ -211,14 +211,14 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
   });
 
   it("includes [allow-secret] and [allow-all] hints in reason for a secret", () => {
-    const p = writeFixture("key.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
+    const p = writeFixture("key.txt", `key=${AWS_KEY}\n`);
     const { reason } = runHook("Read", p);
     expect(reason).toContain("[allow-secret]");
     expect(reason).toContain("[allow-all]");
   });
 
   it("includes a bird emoji in the reason", () => {
-    const p = writeFixture("bird.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
+    const p = writeFixture("bird.txt", `key=${AWS_KEY}\n`);
     const { reason } = runHook("Read", p);
     expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
   });
@@ -231,10 +231,7 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
   });
 
   it("deduplicates repeated secrets — finding line appears only once", () => {
-    const p = writeFixture(
-      "dup.txt",
-      "A=AKIAIOSFODNN7EXAMPLE\nB=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("dup.txt", `A=${AWS_KEY}\nB=${AWS_KEY}\n`);
     const { reason } = runHook("Read", p);
     const count = (reason ?? "").split("[Secret]").length - 1;
     expect(count).toBe(1);
@@ -246,7 +243,7 @@ describe("pre-tool-use-hook — sensitive content blocking", () => {
 describe("pre-tool-use-hook — binary file handling", () => {
   it("blocks when a secret appears before the first NUL byte", () => {
     const content = Buffer.concat([
-      Buffer.from("key=AKIAIOSFODNN7EXAMPLE\n"),
+      Buffer.from(`key=${AWS_KEY}\n`),
       Buffer.from([0x00]),
       Buffer.from("binary data"),
     ]);
@@ -261,7 +258,7 @@ describe("pre-tool-use-hook — binary file handling", () => {
     const content = Buffer.concat([
       Buffer.from("clean text\n"),
       Buffer.from([0x00]),
-      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
+      Buffer.from(`${AWS_KEY}`),
     ]);
     const p = join(tmpDir, "binary-secret-after-nul.bin");
     writeFileSync(p, content);
@@ -272,7 +269,7 @@ describe("pre-tool-use-hook — binary file handling", () => {
   it("blocks a secret in a file that starts with NUL", () => {
     const content = Buffer.concat([
       Buffer.from([0x00]),
-      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
+      Buffer.from(`${AWS_KEY}`),
     ]);
     const p = join(tmpDir, "binary-nul-start.bin");
     writeFileSync(p, content);
@@ -317,10 +314,7 @@ describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {
     const tp = join(tmpDir, "large-transcript.jsonl");
     writeFileSync(tp, transcriptContent, "utf8");
 
-    const p = writeFixture(
-      "large-transcript-test.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("large-transcript-test.txt", `key=${AWS_KEY}\n`);
     const { exitCode } = runHook("Read", p, { transcriptPath: tp });
     expect(exitCode).toBe(0);
   });
@@ -336,7 +330,7 @@ describe("pre-tool-use-hook — large file head read (1 MiB)", () => {
   it("blocks a secret within the first 1 MiB", () => {
     const p = writeFixture(
       "large-within-head.txt",
-      `${"x".repeat(512 * 1024)}\nkey=AKIAIOSFODNN7EXAMPLE\n`,
+      `${"x".repeat(512 * 1024)}\nkey=${AWS_KEY}\n`,
     );
     const { exitCode } = runHook("Read", p);
     expect(exitCode).toBe(2);
@@ -396,7 +390,7 @@ describe("pre-tool-use-hook — large file head read (1 MiB)", () => {
       const { exitCode } = runBashHook("cat /proc/self/environ", {
         // First, so it lands before the first NUL. `replaceEnv` keeps the order.
         env: {
-          LEAKED_KEY: "AKIAIOSFODNN7EXAMPLE",
+          LEAKED_KEY: `${AWS_KEY}`,
           PATH: process.env["PATH"] ?? "",
         },
         replaceEnv: true,
@@ -814,7 +808,7 @@ describe("pre-tool-use-hook — shell expansion of a path", () => {
 describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {
   it("blocks echo $TOKEN when TOKEN contains an AWS key", () => {
     const { exitCode, blocked } = runBashHook("echo $TOKEN", {
-      env: { TOKEN: "AKIAIOSFODNN7EXAMPLE" },
+      env: { TOKEN: `${AWS_KEY}` },
     });
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
@@ -822,7 +816,7 @@ describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {
 
   it("includes the variable name and rule in reason", () => {
     const { reason } = runBashHook("echo $MY_SECRET", {
-      env: { MY_SECRET: "AKIAIOSFODNN7EXAMPLE" },
+      env: { MY_SECRET: `${AWS_KEY}` },
     });
     expect(reason).toContain("$MY_SECRET");
     expect(reason).toContain("aws-access-key");
@@ -830,7 +824,7 @@ describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {
 
   it("blocks ${TOKEN} brace syntax", () => {
     const { exitCode } = runBashHook("curl -H 'Auth: ${API_TOKEN}'", {
-      env: { API_TOKEN: "AKIAIOSFODNN7EXAMPLE" },
+      env: { API_TOKEN: `${AWS_KEY}` },
     });
     expect(exitCode).toBe(2);
   });
@@ -862,18 +856,18 @@ describe("pre-tool-use-hook — Bash tool (command string)", () => {
   });
 
   it("blocks a Bash command containing an AWS key (e.g. echo)", () => {
-    const { exitCode, blocked } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
+    const { exitCode, blocked } = runBashHook(`echo ${AWS_KEY}`);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
   });
 
   it("includes aws-access-key in reason for inline secret", () => {
-    const { reason } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
+    const { reason } = runBashHook(`echo ${AWS_KEY}`);
     expect(reason).toContain("aws-access-key");
   });
 
   it("includes a bird emoji in the reason for Bash block", () => {
-    const { reason } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
+    const { reason } = runBashHook(`echo ${AWS_KEY}`);
     expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
   });
 });
@@ -884,10 +878,7 @@ describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
   it.each(["cat", "head", "tail", "less", "more", "bat", "nl"])(
     "blocks %s on a file with secrets",
     (cmd) => {
-      const p = writeFixture(
-        `creds-${cmd}.txt`,
-        "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n",
-      );
+      const p = writeFixture(`creds-${cmd}.txt`, `AWS_KEY=${AWS_KEY}\n`);
       const { exitCode, blocked } = runBashHook(`${cmd} ${p}`);
       expect(exitCode).toBe(2);
       expect(blocked).toBe(true);
@@ -916,7 +907,7 @@ describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
   });
 
   it("blocks cat in a compound command (pipe) on a file with secrets", () => {
-    const p = writeFixture("pipe-secret.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
+    const p = writeFixture("pipe-secret.txt", `AWS_KEY=${AWS_KEY}\n`);
     const { exitCode, blocked } = runBashHook(`cat ${p} | grep KEY`);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
@@ -969,10 +960,7 @@ describe("pre-tool-use-hook — what is not the user asking", () => {
   };
   const tag = `[allow${"-"}all]`;
   const envFile = (): string =>
-    writeFixture(
-      `.env.notuser-${++transcriptSeq}`,
-      "KEY=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    writeFixture(`.env.notuser-${++transcriptSeq}`, `KEY=${AWS_KEY}\n`);
 
   it("a compaction summary does not carry a tag", () => {
     const transcript = writeRawTranscript([
@@ -1036,14 +1024,14 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
     const transcript = writeTranscript([
       "[allow-all] please read the .env file",
     ]);
-    const p = writeFixture(".env.bypass-all", "KEY=AKIAIOSFODNN7EXAMPLE\n");
+    const p = writeFixture(".env.bypass-all", `KEY=${AWS_KEY}\n`);
     const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
     expect(exitCode).toBe(0);
   });
 
   it("[allow-secret] bypasses .env name block", () => {
     const transcript = writeTranscript(["[allow-secret] read the env file"]);
-    const p = writeFixture(".env.bypass-secret", "KEY=AKIAIOSFODNN7EXAMPLE\n");
+    const p = writeFixture(".env.bypass-secret", `KEY=${AWS_KEY}\n`);
     const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
     expect(exitCode).toBe(0);
   });
@@ -1057,10 +1045,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
 
   it("[allow-secret] bypasses secrets in content scan", () => {
     const transcript = writeTranscript(["[allow-secret] check the config"]);
-    const p = writeFixture(
-      "config-allow-secret2.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("config-allow-secret2.txt", `key=${AWS_KEY}\n`);
     const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
     expect(exitCode).toBe(0);
   });
@@ -1079,7 +1064,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
     const transcript = writeTranscript(["[allow-pii] ok"]);
     const p = writeFixture(
       "mixed-allow-pii.txt",
-      "email=ada@analytical-engines.org\nkey=AKIAIOSFODNN7EXAMPLE\n",
+      `email=ada@analytical-engines.org\nkey=${AWS_KEY}\n`,
     );
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
@@ -1093,10 +1078,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
       "please help me with the config",
       "[allow-all] yes read everything",
     ]);
-    const p = writeFixture(
-      "config-allow-latest.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("config-allow-latest.txt", `key=${AWS_KEY}\n`);
     const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
     expect(exitCode).toBe(0);
   });
@@ -1106,10 +1088,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
       "[allow-all] read this file",
       "now do something else",
     ]);
-    const p = writeFixture(
-      "config-old-allow.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("config-old-allow.txt", `key=${AWS_KEY}\n`);
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
@@ -1118,20 +1097,14 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
   });
 
   it("blocks when transcript path is missing (no allow tags)", () => {
-    const p = writeFixture(
-      "config-no-transcript.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("config-no-transcript.txt", `key=${AWS_KEY}\n`);
     const { exitCode, blocked } = runHook("Read", p);
     expect(exitCode).toBe(2);
     expect(blocked).toBe(true);
   });
 
   it("blocks when transcript path points to non-existent file", () => {
-    const p = writeFixture(
-      "config-bad-transcript.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("config-bad-transcript.txt", `key=${AWS_KEY}\n`);
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: "/tmp/no-such-transcript.jsonl",
     });
@@ -1143,7 +1116,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
 
   it("[allow-secret] bypasses inline secret block in Bash command", () => {
     const transcript = writeTranscript(["[allow-secret] echo the key"]);
-    const { exitCode } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
+    const { exitCode } = runBashHook(`echo ${AWS_KEY}`, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(0);
@@ -1152,7 +1125,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
   it("[allow-secret] bypasses env var secret block in Bash command", () => {
     const transcript = writeTranscript(["[allow-secret] ok"]);
     const { exitCode } = runBashHook("echo $TOKEN", {
-      env: { TOKEN: "AKIAIOSFODNN7EXAMPLE" },
+      env: { TOKEN: `${AWS_KEY}` },
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(0);
@@ -1161,7 +1134,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
   it("[allow-all] bypasses env var secret block in Bash command", () => {
     const transcript = writeTranscript(["[allow-all] ok"]);
     const { exitCode } = runBashHook("echo $TOKEN", {
-      env: { TOKEN: "AKIAIOSFODNN7EXAMPLE" },
+      env: { TOKEN: `${AWS_KEY}` },
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(0);
@@ -1169,10 +1142,7 @@ describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
 
   it("[allow-all] bypasses cat on a file with secrets via Bash", () => {
     const transcript = writeTranscript(["[allow-all] show me the config"]);
-    const p = writeFixture(
-      "creds-bash-allow.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("creds-bash-allow.txt", `key=${AWS_KEY}\n`);
     const { exitCode } = runBashHook(`cat ${p}`, {
       transcriptPath: transcript,
     });
@@ -1187,10 +1157,7 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
     const transcript = writeTranscriptWithToolResults([
       { text: "[allow-all] read the config file" },
     ]);
-    const p = writeFixture(
-      "config-first-call.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("config-first-call.txt", `key=${AWS_KEY}\n`);
     const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
     expect(exitCode).toBe(0);
   });
@@ -1200,10 +1167,7 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { text: "[allow-all] read all the config files" },
       { toolResult: "file contents from first read" },
     ]);
-    const p = writeFixture(
-      "config-second-call.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("config-second-call.txt", `key=${AWS_KEY}\n`);
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
@@ -1216,7 +1180,7 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { text: "[allow-secret] check these files" },
       { toolResult: "first tool result" },
     ]);
-    const p = writeFixture("secret-consumed.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
+    const p = writeFixture("secret-consumed.txt", `key=${AWS_KEY}\n`);
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
@@ -1247,10 +1211,7 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { text: "now do something else" },
       { toolResult: "another result" },
     ]);
-    const p = writeFixture(
-      "no-allow-after-new-msg.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
+    const p = writeFixture("no-allow-after-new-msg.txt", `key=${AWS_KEY}\n`);
     const { exitCode, blocked } = runHook("Read", p, {
       transcriptPath: transcript,
     });
@@ -1263,7 +1224,7 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
       { text: "[allow-all] run the commands" },
       { toolResult: "result of first command" },
     ]);
-    const { exitCode, blocked } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
+    const { exitCode, blocked } = runBashHook(`echo ${AWS_KEY}`, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(2);
@@ -1274,7 +1235,7 @@ describe("pre-tool-use-hook — allow tag single-use (consumed by first tool cal
     const transcript = writeTranscriptWithToolResults([
       { text: "[allow-all] run the command" },
     ]);
-    const { exitCode } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
+    const { exitCode } = runBashHook(`echo ${AWS_KEY}`, {
       transcriptPath: transcript,
     });
     expect(exitCode).toBe(0);
@@ -1676,7 +1637,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("pii-only: allows a file containing only secrets", () => {
-    const p = writeFixture("pii-only-secret.txt", "key=AKIAIOSFODNN7EXAMPLE");
+    const p = writeFixture("pii-only-secret.txt", `key=${AWS_KEY}`);
     const { exitCode } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
     });
@@ -1701,10 +1662,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("secret-only: still blocks a file containing secrets", () => {
-    const p = writeFixture(
-      "secret-only-secret.txt",
-      "key=AKIAIOSFODNN7EXAMPLE",
-    );
+    const p = writeFixture("secret-only-secret.txt", `key=${AWS_KEY}`);
     const { exitCode, blocked } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
@@ -1722,7 +1680,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   it("unset: blocks both secrets and PII (default behavior)", () => {
     const p = writeFixture(
       "default-both.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\ncard: 4532015112830366",
+      `key=${AWS_KEY}\ncard: 4532015112830366`,
     );
     const { exitCode, reason } = runHook("Read", p);
     expect(exitCode).toBe(2);

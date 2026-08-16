@@ -111,6 +111,18 @@ export function isRealCardNumber(str: string): boolean {
   return luhn(str);
 }
 
+// AWS writes every key in its documentation with `EXAMPLE` where the random
+// part would end — `AKIAIOSFODNN7EXAMPLE`, `ASIAIOSFODNN7EXAMPLE`. Those appear
+// in setup guides, in READMEs that copy them, and in this project's own
+// documentation, and a block on one reads exactly like a block on a live key.
+//
+// The suffix is the test rather than a list, since AWS uses the convention for
+// every service. A real key whose last seven characters happen to spell it is
+// one in thirty-six to the seventh.
+export function isRealAwsKey(str: string): boolean {
+  return !/EXAMPLE$/.test(str);
+}
+
 export function luhn(str: string): boolean {
   const digits = str.replace(/\D/g, "");
   if (digits.length === 0) return false;
@@ -654,6 +666,7 @@ export function validateJapanesePhone(input: string): boolean {
 
 const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
   luhn: isRealCardNumber,
+  "aws-key": isRealAwsKey,
   "mynumber-jp": validateMyNumber,
   "phone-jp": validateJapanesePhone,
   "nir-fr": validateFrenchNIR,
