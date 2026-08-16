@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|NotebookRead|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",

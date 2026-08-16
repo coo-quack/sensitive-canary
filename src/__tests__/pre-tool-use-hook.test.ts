@@ -1,126 +1,23 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import {
+  AWS_KEY,
+  runBashHook,
+  runHook,
+  runHookWithRawInput,
+  useFixtureDir,
+  useTranscripts,
+} from "./hook-harness.ts";
 
-const HOOK = new URL("../pre-tool-use-hook.ts", import.meta.url).pathname;
-const NODE_FLAGS = ["--experimental-strip-types"];
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function parseHookOutput(stdout: string) {
-  try {
-    const parsed = JSON.parse(stdout) as { decision?: string; reason?: string };
-    return { decision: parsed.decision ?? null, reason: parsed.reason ?? null };
-  } catch {
-    return { decision: null, reason: null };
-  }
-}
-
-let transcriptSeq = 0;
-
-function writeTranscript(userMessages: string[]): string {
-  const lines = userMessages.map((content) =>
-    JSON.stringify({
-      type: "user",
-      message: { role: "user", content },
-    }),
-  );
-  const p = join(tmpDir, `transcript-${++transcriptSeq}.jsonl`);
-  writeFileSync(p, lines.join("\n"), "utf8");
-  return p;
-}
-
-function writeTranscriptWithToolResults(
-  entries: Array<{ text: string } | { toolResult: string }>,
-): string {
-  const lines = entries.map((entry) => {
-    if ("text" in entry) {
-      return JSON.stringify({
-        type: "user",
-        message: { role: "user", content: entry.text },
-      });
-    }
-    return JSON.stringify({
-      type: "user",
-      message: {
-        role: "user",
-        content: [{ type: "tool_result", content: entry.toolResult }],
-      },
-    });
-  });
-  const p = join(tmpDir, `transcript-${++transcriptSeq}.jsonl`);
-  writeFileSync(p, lines.join("\n"), "utf8");
-  return p;
-}
-
-function runHook(
-  toolName: string,
-  filePath: string,
-  opts?: { env?: Record<string, string>; transcriptPath?: string },
-) {
-  const input = JSON.stringify({
-    transcript_path: opts?.transcriptPath,
-    tool_name: toolName,
-    tool_input: { file_path: filePath },
-  });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...opts?.env },
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    decision,
-    reason,
-  };
-}
-
-function runBashHook(
-  command: string,
-  opts?: { env?: Record<string, string>; transcriptPath?: string },
-) {
-  const input = JSON.stringify({
-    transcript_path: opts?.transcriptPath,
-    tool_name: "Bash",
-    tool_input: { command },
-  });
-  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...opts?.env },
-  });
-  const { decision, reason } = parseHookOutput(result.stdout);
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    decision,
-    reason,
-  };
-}
-
-// ── temp directory for fixture files ─────────────────────────────────────────
-
-let tmpDir: string;
-
-beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "sensitive-canary-test-"));
-});
-
-afterAll(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
-function writeFixture(name: string, content: string) {
-  const p = join(tmpDir, name);
-  writeFileSync(p, content, "utf8");
-  return p;
-}
+const fixture = useFixtureDir("pre-tool-use");
+const writeFixture = fixture;
+const _tmpDirOf = () => fixture.path();
+const writeTranscript = useTranscripts(fixture);
+const _writeTranscriptWithToolResults = writeTranscript.withToolResults;
+const _writeRawTranscript = writeTranscript.raw;
 
 // ── non-Read/non-Bash tools ───────────────────────────────────────────────────
 
@@ -136,575 +33,136 @@ describe("pre-tool-use-hook — non-Read/non-Bash tools", () => {
   });
 });
 
-// ── .env / .env.* — secret name block ─────────────────────────────────────────
+// ── which channel a block is reported on ──────────────────────────────────────
 
-describe("pre-tool-use-hook — .env/.env.* name block (secret category)", () => {
-  it("blocks .env regardless of content", () => {
-    const p = writeFixture(".env", "DEBUG=true\nNODE_ENV=development\n");
-    const { exitCode, decision } = runHook("Read", p);
+// The reason goes on stderr alone. Writing to both channels would leave the
+// documented one dead, because stdout wins and stderr is discarded when both
+// carry text — measured with probe hooks, and the reason this hook writes one.
+// Nothing asserted the stdout half of that, so a payload could come back on
+// stdout and every other test would still pass.
+describe("pre-tool-use-hook — block channel", () => {
+  it("reports the reason on stderr and writes nothing to stdout", () => {
+    const p = writeFixture(".env", "DEBUG=true\n");
+    const { exitCode, stdout, stderr } = runHook("Read", p);
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("allow-secret");
   });
 
-  it("blocks .env.local regardless of content", () => {
-    const p = writeFixture(".env.local", "DEBUG=true\n");
-    const { exitCode, decision } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks .env.production regardless of content", () => {
-    const p = writeFixture(".env.production", "DEBUG=true\n");
-    const { exitCode, decision } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("includes [allow-secret], [allow-pii], and [allow-all] hints in reason", () => {
-    const p = writeFixture(".env.hints", "KEY=value");
-    const { reason } = runHook("Read", p);
-    expect(reason).toContain("[allow-secret]");
-    expect(reason).toContain("[allow-pii]");
-    expect(reason).toContain("[allow-all]");
-  });
-
-  it("includes a bird emoji in .env block reason", () => {
-    const p = writeFixture(".env.bird", "KEY=value");
-    const { reason } = runHook("Read", p);
-    expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
+  // An allowed call cannot be recognised by an empty stderr: node's type
+  // stripping is experimental, so it warns there on every run. That is why the
+  // harness reads the reason only when the exit code says a block happened,
+  // rather than treating whatever is on stderr as one.
+  it("says nothing about a block when the call is allowed", () => {
+    const p = writeFixture("channel-clean.txt", "nothing here\n");
+    const { exitCode, stdout, stderr, reason } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe("");
+    expect(reason).toBeNull();
+    expect(stderr).not.toContain("allow-secret");
+    expect(stderr).not.toContain("Blocked");
   });
 });
 
-// ── clean file ────────────────────────────────────────────────────────────────
+// The reason a block gives is sent to Claude. It used to carry the first eighty
+// characters of the command, so blocking `export GITHUB_TOKEN=ghp_…` handed the
+// token to the model in the sentence explaining that it had been withheld.
+describe("pre-tool-use-hook — what the block reason contains", () => {
+  const KEY = ["ghp_", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"].join("");
 
-describe("pre-tool-use-hook — clean file", () => {
-  it("allows a file with no sensitive data", () => {
-    const p = writeFixture("clean.txt", "hello world");
-    const { exitCode } = runHook("Read", p);
-    expect(exitCode).toBe(0);
+  it("does not repeat the command it blocked", () => {
+    const result = runBashHook(`export GITHUB_TOKEN=${KEY}`);
+    expect(result.exitCode).toBe(2);
+    expect(result.reason).not.toContain(KEY);
+    expect(result.reason).toContain("bash command");
   });
 
-  it("allows a non-existent file (let Node handle the error)", () => {
-    const { exitCode } = runHook("Read", "/tmp/does-not-exist-xyz.txt");
-    expect(exitCode).toBe(0);
+  it("still names the rule that fired", () => {
+    const result = runBashHook(`export GITHUB_TOKEN=${KEY}`);
+    expect(result.reason).toContain("github-pat");
   });
 });
 
-// ── secrets/PII in file contents ──────────────────────────────────────────────
-
-describe("pre-tool-use-hook — sensitive content blocking", () => {
-  it("blocks a file containing an AWS key", () => {
-    const p = writeFixture("config.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision, reason } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-    expect(reason).toContain("aws-access-key");
+// An input field of the wrong type used to throw, and an exception exits 1,
+// which does not block.
+describe("pre-tool-use-hook — input shapes the runtime can send", () => {
+  it.each([
+    ['{"tool_name":"Bash","tool_input":{"command":123}}', "a numeric command"],
+    ['{"tool_name":"Bash","tool_input":{"command":["cat","f"]}}', "an array"],
+    ['{"tool_name":"Bash","tool_input":{"command":null}}', "a null command"],
+    [
+      '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":5}',
+      "a numeric cwd",
+    ],
+    ['{"tool_name":"Bash","tool_input":null}', "a null tool_input"],
+  ])("%s (%s) does not crash", (payload) => {
+    expect(runHookWithRawInput(payload).exitCode).toBe(0);
   });
+});
 
-  it("blocks a file containing an email address", () => {
-    const p = writeFixture("contacts.txt", "Email: user@example.com\n");
-    const { exitCode, decision } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
+describe("pre-tool-use-hook — an unforeseen error", () => {
+  const writeFixture = useFixtureDir("fail-closed");
 
-  it("blocks a file containing a private IP", () => {
-    const p = writeFixture("infra.txt", "server: 192.168.1.100\n");
-    const { exitCode, decision } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("includes [allow-secret] and [allow-all] hints in reason for a secret", () => {
-    const p = writeFixture("key.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
-    const { reason } = runHook("Read", p);
-    expect(reason).toContain("[allow-secret]");
-    expect(reason).toContain("[allow-all]");
-  });
-
-  it("includes a bird emoji in the reason", () => {
-    const p = writeFixture("bird.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
-    const { reason } = runHook("Read", p);
-    expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
-  });
-
-  it("includes [allow-pii] and [allow-all] hints in reason for PII", () => {
-    const p = writeFixture("pii.txt", "Email: user@example.com\n");
-    const { reason } = runHook("Read", p);
-    expect(reason).toContain("[allow-pii]");
-    expect(reason).toContain("[allow-all]");
-  });
-
-  it("deduplicates repeated secrets — finding line appears only once", () => {
-    const p = writeFixture(
-      "dup.txt",
-      "A=AKIAIOSFODNN7EXAMPLE\nB=AKIAIOSFODNN7EXAMPLE\n",
+  // A scan that cannot finish is the error this is really for: the budget
+  // throws, and the throw has to stop the call rather than pass it through.
+  it("a scan that cannot finish stops the call", () => {
+    const config = writeFixture(
+      "slow.json",
+      JSON.stringify({
+        rules: Array.from({ length: 8 }, (_, i) => ({
+          id: `slow-${i}`,
+          description: "deliberately slow",
+          regex:
+            "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+          category: "secret",
+        })),
+      }),
     );
-    const { reason } = runHook("Read", p);
-    const count = (reason ?? "").split("[Secret]").length - 1;
-    expect(count).toBe(1);
-  });
-});
-
-// ── binary file handling ─────────────────────────────────────────────────────
-
-describe("pre-tool-use-hook — binary file handling", () => {
-  it("blocks when a secret appears before the first NUL byte", () => {
-    const content = Buffer.concat([
-      Buffer.from("key=AKIAIOSFODNN7EXAMPLE\n"),
-      Buffer.from([0x00]),
-      Buffer.from("binary data"),
-    ]);
-    const p = join(tmpDir, "binary-secret-before-nul.bin");
-    writeFileSync(p, content);
-    const { exitCode, decision } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("allows a binary file when no secret appears before the first NUL byte", () => {
-    const content = Buffer.concat([
-      Buffer.from("clean text\n"),
-      Buffer.from([0x00]),
-      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
-    ]);
-    const p = join(tmpDir, "binary-secret-after-nul.bin");
-    writeFileSync(p, content);
-    const { exitCode } = runHook("Read", p);
-    expect(exitCode).toBe(0);
-  });
-
-  it("allows a binary file that starts with NUL", () => {
-    const content = Buffer.concat([
-      Buffer.from([0x00]),
-      Buffer.from("AKIAIOSFODNN7EXAMPLE"),
-    ]);
-    const p = join(tmpDir, "binary-nul-start.bin");
-    writeFileSync(p, content);
-    const { exitCode } = runHook("Read", p);
-    expect(exitCode).toBe(0);
-  });
-});
-
-// ── transcript tail read ────────────────────────────────────────────────────
-
-describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {
-  it("[allow-all] in a large transcript (>64KB) is respected when near the end", () => {
-    // Build a transcript larger than 64KB with the allow tag in the last message
-    const filler = JSON.stringify({
-      type: "user",
-      message: { role: "user", content: "x".repeat(1024) },
-    });
-    const fillerLines = Array.from({ length: 70 }, () => filler).join("\n");
-    const allowLine = JSON.stringify({
-      type: "user",
-      message: { role: "user", content: "[allow-all] read everything" },
-    });
-    const transcriptContent = `${fillerLines}\n${allowLine}\n`;
-    const tp = join(tmpDir, "large-transcript.jsonl");
-    writeFileSync(tp, transcriptContent, "utf8");
-
-    const p = writeFixture(
-      "large-transcript-test.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
+    // Spawned directly rather than through the harness: the harness caps a run
+    // at fifteen seconds so a hang fails the test instead of stopping the run,
+    // and this case has to be allowed to reach the ten-second budget.
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        fileURLToPath(new URL("../pre-tool-use-hook.ts", import.meta.url)),
+      ],
+      {
+        input: JSON.stringify({
+          tool_name: "Bash",
+          tool_input: { command: `echo ${"eyJ".repeat(21_845)}` },
+        }),
+        env: { ...process.env, SENSITIVE_CANARY_CONFIG: config },
+        encoding: "utf8",
+        timeout: 90_000,
+      },
     );
-    const { exitCode } = runHook("Read", p, { transcriptPath: tp });
-    expect(exitCode).toBe(0);
-  });
-});
-
-// ── Bash tool — env var expansion ────────────────────────────────────────────
-
-describe("pre-tool-use-hook — Bash tool (env var expansion)", () => {
-  it("blocks echo $TOKEN when TOKEN contains an AWS key", () => {
-    const { exitCode, decision } = runBashHook("echo $TOKEN", {
-      env: { TOKEN: "AKIAIOSFODNN7EXAMPLE" },
-    });
+    const { status: exitCode, stderr } = result;
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
+    expect(stderr).toContain("the check could not complete");
+    expect(stderr).not.toContain("sensitive data detected");
+  }, 120_000);
 
-  it("includes the variable name and rule in reason", () => {
-    const { reason } = runBashHook("echo $MY_SECRET", {
-      env: { MY_SECRET: "AKIAIOSFODNN7EXAMPLE" },
-    });
-    expect(reason).toContain("$MY_SECRET");
-    expect(reason).toContain("aws-access-key");
-  });
-
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional literal — testing ${VAR} bash syntax
-  it("blocks ${TOKEN} brace syntax", () => {
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional literal — the string is passed as a bash command
-    const { exitCode } = runBashHook("curl -H 'Auth: ${API_TOKEN}'", {
-      env: { API_TOKEN: "AKIAIOSFODNN7EXAMPLE" },
-    });
-    expect(exitCode).toBe(2);
-  });
-
-  it("allows echo $TOKEN when TOKEN value is clean", () => {
-    const { exitCode } = runBashHook("echo $TOKEN", {
-      env: { TOKEN: "nothing_sensitive_here" },
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  it("allows echo $TOKEN when TOKEN is unset", () => {
-    const { exitCode } = runBashHook("echo $TOKEN");
-    expect(exitCode).toBe(0);
-  });
-
-  it("ignores special shell variables like $? and $0", () => {
-    const { exitCode } = runBashHook("exit $?; echo $0");
-    expect(exitCode).toBe(0);
-  });
-});
-
-// ── Bash tool — command string scanning ──────────────────────────────────────
-
-describe("pre-tool-use-hook — Bash tool (command string)", () => {
-  it("allows a harmless Bash command", () => {
-    const { exitCode } = runBashHook("ls -la /tmp");
-    expect(exitCode).toBe(0);
-  });
-
-  it("blocks a Bash command containing an AWS key (e.g. echo)", () => {
-    const { exitCode, decision } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("includes aws-access-key in reason for inline secret", () => {
-    const { reason } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
-    expect(reason).toContain("aws-access-key");
-  });
-
-  it("includes a bird emoji in the reason for Bash block", () => {
-    const { reason } = runBashHook("echo AKIAIOSFODNN7EXAMPLE");
-    expect(reason).toMatch(/[🐦🐧🐤🐔]/u);
-  });
-});
-
-// ── Bash tool — file-reading command blocking ─────────────────────────────────
-
-describe("pre-tool-use-hook — Bash tool (file-reading commands)", () => {
-  it.each(["cat", "head", "tail", "less", "more", "bat", "nl"])(
-    "blocks %s on a file with secrets",
-    (cmd) => {
-      const p = writeFixture(
-        `creds-${cmd}.txt`,
-        "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n",
-      );
-      const { exitCode, decision } = runBashHook(`${cmd} ${p}`);
-      expect(exitCode).toBe(2);
-      expect(decision).toBe("block");
+  // Input the hook does understand is unaffected: this must not become a hook
+  // that blocks everything. `null` parses, and a payload that is not an object
+  // names nothing — treating "nothing to scan" as a threat is the misfire this
+  // guard must not make.
+  it.each(["", "   ", "{}", "[]", "null", "42", '{"tool_name":"Read"}'])(
+    "%s is still allowed",
+    (payload) => {
+      expect(runHookWithRawInput(payload).exitCode).toBe(0);
     },
   );
 
-  it("blocks cat on a file with PII", () => {
-    const p = writeFixture("contacts-bash.txt", "Email: user@example.com\n");
-    const { exitCode, decision } = runBashHook(`cat ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("allows cat on a clean file", () => {
-    const p = writeFixture("clean-bash.txt", "nothing sensitive here\n");
-    const { exitCode } = runBashHook(`cat ${p}`);
-    expect(exitCode).toBe(0);
-  });
-
-  it("allows cat on a non-existent file (let shell handle the error)", () => {
-    const { exitCode } = runBashHook("cat /tmp/does-not-exist-xyz.txt");
-    expect(exitCode).toBe(0);
-  });
-
-  it("blocks cat in a compound command (pipe) on a file with secrets", () => {
-    const p = writeFixture("pipe-secret.txt", "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runBashHook(`cat ${p} | grep KEY`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("allows cat in a compound command (pipe) on a clean file", () => {
-    const p = writeFixture("pipe-clean.txt", "nothing sensitive here\n");
-    const { exitCode } = runBashHook(`cat ${p} | grep text`);
-    expect(exitCode).toBe(0);
-  });
-
-  it("blocks cat on a .env.* file by name", () => {
-    const p = writeFixture(".env.bash-name", "DEBUG=true\n");
-    const { exitCode, decision } = runBashHook(`cat ${p}`);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("[allow-pii] bypasses cat on a .env.* file", () => {
-    const transcript = writeTranscript(["[allow-pii] show me the env"]);
-    const p = writeFixture(".env.bash-pii", "DEBUG=true\n");
-    const { exitCode } = runBashHook(`cat ${p}`, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(0);
-  });
-});
-
-// ── allow tag bypass (transcript) ────────────────────────────────────────────
-
-describe("pre-tool-use-hook — allow tag bypass via transcript", () => {
-  // ── Read tool ──────────────────────────────────────────────────────────────
-
-  it("[allow-all] bypasses .env name block", () => {
-    const transcript = writeTranscript([
-      "[allow-all] please read the .env file",
-    ]);
-    const p = writeFixture(".env.bypass-all", "KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-secret] bypasses .env name block", () => {
-    const transcript = writeTranscript(["[allow-secret] read the env file"]);
-    const p = writeFixture(".env.bypass-secret", "KEY=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-pii] also bypasses .env name block", () => {
-    const transcript = writeTranscript(["[allow-pii] read the env file"]);
-    const p = writeFixture(".env.bypass-pii", "KEY=value");
-    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-secret] bypasses secrets in content scan", () => {
-    const transcript = writeTranscript(["[allow-secret] check the config"]);
-    const p = writeFixture(
-      "config-allow-secret2.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-pii] bypasses PII in content scan", () => {
-    const transcript = writeTranscript(["[allow-pii] ok"]);
-    const p = writeFixture("pii-allow.txt", "email=user@example.com\n");
-    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-pii] bypasses PII but not secrets in content scan", () => {
-    const transcript = writeTranscript(["[allow-pii] ok"]);
-    const p = writeFixture(
-      "mixed-allow-pii.txt",
-      "email=user@example.com\nkey=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode, decision } = runHook("Read", p, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("[allow-all] in the latest message is respected even with older messages", () => {
-    const transcript = writeTranscript([
-      "please help me with the config",
-      "[allow-all] yes read everything",
-    ]);
-    const p = writeFixture(
-      "config-allow-latest.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
-  });
-
-  it("old [allow-all] in a past message is NOT respected when latest message has no tag", () => {
-    const transcript = writeTranscript([
-      "[allow-all] read this file",
-      "now do something else",
-    ]);
-    const p = writeFixture(
-      "config-old-allow.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode, decision } = runHook("Read", p, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks when transcript path is missing (no allow tags)", () => {
-    const p = writeFixture(
-      "config-no-transcript.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode, decision } = runHook("Read", p);
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks when transcript path points to non-existent file", () => {
-    const p = writeFixture(
-      "config-bad-transcript.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode, decision } = runHook("Read", p, {
-      transcriptPath: "/tmp/no-such-transcript.jsonl",
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  // ── Bash tool ──────────────────────────────────────────────────────────────
-
-  it("[allow-secret] bypasses inline secret block in Bash command", () => {
-    const transcript = writeTranscript(["[allow-secret] echo the key"]);
-    const { exitCode } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-secret] bypasses env var secret block in Bash command", () => {
-    const transcript = writeTranscript(["[allow-secret] ok"]);
-    const { exitCode } = runBashHook("echo $TOKEN", {
-      env: { TOKEN: "AKIAIOSFODNN7EXAMPLE" },
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-all] bypasses env var secret block in Bash command", () => {
-    const transcript = writeTranscript(["[allow-all] ok"]);
-    const { exitCode } = runBashHook("echo $TOKEN", {
-      env: { TOKEN: "AKIAIOSFODNN7EXAMPLE" },
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-all] bypasses cat on a file with secrets via Bash", () => {
-    const transcript = writeTranscript(["[allow-all] show me the config"]);
-    const p = writeFixture(
-      "creds-bash-allow.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode } = runBashHook(`cat ${p}`, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(0);
-  });
-});
-
-// ── allow tag consumed after first tool call ──────────────────────────────────
-
-describe("pre-tool-use-hook — allow tag single-use (consumed by first tool call)", () => {
-  it("[allow-all] works when no tool_result has been recorded yet", () => {
-    const transcript = writeTranscriptWithToolResults([
-      { text: "[allow-all] read the config file" },
-    ]);
-    const p = writeFixture(
-      "config-first-call.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode } = runHook("Read", p, { transcriptPath: transcript });
-    expect(exitCode).toBe(0);
-  });
-
-  it("[allow-all] is consumed after a tool_result — second call is blocked", () => {
-    const transcript = writeTranscriptWithToolResults([
-      { text: "[allow-all] read all the config files" },
-      { toolResult: "file contents from first read" },
-    ]);
-    const p = writeFixture(
-      "config-second-call.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode, decision } = runHook("Read", p, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("[allow-secret] is consumed after a tool_result", () => {
-    const transcript = writeTranscriptWithToolResults([
-      { text: "[allow-secret] check these files" },
-      { toolResult: "first tool result" },
-    ]);
-    const p = writeFixture("secret-consumed.txt", "key=AKIAIOSFODNN7EXAMPLE\n");
-    const { exitCode, decision } = runHook("Read", p, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("[allow-pii] is consumed after a tool_result", () => {
-    const transcript = writeTranscriptWithToolResults([
-      { text: "[allow-pii] read the contacts" },
-      { toolResult: "previous tool output" },
-    ]);
-    const p = writeFixture("pii-consumed.txt", "email=user@example.com\n");
-    const { exitCode, decision } = runHook("Read", p, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("blocks when latest real user message has no allow tag despite earlier allow", () => {
-    const transcript = writeTranscriptWithToolResults([
-      { text: "[allow-all] read everything" },
-      { toolResult: "some result" },
-      { text: "now do something else" },
-      { toolResult: "another result" },
-    ]);
-    const p = writeFixture(
-      "no-allow-after-new-msg.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\n",
-    );
-    const { exitCode, decision } = runHook("Read", p, {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("[allow-all] consumed for Bash after tool_result", () => {
-    const transcript = writeTranscriptWithToolResults([
-      { text: "[allow-all] run the commands" },
-      { toolResult: "result of first command" },
-    ]);
-    const { exitCode, decision } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
-  });
-
-  it("[allow-all] works for Bash when no tool_result yet", () => {
-    const transcript = writeTranscriptWithToolResults([
-      { text: "[allow-all] run the command" },
-    ]);
-    const { exitCode } = runBashHook("echo AKIAIOSFODNN7EXAMPLE", {
-      transcriptPath: transcript,
-    });
-    expect(exitCode).toBe(0);
-  });
-});
-
-// ── malformed input ───────────────────────────────────────────────────────────
-
-describe("pre-tool-use-hook — malformed input", () => {
-  it("exits 0 on invalid JSON", () => {
-    const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
-      input: "not json",
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
+  // Bytes that do not parse are a check that could not read its input, which is
+  // not the same as safe: two characters missing from the end of a payload used
+  // to pass a key through.
+  it.each([
+    "not json",
+    '{"tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}',
+    '{"tool_name":',
+  ])("%s stops the call", (payload) => {
+    expect(runHookWithRawInput(payload).exitCode).toBe(2);
   });
 });
 
@@ -712,7 +170,7 @@ describe("pre-tool-use-hook — malformed input", () => {
 
 describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   it("pii-only: allows reading .env files (secret guard disabled)", () => {
-    const dir = join(tmpDir, "pii-only-env");
+    const dir = join(fixture.path(), "pii-only-env");
     mkdirSync(dir, { recursive: true });
     const p = join(dir, ".env");
     writeFileSync(p, "DEBUG=true\n", "utf8");
@@ -723,7 +181,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("pii-only: allows a file containing only secrets", () => {
-    const p = writeFixture("pii-only-secret.txt", "key=AKIAIOSFODNN7EXAMPLE");
+    const p = writeFixture("pii-only-secret.txt", `key=${AWS_KEY}`);
     const { exitCode } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
     });
@@ -731,16 +189,16 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("pii-only: still blocks a file containing PII", () => {
-    const p = writeFixture("pii-only-pii.txt", "card: 4111111111111111");
-    const { exitCode, decision } = runHook("Read", p, {
+    const p = writeFixture("pii-only-pii.txt", "card: 4532015112830366");
+    const { exitCode, blocked } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "pii" },
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("secret-only: allows a file containing only PII", () => {
-    const p = writeFixture("secret-only-pii.txt", "card: 4111111111111111");
+    const p = writeFixture("secret-only-pii.txt", "card: 4532015112830366");
     const { exitCode } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
@@ -748,19 +206,16 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   });
 
   it("secret-only: still blocks a file containing secrets", () => {
-    const p = writeFixture(
-      "secret-only-secret.txt",
-      "key=AKIAIOSFODNN7EXAMPLE",
-    );
-    const { exitCode, decision } = runHook("Read", p, {
+    const p = writeFixture("secret-only-secret.txt", `key=${AWS_KEY}`);
+    const { exitCode, blocked } = runHook("Read", p, {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
     expect(exitCode).toBe(2);
-    expect(decision).toBe("block");
+    expect(blocked).toBe(true);
   });
 
   it("secret-only: allows a bash command containing only PII", () => {
-    const { exitCode } = runBashHook("echo 4111111111111111", {
+    const { exitCode } = runBashHook("echo 4532015112830366", {
       env: { SENSITIVE_CANARY_CATEGORIES: "secret" },
     });
     expect(exitCode).toBe(0);
@@ -769,7 +224,7 @@ describe("pre-tool-use-hook — SENSITIVE_CANARY_CATEGORIES", () => {
   it("unset: blocks both secrets and PII (default behavior)", () => {
     const p = writeFixture(
       "default-both.txt",
-      "key=AKIAIOSFODNN7EXAMPLE\ncard: 4111111111111111",
+      `key=${AWS_KEY}\ncard: 4532015112830366`,
     );
     const { exitCode, reason } = runHook("Read", p);
     expect(exitCode).toBe(2);

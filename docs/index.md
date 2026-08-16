@@ -25,7 +25,7 @@ features:
     details: Catches AWS keys, GitHub PATs, Stripe keys, JWTs, Anthropic/OpenAI API keys, database connection strings, Replicate/Hugging Face/Groq/xAI tokens, DigitalOcean/Square/Sentry/Linear tokens, and 20+ more credential types.
   - icon: 🕵️
     title: PII Detection
-    details: Detects email addresses, credit card numbers (Luhn-validated), US SSNs, phone numbers (JP/US/FR/IT/DE/ES/KR/CN), national IDs with checksum validation (My Number, NIR, Codice Fiscale, Steuer-IdNr., DNI/NIE, RRN, BRN, Chinese Resident ID), postal codes, and public/private IP addresses.
+    details: Detects email addresses, credit card numbers (Luhn-validated), US SSNs, phone numbers (JP/US/FR/IT/DE/ES/KR/CN), national IDs with checksum validation (My Number, NIR, Codice Fiscale, Steuer-IdNr., DNI/NIE, RRN, BRN, Chinese Resident ID), postal codes, and public IP addresses.
   - icon: 🛡️
     title: Pre-Tool-Use Hook
     details: Scans files before Claude reads them. Blocks .env files by name and any file whose contents contain secrets or PII.
@@ -49,13 +49,13 @@ Claude Code is a powerful development tool, but file reads and command execution
 | Without Sensitive Canary | With Sensitive Canary |
 |--------------------------|----------------------|
 | `cat .env` → full contents sent to Claude ❌ | Blocked by name by default before Claude reads it ✅ |
-| Paste `AKIAIOSFODNN7EXAMPLE` in prompt ❌ | Blocked before the API call is made ✅ |
-| Tool result contains user@email.com ❌ | PII detected and blocked ✅ |
+| Paste a live AWS key in a prompt ❌ | Blocked before the API call is made ✅ |
+| `Read customers.csv` full of email addresses ❌ | PII detected before Claude sees the file ✅ |
 | `echo $API_KEY` with live key ❌ | Env var value scanned and blocked ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **64 detection rules** — sourced from gitleaks and TruffleHog detector definitions
-- **Context gating** — noisy PII rules (phone, postal, IP) only fire when a relevant label is nearby
+- **76 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **Context gating** — the noisiest PII rules (non-US/JP phone numbers, postal codes, public IP addresses) only fire when a relevant label is nearby; US and JP phone numbers and JP postal codes are matched without one
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Local only** — all scanning runs in your terminal; nothing is sent anywhere

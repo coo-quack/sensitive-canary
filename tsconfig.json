@@ -21,6 +21,8 @@
     ]
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "vitest.config.ts",
+    "docs/.vitepress/config.ts"
   ]
 }

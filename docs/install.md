@@ -18,7 +18,28 @@ Run the following two commands inside a Claude Code session:
 /plugin install sensitive-canary@coo-quack
 ```
 
-Claude Code will download the plugin and register the hooks automatically. No restart is required.
+Claude Code will download the plugin and register the hooks automatically.
+
+A session that is already running does not pick them up. It reports the install as successful and lists the plugin as enabled, and checks nothing until it is restarted — which is exactly the state this tool exists to prevent, and it is invisible. Start a new session, then check that it blocks.
+
+**3. Check that it blocks**
+
+An installation that checks nothing looks exactly like one that works, and only
+exit 2 stops a tool call, so a hook that fails to start is silent. This step is
+not optional.
+
+```bash
+printf -- '-----BEGIN RSA PRIVATE KEY-----\n' > /tmp/canary-check.txt
+```
+
+Ask Claude to read `/tmp/canary-check.txt`. It should refuse and say why. If it
+reads the file and shows you what is in it, the hooks are not running — see
+[Troubleshooting](/troubleshooting).
+
+A private-key header is the fixture here because it carries no key material and
+is recognised on its own. AWS's documented `AKIAIOSFODNN7EXAMPLE` will not do:
+it appears in AWS's own setup guides and in READMEs that copy them, so this tool
+reads it as documentation and allows it.
 
 ### Updating
 
@@ -45,20 +66,32 @@ Update to the latest version:
 pnpm update -g @coo-quack/sensitive-canary
 ```
 
-**2. Register hooks**
+**2. Find where pnpm put it**
 
-Add the following to `~/.claude/settings.json`:
+`pnpm root -g` does not name the directory the package ends up in — on pnpm 10
+and later it returns a versioned root with no `node_modules` under it, and a
+hook wired to that path fails to start. A hook that fails to start exits 1, and
+only exit 2 blocks, so the mistake is silent. Ask where the file actually is:
+
+```bash
+find "$(pnpm root -g)" -path '*@coo-quack/sensitive-canary/dist/pre-tool-use-hook.js' 2>/dev/null
+```
+
+**3. Register hooks**
+
+Put the directory that command prints — everything up to and including `dist` —
+in place of `<dist>` below, in `~/.claude/settings.json`:
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|NotebookRead|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
-            "command": "pnpm -s dlx tsx $(pnpm root -g)/@coo-quack/sensitive-canary/src/pre-tool-use-hook.ts"
+            "command": "node <dist>/pre-tool-use-hook.js"
           }
         ]
       }
@@ -68,7 +101,7 @@ Add the following to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "pnpm -s dlx tsx $(pnpm root -g)/@coo-quack/sensitive-canary/src/user-prompt-submit-hook.ts"
+            "command": "node <dist>/user-prompt-submit-hook.js"
           }
         ]
       }
@@ -77,7 +110,31 @@ Add the following to `~/.claude/settings.json`:
 }
 ```
 
-> **Note:** Node.js does not support `--experimental-strip-types` for files inside `node_modules`, so `pnpm dlx tsx` is used instead. No build step is required.
+These point at the compiled JavaScript the package ships. Node refuses to strip
+types from a `.ts` file inside `node_modules`, and a hook that fails to start
+exits non-zero without blocking — so an installation wired to `src/` looks
+installed and checks nothing. The plugin install uses the `.ts` sources, which
+sit outside `node_modules` and work.
+
+**4. Check that it blocks**
+
+An installation that checks nothing looks exactly like one that works, so this
+step is not optional. Run the hook by hand and read the exit code:
+
+```bash
+printf -- '-----BEGIN RSA PRIVATE KEY-----\n' > /tmp/canary-check.txt
+printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/canary-check.txt"}}' \
+  | node <dist>/pre-tool-use-hook.js; echo "exit=$?"
+```
+
+`exit=2` means it is working. Anything else — 0, 1, or a module-not-found error
+— means the path is wrong and nothing is being checked.
+
+The fixture is a private-key header rather than a key: it carries no key
+material and is recognised on its own. AWS's documented `AKIAIOSFODNN7EXAMPLE`
+would report `exit=0` here, because this tool reads it as the documentation it
+is — see [Rules](/rules).
+
 
 ## Manual Setup (git clone)
 
@@ -111,7 +168,7 @@ Add the following to `~/.claude/settings.json`:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash",
+        "matcher": "Read|NotebookRead|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -165,12 +222,12 @@ To allow, add a tag to your prompt:
 
 ### PreToolUse hook
 
-Runs before Claude uses the `Read` or `Bash` tool. It blocks:
+Runs before Claude uses `Read`, `NotebookRead`, `Bash`, `Grep` or any MCP tool. It blocks:
 
 - `.env` and `.env.*` files by filename (a secret guard; only while the `secret` category is enabled)
 - Any file whose contents contain secrets or PII
 - `cat`, `head`, `tail`, and other file-reading commands targeting sensitive files
-- Bash commands containing secrets inline (e.g. `echo AKIAIOSFODNN7EXAMPLE`)
+- Bash commands containing secrets inline (e.g. `echo ghp_…`)
 - Environment variables referenced in Bash commands whose values contain secrets
 
 ## Allow Tags

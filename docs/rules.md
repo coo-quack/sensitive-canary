@@ -78,7 +78,9 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `jwt` | JSON Web Token (three Base64URL segments separated by `.`) |
 | `private-key` | PEM Private Key header (`-----BEGIN … PRIVATE KEY-----`) |
-| `connection-string` | Database connection string with embedded credentials |
+| `private-key-base64` | PEM private key that has been base64-encoded — how one appears in a kubeconfig, a Kubernetes Secret or a Terraform state, where the `-----BEGIN` header never shows in the text |
+| `url-basic-auth` | Credentials in the userinfo field of an http(s) URL — a git remote, a `.netrc`, a private registry, a `curl` invocation. RFC 3986 deprecates the form for this reason |
+| `connection-string` | Database connection string with embedded credentials; each half of the credentials is bounded at 1024 characters — see the note below the tables |
 
 ### SaaS / Developer Tools
 
@@ -91,22 +93,50 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `linear-key` | Linear API Key (`lin_api_` prefix) |
 | `postman-key` | Postman API Key (`PMAK-` prefix) |
 
+### Platforms and Infrastructure
+
+| Rule ID | Description |
+|---------|-------------|
+| `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
+| `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
+| `azure-sas-key` | Azure Shared Access Key for Service Bus, Event Hubs and IoT Hub (`SharedAccessKey=` + 44-char base64). Separate from the storage account key, which is 88 characters |
+| `google-oauth-secret` | Google OAuth Client Secret (`GOCSPX-` prefix) |
+| `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
+| `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
+| `vault-token` | HashiCorp Vault Token (`hvs.` / `hvb.` prefix) |
+| `shopify-token` | Shopify Access Token (`shpat_`, `shpss_`, `shpca_`, `shppa_` prefix) |
+| `doppler-token` | Doppler Token (`dp.pt.`, `dp.st.`, … prefix) |
+| `grafana-token` | Grafana Cloud / Service Account Token (`glc_`, `glsa_` prefix) |
+| `notion-token` | Notion Integration Token (`ntn_` prefix) |
+
 ### Generic / Env-based
 
 | Rule ID | Description | Entropy threshold |
 |---------|-------------|-------------------|
 | `generic-secret` | `api_key`, `secret_key`, `access_token`, `api_secret` assignments | 3.5 |
-| `env-assignment` | `.env`-style assignments for `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, `PRIVATE_KEY` | 3.0 |
+| `env-assignment` | Assignments whose name carries `SECRET`, `PASSWORD`, `PASSWD`, `PASS`, `TOKEN`, `API_KEY`, `ACCESS_KEY` or `PRIVATE_KEY`, written with `=` anywhere or with `:` at the start of a line. `PASS` must stand on its own — `COMPASS` and `BYPASS` are not passwords. The value must be a value: eight characters or more, no brackets or separators in it, and not a `$VAR` reference | 3.0 |
 
-The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`) that are unlikely to be real secrets. Entropy is calculated using the Shannon entropy formula.
+The entropy threshold filters out low-entropy values that are unlikely to be real secrets — `API_KEY=aaaaaaaa` scores 0 and is dropped. It is a weak filter, not a classifier: `placeholder` scores 3.096 and clears the 3.0 threshold, so entropy alone would report `API_KEY=placeholder`. What drops that one is the placeholder test, not the threshold. Entropy is the Shannon entropy of the value.
+
+### Why `private-key-base64` carries three prefixes
+
+Base64 encodes three bytes at a time, so what `-----BEGIN ` looks like once
+encoded depends on where it sits relative to that boundary. A key encoded whole
+— `client-key-data` in a kubeconfig, `tls.key` in a Kubernetes Secret, a
+`base64 -w0 < key.pem` — starts at offset 0 and produces `LS0tLS1CRUdJTi`. A key
+that begins one or two bytes into what was encoded produces `0tLS0tQkVHSU4g` or
+`tLS0tLUJFR0lOI` instead, and the rule lists all three: matching only the first
+would find one PEM in three. Offsets beyond two repeat the cycle.
+
+The plaintext `private-key` rule is unaffected either way — it reads the header
+itself.
 
 ## PII
 
 | Rule ID | Description | Notes |
 |---------|-------------|-------|
-| `pii-email` | Email Address | Standard RFC 5322-like pattern |
+| `pii-email` | Email Address | Local part up to 64 characters per unbroken run (RFC 5321's limit); domain matched as dot-separated labels, so a domain with no dot (`user@localhost`) is not one. Both bounds are there to keep the pattern from backtracking — see the note below the table |
 | `pii-credit-card` | Credit Card Number | Visa, Mastercard, Amex, Discover; validated with Luhn algorithm |
-| `pii-ipv4` | Private IPv4 Address | RFC 1918 ranges only: `10.x`, `172.16–31.x`, `192.168.x` |
 | `pii-ssn` | US Social Security Number | Excludes invalid area (000, 666, 9xx), group (00), and serial (0000) numbers |
 | `pii-mynumber-jp` | Japanese Individual Number (My Number) | 12 digits, validated with weighted checksum (mod 11) |
 | `pii-nir-fr` | French NIR / Social Security Number | 15 digits, validated with check key (mod 97); Corsica 2A/2B supported |
@@ -121,14 +151,30 @@ The entropy threshold filters out low-entropy values (e.g. `API_KEY=placeholder`
 | `pii-phone-es` | Spanish Phone Number | Context-gated |
 | `pii-postal-jp` | Japanese Postal Code | Requires `〒` prefix to avoid false positives |
 | `pii-postal-code` | Postal Code (US ZIP / EU / KR) | Context-gated (requires nearby postal label) |
-| `pii-rrn-kr` | Korean Resident Registration Number | 13 digits, validated with weighted checksum (mod 11) |
-| `pii-brn-kr` | Korean Business Registration Number | 10 digits, validated with NTS standard checksum |
+| `pii-rrn-kr` | Korean Resident Registration Number | 13 digits, validated with weighted checksum (mod 11); context-gated, since thirteen digits that satisfy the checksum turn up in timestamps |
+| `pii-brn-kr` | Korean Business Registration Number | 10 digits, validated with NTS standard checksum; context-gated, for the same reason |
 | `pii-resident-id-cn` | Chinese Resident Identity Card | 18 chars (17 digits + check), validated with GB 11643 MOD 11-2 |
 | `pii-phone-kr` | Korean Phone Number | Context-gated |
 | `pii-phone-cn` | Chinese Phone Number | Context-gated |
 | `pii-postal-cn` | Chinese Postal Code (6-digit) | Context-gated |
 | `pii-ipv4-public` | Public IPv4 Address | Context-gated; reserved/private ranges excluded |
 | `pii-ipv6` | IPv6 Address | Context-gated; loopback, link-local, ULA, multicast excluded |
+
+### Why three patterns carry length bounds
+
+`pii-email`, `env-assignment` and `connection-string` each bound a repeated character class, and the bounds are not cosmetic. Each put an unbounded quantifier on a class that also matches the separator around it, so on a long run with no match in it — a log full of IP addresses, a file of capitals with no `=`, a line of `mongodb://` with no `@` — every position started a greedy consume of the rest of the text and then backtracked a character at a time. That is quadratic: measured on `env-assignment` alone, 59 KB took 381 ms, 234 KB took 6.9 s and 1 MiB took 125 s; `connection-string` took 2.3 s on 188 KB and 98 s on 1 MiB through the hook.
+
+This matters more than a slow scan. A hook that does not return is killed by Claude Code's PreToolUse timeout, and **a killed hook does not block the tool call** — so a slow pattern is a way through, not an inconvenience. `src/lib/__tests__/rules.test.ts` runs every rule in this file against a list of adversarial shapes and fails any that takes more than two seconds. That list is not a proof: `connection-string` was quadratic and every shape then in the list walked past it, so one written for its own syntax had to be added before it failed. Adding a rule means asking what input makes its own quantifiers run, and adding that shape there if the list has nothing like it.
+
+A rule that needs an unbounded repeat should say why in its `description`, and should come with a case in that file.
+
+What the bounds cost, stated rather than implied:
+
+- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_]` characters in an unbroken run before the `@`. Every other character the local part allows — `.`, `%`, `+`, `-` — is a non-word character, so the word boundary restarts at it and a long address containing one is still found (measured: 65 letters is missed, 65 with a `%` in the middle is not); 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
+- **`env-assignment`**: a name with 65 or more capitals in a run on either side of the keyword — `AAA…SECRET=` and `SECRET…AAA=` alike. `_` is a word character, so `A×65_SECRET=` is lost too, since the boundary does not restart at the underscore.
+- **`connection-string`**: a user or a password longer than 1024 characters.
+
+None of these is a spelling anyone writes. All of them are a way to write one this tool will not see, which is the honest way to hold both facts.
 
 ### National ID Validation
 
@@ -149,7 +195,7 @@ Phone numbers (IT, DE, FR, ES, KR, CN) and bare postal codes (5/9-digit and Chin
 
 National ID numbers rely on their checksums instead and do not require context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
-Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.) so that example IPs like `8.8.8.8` and tutorials do not fire unless a label such as `ip`, `ipv4`, or `ipv6` is nearby. The existing `pii-ipv4` rule still flags RFC 1918 private ranges without context.
+Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.), so an address like `8.8.8.8` fires only when a label such as `ip`, `ipv4` or `ipv6` is nearby. RFC 1918 private addresses are not matched by any rule: they are non-routable and identify nothing outside their own network, and treating them as personal data blocked ordinary infrastructure work.
 
 ### Credit Card Validation
 
@@ -167,6 +213,8 @@ All blocks can be bypassed by including an allow tag in your prompt. Allow tags 
 
 Tags are **case-insensitive**: `[ALLOW-SECRET]` and `[Allow-Secret]` work the same as `[allow-secret]`.
 
+The name-based block on `.env`/`.env.*` files is a secret guard, so `[allow-secret]` and `[allow-all]` lift it and `[allow-pii]` does not.
+
 ### Mask Tags
 
 `[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content before it is sent to the API.
@@ -179,19 +227,30 @@ If you include a mask tag in your prompt, sensitive-canary shows an explanation 
 | `[mask-pii]` | `[allow-pii]` |
 | `[mask-all]` | `[allow-all]` |
 
-### Allow + Mask Tag Priority
+### Tag Priority
 
-When both `[allow-*]` and `[mask-*]` tags appear in the same prompt, **the tag that appears first wins** for each category dimension (`secret`, `pii`).
+When more than one tag appears, **the last one wins**. It replaces the earlier
+ones entirely rather than combining with them, so changing your mind mid-message
+works the way it reads.
 
 | Example | secret | pii |
 |---------|--------|-----|
-| `[allow-secret] [mask-secret] …` | allow | — |
-| `[mask-secret] [allow-secret] …` | mask (unsupported) | — |
-| `[allow-all] [mask-secret] …` | allow | allow |
-| `[mask-all] [allow-secret] …` | mask (unsupported) | mask (unsupported) |
-| `[allow-secret] [mask-pii] …` | allow | mask (unsupported) |
+| `[allow-all] … [allow-secret]` | allow | blocked |
+| `[allow-secret] … [allow-all]` | allow | allow |
+| `[allow-secret] … [mask-secret]` | mask (unsupported) | blocked |
+| `[mask-secret] … [allow-secret]` | allow | blocked |
+| `[allow-secret] … [allow-pii]` | blocked | allow |
 
-`[allow-all]` and `[mask-all]` resolve both dimensions at once.
+The last line is the one to watch: two tags do not add up. Narrowing from
+`[allow-all]` to `[allow-secret]` really does put PII back under guard, which is
+the point — but so does writing `[allow-secret] [allow-pii]` and expecting both.
+**`[allow-all]` is how you ask for both.**
+
+A tag counts wherever it appears in the message, including mid-sentence. What
+does not count is a tag inside a fenced code block, inside one of the elements
+Claude Code writes around command output, or in a message the runtime wrote
+rather than you — a compaction summary or a skill body. Those are quoting, not
+asking.
 
 ## Category Filtering
 
@@ -211,15 +270,40 @@ Values are comma-separated and case-insensitive. Unset, empty, or containing no 
 
 Files that end in `.env` but don't start with a dot (e.g. `production.env`) are handled by content scanning rather than name-based blocking.
 
-Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) bypasses the name-based block. When an allow tag is present, the file is passed through **immediately without scanning** its contents.
+`[allow-secret]` and `[allow-all]` lift the name-based block; `[allow-pii]` does not, since the block is a secret-category finding. Lifting the name block is not a pass: the contents are still scanned, and a tag only removes findings of the category it names. A file exempted by `[allow-secret]` is still blocked for an email address in it.
 
 ## Bash Command Scanning
 
 When Claude uses the `Bash` tool, sensitive-canary checks three things:
 
 1. **Environment variables** — any `$VAR` or `${VAR}` references in the command are looked up in the current environment; if their values contain secrets or PII, the command is blocked.
-2. **Command string** — the raw command is scanned (catches inline secrets like `echo AKIAIOSFODNN7EXAMPLE`).
-3. **File-reading commands** — for `cat`, `head`, `tail`, `less`, `more`, `bat`, `nl`, the target files are read and scanned before the command runs. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently.
+2. **Command string** — the raw command is scanned, which catches a secret written inline (`echo ghp_…`, `curl -H "Authorization: Bearer …"`).
+3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
+
+### Ways a rule goes quiet without saying so
+
+A rule that matches nothing looks the same as a rule that finds nothing. These
+are the settings that produce one, and none of them warns:
+
+- **`secretGroup: 0`** is not the same as omitting the field. A rule that names a
+  capture group is treated as capturing a free-form value, which brings in the
+  placeholder and shape tests that the built-in assignment rules rely on — so a
+  value that is all digits, or a path, or a URL, is skipped. Omit the field when
+  the whole match is the secret.
+- **`entropyThreshold` above 8.** Shannon entropy is at most 8 bits per
+  character, so anything higher rejects every match. `1e999` parses as
+  `Infinity` and is accepted.
+- **`secretGroup` pointing at a group the pattern does not have.** The capture is
+  `undefined` and the match is dropped.
+- **`flags` containing `y`.** A sticky pattern only matches at position 0, so the
+  rule finds a secret at the very start of a file and nothing anywhere else.
+- **A large `contextWindow`.** It widens `excludeContext` as well as
+  `contextWords`, so a single `buffer` anywhere in a large file can suppress
+  every postal-code match in it.
+
+After writing or overriding a rule, check it against a file you expect it to
+catch. An override that fails to compile leaves the built-in in place and says so
+on stderr; one that compiles and matches nothing replaces the built-in silently.
 
 ## Custom Rules
 
@@ -237,19 +321,22 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | `description` | string | yes | Human-readable label shown in block messages. |
 | `regex` | string | yes | Regex source (not a `/literal/`). |
 | `category` | `"secret"` \| `"pii"` | yes | Which category the rule belongs to. |
-| `flags` | string | no | Regex flags. Default `"g"`. |
-| `secretGroup` | number | no | Capture group containing the secret. Default 0 (full match). |
+| `flags` | string | no | Regex flags. `g` is added if you leave it out, since the scan needs every match; `y` makes a rule match only at the start of the text, which is almost never what a detection rule wants |
+| `secretGroup` | number | no | Capture group containing the secret. Omit it for the full match — writing `0` is not the same as omitting it, see [Ways a rule goes quiet without saying so](#ways-a-rule-goes-quiet-without-saying-so) |
 | `entropyThreshold` | number | no | Skip matches below this Shannon entropy (bits/char). |
 | `requireContext` | boolean | no | Only fire when a context word is nearby. |
 | `contextWords` | string[] | no | Words that satisfy `requireContext`. |
 | `contextWindow` | number | no | Per-rule override for context scan width (tokens). |
+| `excludeContext` | string[] | no | Words that suppress a match when one is near it — the inverse of `contextWords`. The postal-code rule uses `buffer`, `bytes`, `byte`, `memory` and `cache`, so `65536 bytes` is a size rather than a place |
 | `validate` | string | no | Name of a built-in checksum validator. |
 
 ### Available validators
 
 | Name | Algorithm |
 |------|-----------|
-| `luhn` | Luhn checksum (credit cards) |
+| `luhn` | Luhn checksum, and not a card number the payment gateways publish as test data |
+| `aws-key` | Not a key ending in `EXAMPLE`, which is how AWS writes every key in its documentation |
+| `phone-jp` | Ten or eleven digits beginning with 0, excluding the 0120 and 0800 freephone prefixes, which belong to a business |
 | `mynumber-jp` | Japanese Individual Number (My Number) |
 | `nir-fr` | French NIR / Social Security Number |
 | `codice-fiscale-it` | Italian Codice Fiscale |

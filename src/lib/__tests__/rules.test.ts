@@ -1,85 +1,75 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  beginScanBudget,
   compileRule,
-  enabledCategoriesFromEnv,
-  entropy,
-  isReservedIpv4,
-  isReservedIpv6,
-  luhn,
-  parseCategories,
   redact,
+  ScanBudgetExceeded,
   scan,
-  validateChineseID,
-  validateCodiceFiscale,
-  validateFrenchNIR,
-  validateGermanIdNr,
-  validateKoreanBRN,
-  validateKoreanRRN,
-  validateMyNumber,
-  validateSpanishNIF,
 } from "../rules.ts";
-
-// ── luhn ──────────────────────────────────────────────────────────────────────
-
-describe("luhn", () => {
-  it("passes a valid Visa number", () => {
-    expect(luhn("4111111111111111")).toBe(true);
-  });
-
-  it("passes a valid Mastercard number", () => {
-    expect(luhn("5500005555555559")).toBe(true);
-  });
-
-  it("fails an invalid number", () => {
-    expect(luhn("1234567890123456")).toBe(false);
-  });
-
-  it("ignores spaces and dashes", () => {
-    expect(luhn("4111 1111 1111 1111")).toBe(true);
-    expect(luhn("4111-1111-1111-1111")).toBe(true);
-  });
-
-  it("fails empty or digit-less input", () => {
-    expect(luhn("")).toBe(false);
-    expect(luhn("no-digits-here")).toBe(false);
-  });
-});
-
-// ── entropy ───────────────────────────────────────────────────────────────────
-
-describe("entropy", () => {
-  it("returns 0 for a single repeated character", () => {
-    expect(entropy("aaaa")).toBe(0);
-  });
-
-  it("returns a higher value for a more varied string", () => {
-    expect(entropy("abcdefgh")).toBeGreaterThan(entropy("aaaabbbb"));
-  });
-
-  it("'password' entropy is below 3.0 (env-assignment threshold)", () => {
-    expect(entropy("password")).toBeLessThan(3.0);
-  });
-
-  it("random-looking value entropy is above 3.5 (generic-secret threshold)", () => {
-    expect(entropy("Xk9mP2qR7vL4nW1s")).toBeGreaterThan(3.5);
-  });
-});
+import { AWS_KEY, DEFAULT_RULES, ruleIds } from "./rule-fixtures.ts";
 
 // ── redact ────────────────────────────────────────────────────────────────────
 
 describe("redact", () => {
-  it("masks strings of 8 chars or fewer completely", () => {
+  it("masks a short value completely", () => {
     expect(redact("abc")).toBe("****");
-    expect(redact("12345678")).toBe("****");
-  });
-
-  it("shows first 4 and last 4 chars for strings longer than 8 chars", () => {
-    expect(redact("123456789")).toBe("1234****6789");
-    expect(redact("AKIAIOSFODNN7EXAMPLE")).toBe("AKIA****MPLE");
+    expect(redact("1234567")).toBe("****");
   });
 
   it("handles empty string", () => {
     expect(redact("")).toBe("****");
+  });
+
+  // Whatever this returns is written to stderr, which is where Claude reads it,
+  // so it reaches the API the block exists to keep the value from. A quarter of
+  // the value, capped at four characters per end.
+  it.each([
+    [9, 2],
+    [16, 4],
+    [24, 6],
+    [32, 8],
+    [64, 8],
+  ])("a %i-character value returns at most %i of it", (length, atMost) => {
+    const value = "abcdefghijklmnopqrstuvwxyz0123456789"
+      .repeat(2)
+      .slice(0, length);
+    const shown = redact(value);
+    expect(shown.replace(/\*/g, "")).toHaveLength(atMost);
+  });
+
+  it("never returns more than a quarter of the value", () => {
+    for (let length = 1; length <= 200; length++) {
+      const value = "a".repeat(length);
+      const kept = redact(value).replace(/\*/g, "").length;
+      expect(kept / length, `${length} characters`).toBeLessThanOrEqual(0.25);
+    }
+  });
+
+  // Slicing by code unit cuts a surrogate pair in half, and what reaches the
+  // terminal is a lone surrogate: not the character, and not a redaction of it
+  // either. Counting by code point also keeps the quarter honest, since one
+  // emoji is one character and not two.
+  it("does not split a character in half", () => {
+    const lone =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    for (let count = 1; count <= 40; count++) {
+      const value = "🔑".repeat(count);
+      expect(redact(value), `${count} astral characters`).not.toMatch(lone);
+    }
+  });
+
+  it("counts an astral character as one", () => {
+    expect(redact("🔑".repeat(8))).toBe("🔑****🔑");
+  });
+
+  it("shows the ends, so two findings can be told apart", () => {
+    expect(redact("AKIAQQQQQQQQQQQQQAAA")).toBe("AK****AA");
+    expect(redact("AKIAQQQQQQQQQQQQQZZZ")).toBe("AK****ZZ");
   });
 });
 
@@ -87,7 +77,7 @@ describe("redact", () => {
 
 describe("scan — secrets", () => {
   it("detects an AWS Access Key ID", () => {
-    const findings = scan("key=AKIAIOSFODNN7EXAMPLE");
+    const findings = scan(`key=${AWS_KEY}`);
     expect(findings.some((f) => f.ruleId === "aws-access-key")).toBe(true);
   });
 
@@ -235,8 +225,15 @@ describe("scan — secrets", () => {
   });
 
   it("detects a database connection string with credentials", () => {
-    const findings = scan("postgres://user:password@localhost/mydb");
+    const findings = scan("postgres://admin:s3cr3tP4ss@db.corp.internal/mydb");
     expect(findings.some((f) => f.ruleId === "connection-string")).toBe(true);
+  });
+
+  // `user:password@localhost` is what every database README prints. Reading it
+  // as a credential is what made a committed template unreadable.
+  it("does not detect the connection string every README prints", () => {
+    const findings = scan("postgres://user:password@localhost/mydb");
+    expect(findings.some((f) => f.ruleId === "connection-string")).toBe(false);
   });
 
   it("detects an .env style assignment with sufficient entropy", () => {
@@ -327,22 +324,22 @@ describe("scan — expanded secrets (AI, cloud, SaaS)", () => {
 
 describe("scan — PII", () => {
   it("detects an email address", () => {
-    const findings = scan("contact: user@example.com");
+    const findings = scan("contact: ada@analytical-engines.org");
     expect(findings.some((f) => f.ruleId === "pii-email")).toBe(true);
   });
 
   it("detects a valid credit card number — no separators", () => {
-    const findings = scan("card: 4111111111111111");
+    const findings = scan("card: 4532015112830366");
     expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
   });
 
   it("detects a valid credit card number — space separated", () => {
-    const findings = scan("card: 4111 1111 1111 1111");
+    const findings = scan("card: 4532 0151 1283 0366");
     expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
   });
 
   it("detects a valid credit card number — hyphen separated", () => {
-    const findings = scan("card: 4111-1111-1111-1111");
+    const findings = scan("card: 4532-0151-1283-0366");
     expect(findings.some((f) => f.ruleId === "pii-credit-card")).toBe(true);
   });
 
@@ -406,83 +403,49 @@ describe("scan — PII", () => {
     expect(findings.some((f) => f.ruleId === "pii-postal-jp")).toBe(false);
   });
 
-  it("detects a 192.168.x.x private IPv4 address", () => {
-    const findings = scan("server: 192.168.1.100");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
-  });
-
-  it("detects a 10.x.x.x private IPv4 address", () => {
-    const findings = scan("server: 10.0.0.1");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
-  });
-
-  it("detects a 172.16–31.x.x private IPv4 address", () => {
-    expect(scan("host: 172.16.0.1").some((f) => f.ruleId === "pii-ipv4")).toBe(
-      true,
+  // A private address is not personal data. It is non-routable, it identifies
+  // nothing outside the network it belongs to, and it appears in nearly every
+  // inventory, manifest and ssh config a developer opens — which is where the
+  // rule spent its time. Public addresses are still gated on a nearby label.
+  it.each([
+    "client 192.168.1.100 connected",
+    "client 10.0.0.1 connected",
+    "visitor 172.16.0.1 seen",
+    "visitor 172.31.255.255 seen",
+    "192.168.1.50",
+    "ip=10.1.2.3",
+    "X-Forwarded-For: 10.0.0.5",
+    "remote_addr=10.0.0.5",
+    "ping 10.0.0.1",
+    "curl http://10.0.0.5:8080/health",
+    "redis-cli -h 10.0.0.30",
+    "ansible_host: 10.0.0.5",
+  ])("%s is not PII", (text) => {
+    expect(scan(text).filter((f) => f.ruleId.startsWith("pii-ipv4"))).toEqual(
+      [],
     );
+  });
+
+  // The public rule is untouched by that, in both directions.
+  it("a public address with a label is still PII", () => {
     expect(
-      scan("host: 172.31.255.255").some((f) => f.ruleId === "pii-ipv4"),
+      scan("the client IP address is 8.8.8.8").some(
+        (f) => f.ruleId === "pii-ipv4-public",
+      ),
     ).toBe(true);
   });
 
-  it("does not flag 172.15.x.x (outside private range)", () => {
-    expect(scan("host: 172.15.1.1").some((f) => f.ruleId === "pii-ipv4")).toBe(
-      false,
-    );
-  });
-
-  it("does not flag 172.32.x.x (outside private range)", () => {
-    expect(scan("host: 172.32.1.1").some((f) => f.ruleId === "pii-ipv4")).toBe(
-      false,
-    );
-  });
-
-  it("does not flag a public IPv4 address", () => {
-    const findings = scan("server: 8.8.8.8");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(false);
-  });
-});
-
-// ── parseCategories ───────────────────────────────────────────────────────────
-
-describe("parseCategories", () => {
-  it("defaults to all categories when unset", () => {
-    expect(parseCategories(undefined)).toEqual(new Set(["secret", "pii"]));
-  });
-
-  it("defaults to all categories when empty", () => {
-    expect(parseCategories("")).toEqual(new Set(["secret", "pii"]));
-  });
-
-  it("parses a single category", () => {
-    expect(parseCategories("secret")).toEqual(new Set(["secret"]));
-    expect(parseCategories("pii")).toEqual(new Set(["pii"]));
-  });
-
-  it("parses a comma-separated list", () => {
-    expect(parseCategories("secret,pii")).toEqual(new Set(["secret", "pii"]));
-  });
-
-  it("treats 'all' as every category", () => {
-    expect(parseCategories("all")).toEqual(new Set(["secret", "pii"]));
-    expect(parseCategories("secret,all")).toEqual(new Set(["secret", "pii"]));
-  });
-
-  it("is case-insensitive and trims whitespace", () => {
-    expect(parseCategories(" Secret , PII ")).toEqual(
-      new Set(["secret", "pii"]),
-    );
-  });
-
-  it("falls back to all when no valid token is present", () => {
-    expect(parseCategories("foo,bar")).toEqual(new Set(["secret", "pii"]));
+  it("a public address without a label is not", () => {
+    expect(
+      scan("server: 8.8.8.8").some((f) => f.ruleId === "pii-ipv4-public"),
+    ).toBe(false);
   });
 });
 
 // ── scan: category filter ─────────────────────────────────────────────────────
 
 describe("scan — category filter", () => {
-  const text = "key=AKIAIOSFODNN7EXAMPLE card: 4111111111111111";
+  const text = `key=${AWS_KEY} card: 4532015112830366`;
 
   it("scans all categories by default", () => {
     const findings = scan(text);
@@ -504,116 +467,6 @@ describe("scan — category filter", () => {
 
   it("returns nothing when no categories are enabled", () => {
     expect(scan(text, new Set())).toEqual([]);
-  });
-});
-
-// ── enabledCategoriesFromEnv ──────────────────────────────────────────────────
-
-describe("enabledCategoriesFromEnv", () => {
-  const ENV_KEY = "SENSITIVE_CANARY_CATEGORIES";
-  const original = process.env[ENV_KEY];
-
-  afterEach(() => {
-    if (original === undefined) {
-      delete process.env[ENV_KEY];
-    } else {
-      process.env[ENV_KEY] = original;
-    }
-  });
-
-  it("returns all categories when the env var is unset", () => {
-    delete process.env[ENV_KEY];
-    expect(enabledCategoriesFromEnv()).toEqual(new Set(["secret", "pii"]));
-  });
-
-  it("returns the parsed categories when the env var is set", () => {
-    process.env[ENV_KEY] = "pii";
-    expect(enabledCategoriesFromEnv()).toEqual(new Set(["pii"]));
-  });
-});
-
-// ── National ID checksum validators ───────────────────────────────────────────
-
-describe("validateMyNumber", () => {
-  it("passes a valid My Number", () => {
-    expect(validateMyNumber("123456789018")).toBe(true);
-  });
-
-  it("fails an incorrect check digit", () => {
-    expect(validateMyNumber("123456789019")).toBe(false);
-  });
-
-  it("fails a wrong length", () => {
-    expect(validateMyNumber("12345678901")).toBe(false);
-    expect(validateMyNumber("1234567890123")).toBe(false);
-  });
-});
-
-describe("validateFrenchNIR", () => {
-  it("passes a valid NIR", () => {
-    expect(validateFrenchNIR("123456789012311")).toBe(true);
-  });
-
-  it("fails an incorrect check key", () => {
-    expect(validateFrenchNIR("123456789012399")).toBe(false);
-  });
-
-  it("fails a wrong length", () => {
-    expect(validateFrenchNIR("1234567890123")).toBe(false);
-  });
-
-  it("passes a valid NIR with Corsica 2A", () => {
-    expect(validateFrenchNIR("188022A12345632")).toBe(true);
-  });
-
-  it("passes a valid NIR with Corsica 2B", () => {
-    expect(validateFrenchNIR("188022B12345659")).toBe(true);
-  });
-});
-
-describe("validateCodiceFiscale", () => {
-  it("passes a valid Codice Fiscale", () => {
-    expect(validateCodiceFiscale("RSSMRA85M01H501Q")).toBe(true);
-  });
-
-  it("fails an incorrect control character", () => {
-    expect(validateCodiceFiscale("RSSMRA85M01H501Z")).toBe(false);
-  });
-
-  it("fails a wrong shape", () => {
-    expect(validateCodiceFiscale("RSSMRA85M01H501")).toBe(false);
-  });
-});
-
-describe("validateGermanIdNr", () => {
-  it("passes a valid Steuer-IdNr.", () => {
-    expect(validateGermanIdNr("12345678903")).toBe(true);
-  });
-
-  it("fails an incorrect check digit", () => {
-    expect(validateGermanIdNr("12345678900")).toBe(false);
-  });
-
-  it("fails when the first digit is 0", () => {
-    expect(validateGermanIdNr("02345678903")).toBe(false);
-  });
-});
-
-describe("validateSpanishNIF", () => {
-  it("passes a valid DNI", () => {
-    expect(validateSpanishNIF("12345678Z")).toBe(true);
-  });
-
-  it("fails an incorrect DNI control letter", () => {
-    expect(validateSpanishNIF("12345678Y")).toBe(false);
-  });
-
-  it("passes a valid NIE", () => {
-    expect(validateSpanishNIF("X1234567L")).toBe(true);
-  });
-
-  it("fails an incorrect NIE control letter", () => {
-    expect(validateSpanishNIF("X1234567M")).toBe(false);
   });
 });
 
@@ -778,144 +631,393 @@ describe("scan — context scoring", () => {
   });
 
   it("assigns score 1.0 to rules without context requirements", () => {
-    const findings = scan("contact: user@example.com");
+    const findings = scan("contact: ada@analytical-engines.org");
     const email = findings.find((f) => f.ruleId === "pii-email");
     expect(email?.score).toBe(1.0);
   });
 });
 
-// ── Korean / Chinese ID validators ────────────────────────────────────────────
+// ── scan: adversarial inputs ─────────────────────────────────────────────────
 
-describe("validateKoreanRRN", () => {
-  it("passes a valid RRN", () => {
-    expect(validateKoreanRRN("8001011000008")).toBe(true);
-  });
+describe("scan — adversarial inputs", () => {
+  // A run of digits and dots (a log line full of IPs or versions is this,
+  // megabytes over) has a word boundary at every dot, and the local part of
+  // the old pii-email pattern — [A-Za-z0-9._%+-]+ — spans those boundaries.
+  // Every boundary then cost a greedy consume of the rest of the text plus a
+  // character-at-a-time backtrack in search of the "@": O(n²) overall. 200 KB
+  // of this kept a hook spinning for half a minute; the multi-MB file a
+  // session actually scanned never finished.
+  it("stays near-linear on a long digit-and-dot run with no @", () => {
+    const input = "1.".repeat(100_000); // 200 KB
+    const start = performance.now();
+    scan(input);
+    // Fixed, this is tens of milliseconds; before the fix it was half a
+    // minute. The limit sits far from both so a loaded CI machine does not
+    // flake it.
+    expect(performance.now() - start).toBeLessThan(10_000);
+  }, 30_000);
 
-  it("fails an incorrect check digit", () => {
-    expect(validateKoreanRRN("8001011000009")).toBe(false);
-  });
+  it("stays near-linear on a long hyphen-separated digit run with no @", () => {
+    const input = "123-".repeat(50_000); // 200 KB
+    const start = performance.now();
+    scan(input);
+    expect(performance.now() - start).toBeLessThan(10_000);
+  }, 30_000);
 
-  it("fails a wrong length", () => {
-    expect(validateKoreanRRN("800101100000")).toBe(false);
+  // The two cases above name the input that was reported. They say nothing
+  // about the other sixty-three rules, and the same shape was in one of them:
+  // `env-assignment` read `[A-Z_]*` before its alternation and `[A-Z_0-9]*`
+  // after, so a long run of capitals with no `=` backtracked from every
+  // position. Measured on the rule alone: 59 KB 381ms, 117 KB 1878ms, 234 KB
+  // 6871ms, 1 MiB 124574ms — and 1 MiB is what the file cap allows through, so
+  // the cap bounded the read and not the work.
+  //
+  // So this runs every rule in the config against every shape, which is what
+  // makes it a property of the rule set rather than a note about two inputs. A
+  // rule added with a greedy quantifier either side of a literal fails here
+  // before it reaches a release.
+  //
+  // A shape list is not a proof of completeness, and this one was caught short
+  // already: with the first six shapes, `connection-string` was quadratic and
+  // none of them reached it — `[^@\s]+` crosses both `:` and `/`, so every
+  // `mongodb://` ran to the end of the text looking for an `@`. 188 KB took 2.3s
+  // and 1 MiB through the hook took 98s. Adding a rule means asking what input
+  // makes its own quantifiers run, and adding that shape here when the list has
+  // nothing like it.
+  describe("no rule is quadratic", () => {
+    // Runs with no match in them, each built so a quantifier that can also
+    // match its own separator has somewhere to backtrack.
+    const SHAPES = {
+      "digits and dots": "1.".repeat(128_000),
+      "digits and hyphens": "123-".repeat(64_000),
+      "capitals and underscores": "SECRET_".repeat(36_571),
+      alphanumeric: "aA0".repeat(85_333),
+      hex: "deadbeef".repeat(32_000),
+      "base64 alphabet": "aA0+/".repeat(51_200),
+      "assignments with no value": "key = ".repeat(42_666),
+      "url credentials with no host": "mongodb://a:".repeat(21_333),
+      // `url-basic-auth` bounds its two halves at 64 and 256 characters and
+      // then wants an `@`. Each run here is as long as those bounds allow and
+      // the `@` never comes, so every start position pays the full retreat.
+      "https urls that never reach an @":
+        `https://${"a".repeat(64)}:${"b".repeat(256)}`.repeat(778),
+    };
+
+    // Every rule is linear or better on these. The slowest pair measured is
+    // `pii-email` on digits and dots: 56ms warm, a little over 200ms on a cold
+    // run of the whole matrix. So the margin is about an order of magnitude, not
+    // the three orders I first wrote here. What the budget has to separate is
+    // quadratic from linear, and it does that with room: the rule this was
+    // written for took seven seconds at a quarter of this size.
+    const BUDGET_MS = 2_000;
+
+    // Through `compileRule`, so each rule is timed with the flags it ships with.
+    // Built here rather than looked up in the body: `generic-secret` and
+    // `pii-nir-fr` declare `"flags": "gi"`, and a bare `new RegExp(regex, "g")`
+    // would have timed a pattern the product never runs — `i` changes what a
+    // character class matches, so it changes what backtracks.
+    const cases = Object.entries(SHAPES).flatMap(([shape, input]) =>
+      DEFAULT_RULES.map((rule) => ({
+        id: rule.id,
+        shape,
+        input,
+        regex: compileRule(rule).regex,
+      })),
+    );
+
+    it.each(cases)(
+      "$id: $shape",
+      ({ id, shape, input, regex }) => {
+        const start = performance.now();
+        input.match(regex);
+        const elapsed = performance.now() - start;
+        expect(
+          elapsed,
+          `${id} took ${elapsed.toFixed(0)}ms on ${(input.length / 1024).toFixed(0)}KB of ${shape}`,
+        ).toBeLessThan(BUDGET_MS);
+      },
+      30_000,
+    );
   });
 });
 
-describe("validateKoreanBRN", () => {
-  it("passes a valid BRN", () => {
-    expect(validateKoreanBRN("1348672612")).toBe(true);
+// What must not be flagged, alongside what must. A rule quieted to stop a false
+// positive can quietly stop detecting, and only the pair says which happened.
+//
+// Measured before this: of these twenty-one, seventeen were blocked. A tool that
+// blocks a quarter of ordinary commands is uninstalled, and then it guards
+// nothing.
+describe("ordinary work is not a finding", () => {
+  const flags = (text: string): string[] => scan(text).map((f) => f.ruleId);
+
+  it.each([
+    ["git clone git@github.com:acme/widgets.git", "git over ssh"],
+    ["ssh deploy@bastion.analytical-engines.org", "an ssh target"],
+    ["scp build.tar ops@files.analytical-engines.org:/srv/", "an scp target"],
+    ["rsync -a ops@files.analytical-engines.org:/srv/ .", "an rsync target"],
+    ["ping 10.0.0.1", "a private address"],
+    ["curl http://10.0.0.5:8080/health", "a private address in a URL"],
+    ["redis-cli -h 10.0.0.30", "a private address as a flag value"],
+    ["ECONNREFUSED 10.0.0.5:5432", "a private address in an error"],
+    ["CIDR 192.168.0.0/24", "a network, not a host"],
+    ["the buffer cap is 65536 bytes", "cap is an English word too"],
+    ["the request took 1234567890123 nanoseconds", "a long number"],
+    ["test card 4242424242424242", "a published test card"],
+    ["use 4111111111111111 in the sandbox", "another published test card"],
+    ["contact test@example.com for details", "an RFC 2606 domain"],
+    ["see user@example.org in the docs", "an RFC 2606 domain"],
+    ["POSTGRES_PASSWORD: ${DB_PASSWORD}", "a variable reference"],
+    ["password: $VAULT_PASSWORD", "a variable reference"],
+    ["function check(token: ShellToken): boolean {", "a type annotation"],
+    ["  tokens: ShellToken[]", "a type annotation"],
+  ])("%s is not a finding (%s)", (text) => {
+    expect(flags(text)).toEqual([]);
   });
 
-  it("fails an incorrect check digit", () => {
-    expect(validateKoreanBRN("1348672610")).toBe(false);
-  });
-
-  it("fails a wrong length", () => {
-    expect(validateKoreanBRN("134867261")).toBe(false);
-  });
-});
-
-describe("validateChineseID", () => {
-  it("passes a valid Resident Identity Card", () => {
-    expect(validateChineseID("110102199001010011")).toBe(true);
-  });
-
-  it("fails an incorrect check digit", () => {
-    expect(validateChineseID("110102199001010010")).toBe(false);
-  });
-
-  it("fails a wrong length", () => {
-    expect(validateChineseID("11010219900101001")).toBe(false);
-  });
-});
-
-// ── IP reserved-range checks ──────────────────────────────────────────────────
-
-describe("isReservedIpv4", () => {
-  it("returns false for a public IP", () => {
-    expect(isReservedIpv4("8.8.8.8")).toBe(false);
-  });
-
-  it("returns true for private ranges", () => {
-    expect(isReservedIpv4("192.168.1.1")).toBe(true);
-    expect(isReservedIpv4("10.0.0.1")).toBe(true);
-    expect(isReservedIpv4("172.16.0.1")).toBe(true);
-  });
-
-  it("returns true for TEST-NET addresses", () => {
-    expect(isReservedIpv4("192.0.2.1")).toBe(true);
-    expect(isReservedIpv4("203.0.113.1")).toBe(true);
-  });
-
-  it("returns true for loopback and link-local", () => {
-    expect(isReservedIpv4("127.0.0.1")).toBe(true);
-    expect(isReservedIpv4("169.254.1.1")).toBe(true);
-  });
-
-  it("returns true for partially-numeric octets", () => {
-    expect(isReservedIpv4("1a.2.3.4")).toBe(true);
-    expect(isReservedIpv4("8.8.8.8x")).toBe(true);
-    expect(isReservedIpv4("1.2.3.4 ")).toBe(true);
-  });
-
-  it("returns true for other RFC 6890 special-purpose ranges", () => {
-    expect(isReservedIpv4("192.0.0.1")).toBe(true); // IETF protocol assignments
-    expect(isReservedIpv4("192.88.99.1")).toBe(true); // 6to4 relay anycast
+  // An ssh public key is base64, and `EAAA` appears in one often enough that the
+  // Square rule matched a slice of it.
+  it("an ssh public key is not a Square token", () => {
+    const key = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDEAAAJ1${"a".repeat(60)}`;
+    expect(flags(key)).toEqual([]);
   });
 });
 
-describe("isReservedIpv6", () => {
-  it("returns false for a public IPv6", () => {
-    expect(isReservedIpv6("2001:4860:4860::8888")).toBe(false);
+// Detections the fourth review found had been lost while the false positives
+// were being fixed. A corpus of five hundred generated values found a hundred
+// and twenty-seven of these; the thirty-two cases chosen by hand had found none
+// of them, which is what a hand-picked list is worth.
+describe("detections that quieting the rules had removed", () => {
+  const R = "Xk9mP2qR7vL4nW1sYj3cBz8d";
+  const hits = (text: string): string[] => scan(text).map((f) => f.ruleId);
+
+  // One excluded word within a couple of dozen characters erased every address
+  // near it, including three in a row when one line said "test".
+  it.each([
+    "the remote user is sarah.connor@cyberdyne-systems.com",
+    "Email the test results to ada@analytical-engines.org",
+    "git blame shows ada@analytical-engines.org",
+    "host: db1\nowner: ada@analytical-engines.org",
+    "host,email\nsrv,ada@analytical-engines.org",
+  ])("%s is still an address", (text) => {
+    expect(hits(text)).toContain("pii-email");
   });
 
-  it("returns true for loopback", () => {
-    expect(isReservedIpv6("::1")).toBe(true);
+  // Anchoring the rule to the start of a line lost the shapes people type.
+  it.each([
+    `DB_PASSWORD='${R}'`,
+    `DB_PASSWORD=${R};`,
+    `DB_PASSWORD=${R},`,
+    `cd /app && DB_PASSWORD=${R} ./run`,
+    `set -e; DB_PASSWORD=${R}`,
+    `docker run -e DB_PASSWORD=${R} img`,
+    `                    DB_PASSWORD=${R}`,
+    `DB_PASS=${R}`,
+  ])("%s is still an assignment", (text) => {
+    expect(hits(text)).toContain("env-assignment");
   });
 
-  it("returns true for fully-expanded loopback", () => {
-    expect(isReservedIpv6("0:0:0:0:0:0:0:1")).toBe(true);
+  // A boundary that counted `_` and `=` as base64 erased the token after `key_`
+  // and in a query string.
+  it.each([
+    `key_EAAAEaZ7${"b".repeat(56)}`,
+    `https://x.io/a?token=EAAAEaZ7${"b".repeat(56)}`,
+  ])("%s is still a Square token", (text) => {
+    expect(hits(text)).toContain("square-access-token");
   });
 
-  it("returns true for fully-expanded unspecified", () => {
-    expect(isReservedIpv6("0:0:0:0:0:0:0:0")).toBe(true);
+  // The Korean numbers are stored without their separators as often as with.
+  it("a Korean RRN without separators is still one", () => {
+    expect(hits("주민등록번호 9001011234568")).toContain("pii-rrn-kr");
   });
 
-  it("returns true for compressed unspecified", () => {
-    expect(isReservedIpv6("::")).toBe(true);
+  it("a Korean BRN without separators is still one", () => {
+    expect(hits("사업자등록번호 2208162517")).toContain("pii-brn-kr");
   });
 
-  it("returns true for link-local", () => {
-    expect(isReservedIpv6("fe80::1")).toBe(true);
+  it("a postal code next to the word max is still one", () => {
+    expect(hits("zip: 94107 max 3")).toContain("pii-postal-code");
   });
 
-  it("returns true for fully-expanded link-local", () => {
-    expect(isReservedIpv6("fe80:0:0:0:0:0:0:1")).toBe(true);
+  it("a three-hundred-character password is still a password", () => {
+    const url = `postgres://admin:${"a".repeat(300)}@db.corp.internal/app`;
+    expect(hits(url)).toContain("connection-string");
+  });
+});
+
+// A rule shaped `{n,}` then a literal that may never come retries the whole tail
+// from every start. `eyJ` recurs every three characters, so a megabyte of it took
+// a hundred seconds — past the hook timeout, and a killed hook does not block.
+describe("a scan cannot be made to hang", () => {
+  const MEGABYTE = 1024 * 1024;
+
+  // Measured against a baseline taken in the same run, not against a clock. The
+  // defect this guards was a hundred seconds where a tenth of one was normal —
+  // three orders of magnitude — so a generous multiple still catches it, and a
+  // machine running the suite alongside other work does not turn it red.
+  const timeScan = (text: string): number => {
+    const startedAt = Date.now();
+    scan(text);
+    return Date.now() - startedAt;
+  };
+
+  const baseline = (): number =>
+    Math.max(timeScan("const x = foo(bar);\n".repeat(MEGABYTE / 20)), 1);
+
+  it.each([
+    ["a repeated JWT header", "eyJ".repeat(MEGABYTE / 3)],
+    [
+      "repeated Square prefixes",
+      `${(`-EAAA${"a".repeat(20)}`).repeat(MEGABYTE / 25)}/`,
+    ],
+    [
+      "repeated Mapbox prefixes",
+      `pk.eyJ${"a".repeat(12)}`.repeat(MEGABYTE / 18),
+    ],
+    [
+      "repeated Sentry prefixes",
+      `sntrys_${"a".repeat(12)}`.repeat(MEGABYTE / 19),
+    ],
+    ["one long run", "a".repeat(MEGABYTE)],
+    ["digits", "1234567890".repeat(MEGABYTE / 10)],
+    // `env-assignment` was the rule the first pass at this guard missed: its
+    // value capture was open-ended and backtracked, and a megabyte took six
+    // minutes.
+    ["repeated assignments", `${"TOKEN=".repeat(48000)}${"v".repeat(711999)}<`],
+    [
+      "assignments and a long value",
+      `${"TOKEN=".repeat(87000)}${"v".repeat(524288)}<`,
+    ],
+  ])("a megabyte of %s costs no more than ordinary text", (_label, text) => {
+    expect(timeScan(text)).toBeLessThan(baseline() * 30 + 500);
   });
 
-  it("returns true for unique-local", () => {
-    expect(isReservedIpv6("fd00::1")).toBe(true);
+  // The bound must not cost the detection it exists for.
+  it("a JWT with a large payload is still found", () => {
+    const segment = (value: object): string =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    const token = [
+      segment({ alg: "HS256", typ: "JWT" }),
+      segment({ sub: "1", scope: "a".repeat(3000) }),
+      "s".repeat(43),
+    ].join(".");
+    expect(ruleIds(token)).toContain("jwt");
   });
 
-  it("returns true for multicast", () => {
-    expect(isReservedIpv6("ff02::1")).toBe(true);
+  // A boundary is what removes the quadratic, so it has to stay meaningful.
+  it("a JWT header inside a longer token is not a JWT", () => {
+    expect(
+      ruleIds(`x${"eyJhbGciOiJIUzI1NiJ9"}.eyJhIjoxfQ.abcdefghij`),
+    ).not.toContain("jwt");
+  });
+});
+
+// A single rule cannot be interrupted from inside the scan loop, so one bad
+// pattern from a config file used to hang the hook — and a hook killed by the
+// timeout does not block. The interrupt is on the V8 side now, which is why this
+// runs the hook rather than calling `scan`: the rules are built at import time.
+describe("a single rule cannot hang the scan", () => {
+  it("a catastrophic pattern is cut off rather than run to completion", () => {
+    const dir = mkdtempSync(join(tmpdir(), "canary-redos-"));
+    const config = join(dir, "config.json");
+    writeFileSync(
+      config,
+      JSON.stringify({
+        rules: [
+          { id: "boom", description: "x", regex: "(a+)+$", category: "secret" },
+        ],
+      }),
+      "utf8",
+    );
+    const target = join(dir, "target.txt");
+    writeFileSync(target, `${"a".repeat(40)}!\n`, "utf8");
+
+    const startedAt = Date.now();
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        fileURLToPath(new URL("../../pre-tool-use-hook.ts", import.meta.url)),
+      ],
+      {
+        input: JSON.stringify({
+          tool_name: "Read",
+          tool_input: { file_path: target },
+        }),
+        env: { ...process.env, SENSITIVE_CANARY_CONFIG: config },
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    rmSync(dir, { recursive: true, force: true });
+
+    // Unbounded, this pattern runs for hours; a killed hook does not block.
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("the check could not complete");
+    expect(Date.now() - startedAt).toBeLessThan(40_000);
+  }, 90_000);
+});
+
+// The other direction, in the same file, so quieting a rule cannot pass unnoticed.
+describe("what must still be a finding", () => {
+  it.each([
+    [
+      "contact alice@analytical-engines.org about the invoice",
+      "a real address",
+    ],
+    [`key=${AWS_KEY}`, "an AWS key"],
+    ["POSTGRES_PASSWORD: Sup3rS3cretDbPassw0rd", "a compose password"],
+    ['  "client_secret": "Xk9mP2qR7vL4nW1sYj3c"', "a JSON secret"],
+    [
+      "aws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
+      "a credentials file",
+    ],
+    ["export GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "a PAT"],
+    ["-----BEGIN ENCRYPTED PRIVATE KEY-----", "a private key header"],
+    ["card 4532015112830366", "a card that is not a published test number"],
+    ["the client IP address is 8.8.8.8", "a public address with a label"],
+  ])("%s is a finding (%s)", (text) => {
+    expect(scan(text).length).toBeGreaterThan(0);
+  });
+});
+
+// One case per format the vendor documents and the rule did not match. Each
+// pattern below is what the issuer or the vendor's own detector says, not what
+// looked plausible.
+// The budget covers the invocation, not one call. A hook scans once per
+// environment variable and twice per file, so counting per call left the total
+// unbounded — and the runtime kills a hook that runs long, which does not block.
+describe("the scan budget spans every call in the invocation", () => {
+  afterEach(() => {
+    beginScanBudget(null);
   });
 
-  it("returns true for documentation addresses", () => {
-    expect(isReservedIpv6("2001:db8::1")).toBe(true);
+  it("a call made after the budget is spent throws rather than returning clean", () => {
+    beginScanBudget(0);
+    expect(() => scan(`key=${AWS_KEY}`)).toThrow(ScanBudgetExceeded);
   });
 
-  it("returns true for groups with non-hex trailing characters", () => {
-    expect(isReservedIpv6("abcdZ::1")).toBe(true);
-    expect(isReservedIpv6("2001:4860:4860::8888g")).toBe(true);
+  it("repeated calls draw on one budget", () => {
+    beginScanBudget(60);
+    const started = Date.now();
+    expect(() => {
+      // Each of these is well inside the budget on its own.
+      for (let i = 0; i < 10_000; i++) scan(`line ${i} of ordinary text`);
+    }).toThrow(ScanBudgetExceeded);
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it("returns true for groups longer than 4 hex digits", () => {
-    expect(isReservedIpv6("12345::1")).toBe(true);
+  it("with no budget begun, a call gets the whole of one", () => {
+    beginScanBudget(null);
+    expect(scan(`key=${AWS_KEY}`).map((f) => f.ruleId)).toContain(
+      "aws-access-key",
+    );
   });
 
-  it("returns true when :: compresses zero groups", () => {
-    // RFC 4291 §2.2: "::" must compress at least one 16-bit group.
-    expect(isReservedIpv6("1:2:3:4:5:6:7::8")).toBe(true);
+  it("a fresh budget lets scanning continue", () => {
+    beginScanBudget(0);
+    expect(() => scan("anything")).toThrow(ScanBudgetExceeded);
+    beginScanBudget();
+    expect(scan(`key=${AWS_KEY}`)).not.toHaveLength(0);
   });
 });
 
@@ -1009,9 +1111,8 @@ describe("scan — public IPs", () => {
     expect(findings.some((f) => f.ruleId === "pii-ipv4-public")).toBe(false);
   });
 
-  it("still flags a private IPv4 via the private-range rule", () => {
-    const findings = scan("server: 192.168.1.1");
-    expect(findings.some((f) => f.ruleId === "pii-ipv4")).toBe(true);
+  it("does not flag a private IPv4 at all", () => {
+    expect(scan("client 192.168.1.1 connected")).toEqual([]);
   });
 
   it("detects an IPv6 with context", () => {
@@ -1022,349 +1123,5 @@ describe("scan — public IPs", () => {
   it("does not flag a link-local IPv6", () => {
     const findings = scan("ipv6: fe80::1");
     expect(findings.some((f) => f.ruleId === "pii-ipv6")).toBe(false);
-  });
-});
-
-// ── compileRule ───────────────────────────────────────────────────────────────
-
-describe("compileRule", () => {
-  it("compiles regex source with default g flag", () => {
-    const rule = compileRule({
-      id: "test",
-      description: "Test",
-      regex: "\\d{4}",
-      category: "pii",
-    });
-    expect(rule.regex.flags).toBe("g");
-    expect("1234".match(rule.regex)).not.toBeNull();
-  });
-
-  it("compiles with custom flags", () => {
-    const rule = compileRule({
-      id: "test",
-      description: "Test",
-      regex: "\\d{4}",
-      flags: "gi",
-      category: "pii",
-    });
-    expect(rule.regex.flags).toBe("gi");
-  });
-
-  it("resolves a validator by name", () => {
-    const rule = compileRule({
-      id: "test",
-      description: "Test",
-      regex: "\\d{12}",
-      category: "pii",
-      validate: "mynumber-jp",
-    });
-    expect(rule.validate).toBeDefined();
-    expect(rule.validate?.("123456789018")).toBe(true);
-  });
-
-  it("preserves secretGroup and entropyThreshold", () => {
-    const rule = compileRule({
-      id: "test",
-      description: "Test",
-      regex: "key=(\\S+)",
-      category: "secret",
-      secretGroup: 1,
-      entropyThreshold: 3.5,
-    });
-    expect(rule.secretGroup).toBe(1);
-    expect(rule.entropyThreshold).toBe(3.5);
-  });
-});
-
-// ── compileRule: schema validation ───────────────────────────────────────────
-
-describe("compileRule — schema validation", () => {
-  const valid = {
-    id: "test",
-    description: "Test",
-    regex: "\\d+",
-    category: "pii" as const,
-  };
-
-  it("rejects missing id", () => {
-    expect(() => compileRule({ ...valid, id: "" } as never)).toThrow('"id"');
-  });
-
-  it("rejects missing description", () => {
-    expect(() => compileRule({ ...valid, description: "" } as never)).toThrow(
-      '"description"',
-    );
-  });
-
-  it("rejects missing regex", () => {
-    expect(() => compileRule({ ...valid, regex: "" } as never)).toThrow(
-      '"regex"',
-    );
-  });
-
-  it("rejects invalid category", () => {
-    expect(() => compileRule({ ...valid, category: "other" as never })).toThrow(
-      '"category"',
-    );
-  });
-
-  it("rejects non-integer secretGroup", () => {
-    expect(() => compileRule({ ...valid, secretGroup: 1.5 } as never)).toThrow(
-      '"secretGroup"',
-    );
-  });
-
-  it("rejects negative entropyThreshold", () => {
-    expect(() =>
-      compileRule({ ...valid, entropyThreshold: -1 } as never),
-    ).toThrow('"entropyThreshold"');
-  });
-
-  it("rejects contextWords with empty string", () => {
-    expect(() =>
-      compileRule({ ...valid, contextWords: ["ok", ""] } as never),
-    ).toThrow('"contextWords"');
-  });
-
-  it("rejects non-integer contextWindow", () => {
-    expect(() => compileRule({ ...valid, contextWindow: 0 } as never)).toThrow(
-      '"contextWindow"',
-    );
-  });
-
-  it("rejects requireContext without contextWords", () => {
-    expect(() =>
-      compileRule({ ...valid, requireContext: true } as never),
-    ).toThrow("requireContext");
-  });
-
-  it("rejects requireContext with empty contextWords array", () => {
-    expect(() =>
-      compileRule({
-        ...valid,
-        requireContext: true,
-        contextWords: [],
-      } as never),
-    ).toThrow("requireContext");
-  });
-});
-
-// ── User config (custom rules) ────────────────────────────────────────────────
-
-describe("user config — custom rules", () => {
-  const ENV_KEY = "SENSITIVE_CANARY_CONFIG";
-  const envBackup = process.env[ENV_KEY];
-
-  afterEach(() => {
-    if (envBackup === undefined) {
-      delete process.env[ENV_KEY];
-    } else {
-      process.env[ENV_KEY] = envBackup;
-    }
-    vi.resetModules();
-  });
-
-  it("adds a custom rule from a user config file", async () => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const dir = mkdtempSync(join(tmpdir(), "canary-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({
-        rules: [
-          {
-            id: "custom-token",
-            description: "Custom Service Token",
-            regex: "MYSVC-[A-Za-z0-9]{20}",
-            category: "secret",
-          },
-        ],
-      }),
-    );
-
-    process.env[ENV_KEY] = join(dir, "config.json");
-    vi.resetModules();
-
-    const { RULES, scan } = await import("../rules.ts");
-    expect(RULES.some((r) => r.id === "custom-token")).toBe(true);
-
-    const findings = scan("token: MYSVC-abcdefghijklmnopqrst");
-    expect(findings.some((f) => f.ruleId === "custom-token")).toBe(true);
-  });
-
-  it("overrides a built-in rule by id", async () => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const dir = mkdtempSync(join(tmpdir(), "canary-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({
-        rules: [
-          {
-            id: "pii-email",
-            description: "Replaced Email Rule",
-            regex: "NEVERMATCH[a-z]+",
-            category: "pii",
-          },
-        ],
-      }),
-    );
-
-    process.env[ENV_KEY] = join(dir, "config.json");
-    vi.resetModules();
-
-    const { RULES, scan } = await import("../rules.ts");
-    const emailRules = RULES.filter((r) => r.id === "pii-email");
-    expect(emailRules).toHaveLength(1);
-    expect(emailRules[0]?.description).toBe("Replaced Email Rule");
-
-    const findings = scan("contact: user@example.com");
-    expect(findings.some((f) => f.ruleId === "pii-email")).toBe(false);
-  });
-
-  it("de-duplicates duplicate user rule ids (last definition wins)", async () => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const dir = mkdtempSync(join(tmpdir(), "canary-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({
-        rules: [
-          {
-            id: "custom-token",
-            description: "First Definition",
-            regex: "MYSVC-[A-Za-z0-9]{20}",
-            category: "secret",
-          },
-          {
-            id: "custom-token",
-            description: "Last Definition",
-            regex: "MYSVC2-[A-Za-z0-9]{20}",
-            category: "secret",
-          },
-        ],
-      }),
-    );
-
-    process.env[ENV_KEY] = join(dir, "config.json");
-    vi.resetModules();
-
-    const { RULES, scan } = await import("../rules.ts");
-    const dupes = RULES.filter((r) => r.id === "custom-token");
-    expect(dupes).toHaveLength(1);
-    expect(dupes[0]?.description).toBe("Last Definition");
-
-    // Only the last regex is active, and a match produces a single finding.
-    expect(scan("token: MYSVC-abcdefghijklmnopqrst")).toHaveLength(0);
-    const findings = scan("token: MYSVC2-abcdefghijklmnopqrst");
-    expect(findings.filter((f) => f.ruleId === "custom-token")).toHaveLength(1);
-  });
-
-  it("respects a custom contextWindow", async () => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const dir = mkdtempSync(join(tmpdir(), "canary-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({
-        contextWindow: 1,
-        rules: [],
-      }),
-    );
-
-    process.env[ENV_KEY] = join(dir, "config.json");
-    vi.resetModules();
-
-    const { getDefaultContextWindow: getWindow } = await import("../rules.ts");
-    expect(getWindow()).toBe(1);
-  });
-
-  it("skips rules with invalid regex", async () => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const dir = mkdtempSync(join(tmpdir(), "canary-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({
-        rules: [
-          {
-            id: "bad-regex",
-            description: "Bad",
-            regex: "[invalid(",
-            category: "secret",
-          },
-          {
-            id: "good-regex",
-            description: "Good",
-            regex: "GOODKEY-\\d+",
-            category: "secret",
-          },
-        ],
-      }),
-    );
-
-    process.env[ENV_KEY] = join(dir, "config.json");
-    vi.resetModules();
-
-    const { RULES } = await import("../rules.ts");
-    expect(RULES.some((r) => r.id === "bad-regex")).toBe(false);
-    expect(RULES.some((r) => r.id === "good-regex")).toBe(true);
-  });
-
-  it("skips null or non-object rule entries without crashing", async () => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const dir = mkdtempSync(join(tmpdir(), "canary-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({
-        rules: [
-          null,
-          {
-            id: "good-rule",
-            description: "Good",
-            regex: "GOODKEY-\\d+",
-            category: "secret",
-          },
-        ],
-      }),
-    );
-
-    process.env[ENV_KEY] = join(dir, "config.json");
-    vi.resetModules();
-
-    const { RULES } = await import("../rules.ts");
-    expect(RULES.some((r) => r.id === "good-rule")).toBe(true);
-  });
-
-  it("ignores a non-array rules field without crashing", async () => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-
-    const dir = mkdtempSync(join(tmpdir(), "canary-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({ rules: { id: "not-an-array" } }),
-    );
-
-    process.env[ENV_KEY] = join(dir, "config.json");
-    vi.resetModules();
-
-    // Built-in defaults still load (spot-check a well-known rule).
-    const { RULES } = await import("../rules.ts");
-    expect(RULES.some((r) => r.id === "pii-email")).toBe(true);
   });
 });

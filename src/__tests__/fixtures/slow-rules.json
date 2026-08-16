@@ -1,0 +1,52 @@
+{
+  "rules": [
+    {
+      "id": "slow-0",
+      "description": "deliberately slow: nested quantifiers with a literal that never comes",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "slow-1",
+      "description": "deliberately slow",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "slow-2",
+      "description": "deliberately slow",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "slow-3",
+      "description": "deliberately slow",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "slow-4",
+      "description": "deliberately slow",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "slow-5",
+      "description": "deliberately slow",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "slow-6",
+      "description": "deliberately slow",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    },
+    {
+      "id": "slow-7",
+      "description": "deliberately slow",
+      "regex": "(?<!x)eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+      "category": "secret"
+    }
+  ]
+}

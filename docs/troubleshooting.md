@@ -12,8 +12,9 @@ Install or update from [nodejs.org](https://nodejs.org/).
 
 ## Hooks not running after install
 
-1. **Check plugin status** — run `/plugin` and verify sensitive-canary is listed and enabled. Plugin hooks should activate immediately after install without a restart. If they still don't work, try restarting Claude Code.
-2. **Check hooks config** — for manual installs, verify the hooks entries exist in `~/.claude/settings.json`
+1. **Restart Claude Code** — a session that was already running when the plugin was installed does not pick the hooks up. `/plugin` lists it as enabled either way, so the state that checks nothing looks exactly like the state that works. Restart first, then check anything else.
+2. **Check plugin status** — run `/plugin` and verify sensitive-canary is listed and enabled.
+3. **Check hooks config** — for manual installs, verify the hooks entries exist in `~/.claude/settings.json`
 
 ## False positives
 
@@ -21,11 +22,11 @@ If legitimate content is being blocked:
 
 - Add `[allow-secret]`, `[allow-pii]`, or `[allow-all]` to your prompt to bypass the check for that message
 - Allow tags apply only to the current message and do not persist
-- For PreToolUse hooks, allow tags are single-use — they are consumed by the first tool call. If Claude performs multiple tool calls, you may need to include the tag again
+- For PreToolUse hooks a tag stops applying once a tool result is recorded after it. Tool calls issued together, before any result comes back, are all covered by one tag — a tag is not a promise that only the next one goes through
 
 ## .env file blocking
 
-This is by design. `.env` and `.env.*` files are blocked by filename, regardless of their contents, but only while the `secret` category is enabled (the default). Any allow tag (`[allow-secret]`, `[allow-pii]`, or `[allow-all]`) will bypass this block if you need Claude to read an `.env` file intentionally.
+This is by design. `.env` and its siblings are blocked by filename, but only while the `secret` category is enabled (the default). Template names (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.defaults`) are exempt from the name guard and scanned on their contents instead, so an ordinary template reads fine and one holding a live key does not. `[allow-secret]` or `[allow-all]` will lift this block if you need Claude to read an `.env` file intentionally. `[allow-pii]` will not: the block is a secret guard.
 
 ## Plugin not found after marketplace registration
 

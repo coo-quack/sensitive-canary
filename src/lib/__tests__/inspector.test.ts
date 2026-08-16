@@ -1,62 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Finding } from "../inspector.ts";
+
+// Not AWS's documented `…EXAMPLE` key, which the `aws-key`
+// validator reads as documentation rather than a credential.
+const AWS_KEY = ["AKIA", "3QF7TZ9KLMN2", "PQRS"].join("");
+
 import {
   applyAllowTags,
   dedupeFindings,
   findingsToLines,
-  parseAllowTags,
+  MAX_FINDING_LINES,
   resolveTagPriority,
 } from "../inspector.ts";
-
-// ── parseAllowTags ────────────────────────────────────────────────────────────
-
-describe("parseAllowTags", () => {
-  it("returns empty set when no tags are present", () => {
-    const tags = parseAllowTags([{ role: "user", content: "hello" }]);
-    expect(tags.size).toBe(0);
-  });
-
-  it("parses [allow-all]", () => {
-    const tags = parseAllowTags([
-      { role: "user", content: "[allow-all] send anyway" },
-    ]);
-    expect(tags.has("all")).toBe(true);
-  });
-
-  it("parses [allow-pii]", () => {
-    const tags = parseAllowTags([{ role: "user", content: "[allow-pii] ok" }]);
-    expect(tags.has("pii")).toBe(true);
-  });
-
-  it("parses [allow-secret]", () => {
-    const tags = parseAllowTags([
-      { role: "user", content: "[allow-secret] here is my key" },
-    ]);
-    expect(tags.has("secret")).toBe(true);
-  });
-
-  it("is case-insensitive", () => {
-    const tags = parseAllowTags([{ role: "user", content: "[Allow-Secret]" }]);
-    expect(tags.has("secret")).toBe(true);
-  });
-
-  it("ignores tags in assistant messages", () => {
-    const tags = parseAllowTags([
-      { role: "assistant", content: "[allow-all] this is the assistant" },
-    ]);
-    expect(tags.size).toBe(0);
-  });
-
-  it("parses tags from ContentBlock[] content", () => {
-    const tags = parseAllowTags([
-      {
-        role: "user",
-        content: [{ type: "text", text: "[allow-secret] check this" }],
-      },
-    ]);
-    expect(tags.has("secret")).toBe(true);
-  });
-});
 
 // ── resolveTagPriority ────────────────────────────────────────────────────────
 
@@ -83,49 +38,67 @@ describe("resolveTagPriority", () => {
     expect(effectiveAllow.has("secret")).toBe(false);
   });
 
-  it("[allow-secret] before [mask-secret] → allow wins for secret", () => {
+  // The last tag replaces the earlier ones whole. Merging per category kept the
+  // wider grant of the two, so narrowing from `[allow-all]` to `[allow-secret]`
+  // went on allowing PII.
+  it("[allow-secret] then [mask-secret] → mask", () => {
     const { effectiveAllow, effectiveMask } = resolveTagPriority(
       "[allow-secret] [mask-secret] key=abc",
-    );
-    expect(effectiveAllow.has("secret")).toBe(true);
-    expect(effectiveMask.has("secret")).toBe(false);
-  });
-
-  it("[mask-secret] before [allow-secret] → mask wins for secret", () => {
-    const { effectiveAllow, effectiveMask } = resolveTagPriority(
-      "[mask-secret] [allow-secret] key=abc",
     );
     expect(effectiveMask.has("secret")).toBe(true);
     expect(effectiveAllow.has("secret")).toBe(false);
   });
 
-  it("[allow-all] before [mask-secret] → allow wins for both dimensions", () => {
+  it("[mask-secret] then [allow-secret] → allow", () => {
     const { effectiveAllow, effectiveMask } = resolveTagPriority(
-      "[allow-all] [mask-secret] key=abc",
+      "[mask-secret] [allow-secret] key=abc",
     );
     expect(effectiveAllow.has("secret")).toBe(true);
-    expect(effectiveAllow.has("pii")).toBe(true);
+    expect(effectiveMask.has("secret")).toBe(false);
+  });
+
+  it("[allow-all] then [allow-secret] narrows, and PII is guarded again", () => {
+    const { effectiveAllow, effectiveMask } = resolveTagPriority(
+      "[allow-all] [allow-secret] key=abc",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(false);
+    expect(effectiveAllow.has("all")).toBe(false);
     expect(effectiveMask.size).toBe(0);
   });
 
-  it("[mask-all] before [allow-secret] → mask wins for both dimensions", () => {
+  it("[allow-secret] then [allow-all] widens", () => {
+    const { effectiveAllow } = resolveTagPriority(
+      "[allow-secret] [allow-all] key=abc",
+    );
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(true);
+    expect(effectiveAllow.has("all")).toBe(true);
+  });
+
+  it("[mask-all] then [allow-secret] → allow, for secret only", () => {
     const { effectiveAllow, effectiveMask } = resolveTagPriority(
       "[mask-all] [allow-secret] key=abc",
     );
-    expect(effectiveMask.has("secret")).toBe(true);
-    expect(effectiveMask.has("pii")).toBe(true);
-    expect(effectiveMask.has("all")).toBe(true);
-    expect(effectiveAllow.size).toBe(0);
+    expect(effectiveAllow.has("secret")).toBe(true);
+    expect(effectiveAllow.has("pii")).toBe(false);
+    expect(effectiveMask.size).toBe(0);
   });
 
-  it("[allow-secret] [mask-pii] → allow for secret, mask for pii", () => {
-    const { effectiveAllow, effectiveMask } = resolveTagPriority(
-      "[allow-secret] [mask-pii] ...",
+  // Two tags do not add up: `[allow-all]` is how both categories are asked for.
+  it("[allow-secret] then [allow-pii] is not both", () => {
+    const { effectiveAllow } = resolveTagPriority(
+      "[allow-secret] [allow-pii] ...",
+    );
+    expect(effectiveAllow.has("pii")).toBe(true);
+    expect(effectiveAllow.has("secret")).toBe(false);
+  });
+
+  it("a tag mid-sentence still counts", () => {
+    const { effectiveAllow } = resolveTagPriority(
+      "please read the env file [allow-secret] and summarise it",
     );
     expect(effectiveAllow.has("secret")).toBe(true);
-    expect(effectiveMask.has("pii")).toBe(true);
-    expect(effectiveAllow.has("pii")).toBe(false);
-    expect(effectiveMask.has("secret")).toBe(false);
   });
 
   it("[allow-all] → effectiveAllow has 'all'", () => {
@@ -169,7 +142,7 @@ describe("applyAllowTags", () => {
       description: "Email",
       category: "pii",
       matchRedacted: "user****",
-      secretValue: "user@example.com",
+      secretValue: "ada@analytical-engines.org",
       score: 1,
     },
   ];
@@ -250,6 +223,45 @@ describe("dedupeFindings", () => {
     ];
     expect(dedupeFindings(findings)).toHaveLength(2);
   });
+
+  // One value can be two findings. An address in an assignment matches a PII
+  // rule and a secret rule, and collapsing on the value alone reported whichever
+  // came first — so which tag lifts the block read as arbitrary, because the
+  // message named one category and the other was what held it.
+  it("keeps one finding per category for the same value", () => {
+    const value = "alice.dupont@realcompany.co.jp";
+    const findings: Finding[] = [
+      {
+        ruleId: "env-assignment",
+        description: "assignment",
+        category: "secret",
+        matchRedacted: "al****jp",
+        secretValue: value,
+      },
+      {
+        ruleId: "pii-email",
+        description: "Email Address",
+        category: "pii",
+        matchRedacted: "al****jp",
+        secretValue: value,
+      },
+    ];
+    const kept = dedupeFindings(findings);
+    expect(kept).toHaveLength(2);
+    expect(kept.map((f) => f.category).sort()).toEqual(["pii", "secret"]);
+  });
+
+  // And the same category twice is still one, which is what the key is for.
+  it("still collapses the same value in the same category", () => {
+    const one = (ruleId: string): Finding => ({
+      ruleId,
+      description: "d",
+      category: "secret",
+      matchRedacted: "ab****yz",
+      secretValue: "the-same-value",
+    });
+    expect(dedupeFindings([one("a"), one("b")])).toHaveLength(1);
+  });
 });
 
 // ── findingsToLines ───────────────────────────────────────────────────────────
@@ -262,7 +274,7 @@ describe("findingsToLines", () => {
         description: "AWS Access Key ID",
         category: "secret",
         matchRedacted: "AKIA****MPLE",
-        secretValue: "AKIAIOSFODNN7EXAMPLE",
+        secretValue: `${AWS_KEY}`,
         score: 1,
       },
     ];
@@ -279,11 +291,54 @@ describe("findingsToLines", () => {
         description: "Email Address",
         category: "pii",
         matchRedacted: "user****",
-        secretValue: "user@example.com",
+        secretValue: "ada@analytical-engines.org",
         score: 1,
       },
     ];
     const lines = findingsToLines(findings);
     expect(lines[0]).toBe("  [PII] Email Address (pii-email): user****");
+  });
+});
+
+// The cap on how many findings are printed.
+//
+// A rule that matches everywhere once produced forty thousand lines of stderr,
+// which buries the block it is explaining and is itself a way of hiding one.
+// Neither the cap nor the line that says what was left out was fixed by a test,
+// so both could move or vanish without anything noticing.
+describe("how many findings are printed", () => {
+  const finding = (n: number): Finding => ({
+    ruleId: `rule-${n}`,
+    description: `Rule ${n}`,
+    category: "secret",
+    matchRedacted: "ab****yz",
+    secretValue: `value-${n}`,
+  });
+
+  const linesFor = (count: number): string[] =>
+    findingsToLines(Array.from({ length: count }, (_, i) => finding(i)));
+
+  it("prints every finding when there are few", () => {
+    expect(linesFor(3)).toHaveLength(3);
+  });
+
+  // The boundary itself, from both sides: at the cap nothing is elided, one
+  // over it the extra line appears.
+  it("prints exactly the cap with nothing added", () => {
+    const lines = linesFor(MAX_FINDING_LINES);
+    expect(lines).toHaveLength(MAX_FINDING_LINES);
+    expect(lines.join("\n")).not.toContain("more");
+  });
+
+  it("says how many it left out", () => {
+    const lines = linesFor(MAX_FINDING_LINES + 1);
+    expect(lines).toHaveLength(MAX_FINDING_LINES + 1);
+    expect(lines[lines.length - 1]).toBe("  … and 1 more");
+  });
+
+  it("counts the ones it left out", () => {
+    const lines = linesFor(MAX_FINDING_LINES + 4_000);
+    expect(lines).toHaveLength(MAX_FINDING_LINES + 1);
+    expect(lines[lines.length - 1]).toBe("  … and 4000 more");
   });
 });

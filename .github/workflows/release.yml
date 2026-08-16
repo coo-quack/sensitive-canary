@@ -6,9 +6,17 @@ on:
 
 permissions: {}
 
+# Two pushes to `main` in quick succession would otherwise run this twice at
+# once, and the two runs would race over the tag and the npm publish. Nothing is
+# cancelled: a release half-way through is worse than a release that waits.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -20,19 +28,75 @@ jobs:
       - id: check
         run: |
           VERSION=$(node -p "require('./package.json').version")
+
+          # This value is interpolated into later `run:` scripts through `env:`,
+          # and is written to $GITHUB_OUTPUT. Both are ways for a crafted
+          # package.json to reach a shell or invent a second output line, so the
+          # shape is checked here, at the point of capture, before either
+          # happens. The anchors are the whole point: the same test elsewhere in
+          # this file carried `^` without `$`, which accepts anything at all
+          # after a valid prefix.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::package.json declares an unusable version: '$VERSION'"
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if git ls-remote --tags origin "v$VERSION" | grep -q "v$VERSION"; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          elif npm view "@coo-quack/sensitive-canary@$VERSION" version 2>/dev/null; then
+
+          # npm is the only authority on whether this version is released.
+          #
+          # The tag used to be consulted too, and that made the job unable to
+          # recover from a partial run: publish came before the tag, so a failed
+          # tag push left the version on npm with no tag, and a re-run saw the
+          # npm entry and declined to act. Reversing the order alone would have
+          # moved the same trap to the tag. Tagging is idempotent and now runs
+          # first, so a failure anywhere after it re-runs cleanly.
+          if npm view "@coo-quack/sensitive-canary@$VERSION" version >/dev/null 2>&1; then
+            echo "$VERSION is already on npm — nothing to release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # What `/plugin install` serves is the marketplace entry's `ref`, and with
+      # no `ref` that is the default branch — which here is `develop`. Every
+      # gate in this file guards `main` and npm; none of them are on the path a
+      # plugin user installs from. The entry is in another repository, so this
+      # is the only place the two can be held together.
+      - name: the marketplace entry serves a released branch
+        run: |
+          set -uo pipefail
+          catalog=$(curl -fsSL --retry 3 --retry-delay 2 \
+            https://raw.githubusercontent.com/coo-quack/claude-code-marketplace/develop/.claude-plugin/marketplace.json) || {
+            echo "::error::could not read the marketplace catalog."
+            exit 1
+          }
+          printf '%s' "$catalog" | node -e '
+            const chunks = [];
+            process.stdin.on("data", (c) => chunks.push(c));
+            process.stdin.on("end", () => {
+              const catalog = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              const entry = (catalog.plugins ?? []).find((p) => p.name === "sensitive-canary");
+              if (!entry) throw new Error("the catalog lists no sensitive-canary entry");
+              const ref = entry.source?.ref;
+              if (ref !== "main") {
+                throw new Error(
+                  `the catalog serves ref ${JSON.stringify(ref)}, not "main" — ` +
+                  "plugin users would receive unreleased commits",
+                );
+              }
+              console.log("the catalog pins sensitive-canary to main");
+            });
+          '
+
+  # Not gated on `should_release`. Gating the whole job on it meant a failure
+  # after the publish could not be recovered: npm then has the version, the gate
+  # says there is nothing to release, and the tag, the GitHub Release and the
+  # catalog sync are never made. Only the publish itself is conditional; every
+  # other step is idempotent and re-runs harmlessly.
   release:
     needs: check
-    if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       id-token: write
@@ -40,48 +104,225 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.19.0"
           registry-url: "https://registry.npmjs.org"
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run ci
+      # The gates the pull-request build runs, run again here. `release.yml`
+      # is reached by a push to `main` and is not chained to that build, so
+      # without these a red branch still publishes — and the manifest went
+      # out stale twice for exactly this reason.
+      - run: pnpm audit --audit-level high
+      - run: pnpm run build
+      - name: package.json and plugin.json declare the same version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
+          for value in "$pkg" "$plugin"; do
+            if ! [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::a manifest declares no usable version — package.json is '$pkg', .claude-plugin/plugin.json is '$plugin'."
+              exit 1
+            fi
+          done
+          if [ "$pkg" != "$plugin" ]; then
+            echo "::error::version mismatch — package.json is $pkg, .claude-plugin/plugin.json is $plugin."
+            exit 1
+          fi
+      - name: the packed artifact is what gets tested
+        run: |
+          # Everything below runs against the tarball npm would publish, not the
+          # checked-out tree. Dropping "dist/" from `files` used to pass every
+          # gate here while shipping a package whose hooks cannot start.
+          set -euo pipefail
+          # A clean directory and an exact filename: a leftover tarball from an
+          # earlier pack would otherwise be the one extracted, and the checks
+          # below would pass against a package this build did not produce.
+          rm -rf /tmp/pack /tmp/artifact
+          mkdir -p /tmp/pack /tmp/artifact
+          pnpm pack --pack-destination /tmp/pack
+          tarball=$(ls /tmp/pack/*.tgz)
+          test -f "$tarball" || { echo "::error::pnpm pack produced no tarball."; exit 1; }
+          tar xzf "$tarball" -C /tmp/artifact
+          root=/tmp/artifact/package
+          for required in \
+            "$root/dist/pre-tool-use-hook.js" \
+            "$root/dist/user-prompt-submit-hook.js" \
+            "$root/dist/lib/default-config.json" \
+            "$root/hooks/hooks.json" \
+            "$root/.claude-plugin/plugin.json"; do
+            test -f "$required" || {
+              echo "::error::the tarball is missing $required — check the \`files\` field."
+              exit 1
+            }
+          done
+          if find "$root/src" -path '*__tests__*' -print -quit | grep -q .; then
+            echo "::error::the tarball ships tests."
+            exit 1
+          fi
+          echo "ARTIFACT_ROOT=$root" >> "$GITHUB_ENV"
 
-      - name: Publish to npm
-        run: pnpm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: the hook manifest names commands that run
+        run: |
+          # The plugin install path uses hooks/hooks.json and nothing else did
+          # read it. Emptying it left every other gate green.
+          set -uo pipefail
+          node -e '
+            const { readFileSync, existsSync, writeFileSync } = require("node:fs");
+            const root = process.env.ARTIFACT_ROOT;
+            const manifest = JSON.parse(readFileSync(`${root}/hooks/hooks.json`, "utf8"));
+            const events = Object.keys(manifest.hooks ?? {});
+            for (const want of ["PreToolUse", "UserPromptSubmit"]) {
+              if (!events.includes(want)) throw new Error(`hooks.json declares no ${want}`);
+            }
+            let count = 0;
+            for (const [event, entries] of Object.entries(manifest.hooks)) {
+              const commands = entries.flatMap((entry) => entry.hooks ?? []).map((h) => h.command);
+              if (commands.length === 0) throw new Error(`hooks.json declares no command for ${event}`);
+              for (const command of commands) {
+                const match = command.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"\s]+)/);
+                if (!match) throw new Error(`no CLAUDE_PLUGIN_ROOT path in: ${command}`);
+                if (!existsSync(`${root}/${match[1]}`))
+                  throw new Error(`hooks.json points at a missing ${match[1]}`);
+              }
+              count += commands.length;
+              // Resolved and written out so the next step runs the command
+              // itself rather than a stand-in for it.
+              writeFileSync(
+                `/tmp/hookcmd-${event}`,
+                `${commands[0].replaceAll("${CLAUDE_PLUGIN_ROOT}", root)}\n`,
+              );
+            }
+            console.log(`hooks.json: ${count} commands, all present`);
+          '
 
+      - name: the published hooks run, and still block
+        run: |
+          # Exit 0 alone would pass for a hook that starts and checks nothing,
+          # which is the failure this exists to catch. So both directions.
+          #
+          # `set +e` is load-bearing, and `set -uo pipefail` does not imply it:
+          # `-e` arrives from the step's own `bash -e {0}` invocation. A blocking
+          # hook exits 2 on purpose, and the `eval` below runs it as the last
+          # element of a pipeline, where errexit fires inside the subshell and
+          # the status reaching `|| status=$?` is 1 rather than 2 — so every
+          # blocking assertion fails and the release cannot publish.
+          set +e
+          set -uo pipefail
+          key="AKIA""3QF7TZ9KLMN2PQRS"
+          fail=0
+
+          # Both ways in. `dist/*.js` is what the npm instructions point at; a
+          # plugin install runs whatever `hooks/hooks.json` declares, which is a
+          # different loader over a different file. The plugin commands are read
+          # back from the manifest rather than restated here, so the two cannot
+          # drift apart.
+          pre_plugin=$(cat /tmp/hookcmd-PreToolUse)
+          prompt_plugin=$(cat /tmp/hookcmd-UserPromptSubmit)
+          echo "plugin PreToolUse:       $pre_plugin"
+          echo "plugin UserPromptSubmit: $prompt_plugin"
+
+          check() {
+            local want=$1 which=$2 label=$3 payload=$4 status=0 flavour command
+            for flavour in npm plugin; do
+              case "$flavour:$which" in
+                npm:pre)       command="node \"$ARTIFACT_ROOT/dist/pre-tool-use-hook.js\"" ;;
+                npm:prompt)    command="node \"$ARTIFACT_ROOT/dist/user-prompt-submit-hook.js\"" ;;
+                plugin:pre)    command=$pre_plugin ;;
+                plugin:prompt) command=$prompt_plugin ;;
+              esac
+              status=0
+              printf '%s' "$payload" | eval "$command" > /dev/null 2>&1 || status=$?
+              if [ "$status" -ne "$want" ]; then
+                echo "::error::[$flavour] $label — expected exit $want, got $status"
+                fail=1
+              fi
+            done
+          }
+
+          printf 'key=%s\n' "$key" > /tmp/smoke-secret.txt
+          printf 'ok\n' > /tmp/smoke-clean.txt
+          mkdir -p /tmp/smoke-env
+          printf 'TOKEN=real\n' > /tmp/smoke-env/.env
+          printf 'TOKEN=your-token-here\n' > /tmp/smoke-env/.env.example
+          check 0 pre "a clean command must be allowed" \
+            '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+          # Every other assertion made of the prompt hook is that it exits 2, and
+          # a hook that exits 2 unconditionally would pass all of them while
+          # blocking every prompt the user types.
+          check 0 prompt "a clean prompt must be allowed" \
+            '{"prompt":"list the files in this directory"}'
+          check 0 pre "a clean file must be allowed" \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-clean.txt"}}'
+          check 2 prompt "a secret in a prompt must be blocked" \
+            "$(printf '{"prompt":"key=%s"}' "$key")"
+          check 2 pre "a secret in a file must be blocked" \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-secret.txt"}}'
+          check 2 pre "a secret in a command must be blocked" \
+            "$(printf '{"tool_name":"Bash","tool_input":{"command":"echo %s"}}' "$key")"
+          check 2 pre "an env file must be blocked by name" \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-env/.env"}}'
+          # The other direction of the same guard: a template of placeholders is
+          # a file users are told to commit, and blocking it is what gets the
+          # plugin uninstalled.
+          check 0 pre "a template of placeholders must be allowed" \
+            '{"tool_name":"Read","tool_input":{"file_path":"/tmp/smoke-env/.env.example"}}'
+          exit "$fail"
+
+      # Before the publish, not after. npm refuses to republish a version, so a
+      # publish that lands and is then followed by a failing step cannot be
+      # retried — the tag it never created can only be made by hand. Tagging
+      # first costs nothing when a later step fails: the tag is already what
+      # this commit should carry, and the step skips an existing one.
       - name: Create git tag
+        env:
+          VERSION: v${{ needs.check.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          VERSION="v${{ needs.check.outputs.version }}"
-          if git ls-remote --tags origin "$VERSION" | grep -q "$VERSION"; then
+          if git ls-remote --tags origin "$VERSION" | grep -q "refs/tags/$VERSION\$"; then
             echo "Tag $VERSION already exists, skipping"
           else
             git tag "$VERSION"
             git push origin "$VERSION"
           fi
 
+      - name: Publish to npm
+        if: needs.check.outputs.should_release == 'true'
+        run: pnpm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Every step below reads the version from the environment rather than
+      # splicing `${{ }}` into the script. The expression is substituted before
+      # bash parses the line, so a version carrying a quote or a semicolon would
+      # otherwise be read as shell — and `main` is where a release runs.
       - name: Extract changelog
         id: changelog
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
-          VERSION="${{ needs.check.outputs.version }}"
-          NOTES=$(awk "/^## v${VERSION}/{found=1; next} found && /^## v/{exit} found{print}" CHANGELOG.md)
+          # A literal prefix rather than a regex: the version went into an awk
+          # pattern before, where every `.` in it matched any character.
+          NOTES=$(awk -v v="## v$VERSION" '
+            $0 == v || index($0, v " ") == 1 { found = 1; next }
+            found && /^## v/ { exit }
+            found { print }
+          ' CHANGELOG.md)
           if [ -z "$NOTES" ]; then
             NOTES="Release v${VERSION}"
           fi
-          echo "$NOTES" > /tmp/release-notes.md
+          printf '%s\n' "$NOTES" > /tmp/release-notes.md
 
       - name: Create GitHub Release
         id: gh_release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ needs.check.outputs.version }}
         run: |
-          VERSION="v${{ needs.check.outputs.version }}"
           if gh release view "$VERSION" >/dev/null 2>&1; then
             echo "Release $VERSION already exists, skipping"
           else
@@ -94,8 +335,11 @@ jobs:
       # Scoped to the one repository this needs to reach, and minted per run.
       # It replaces a personal access token that was issued in March and never
       # rotated. calc-mcp already dispatches this way.
+      # Dispatched on every run, not only the one that cut the release. The sync
+      # workflow exits early when the catalog already names this version, so a
+      # repeat costs nothing — and gating it on "we just created the release"
+      # left the catalog stuck whenever that step was the one that failed.
       - name: Mint app token for marketplace sync
-        if: steps.gh_release.outputs.created == 'true'
         id: marketplace-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -105,11 +349,11 @@ jobs:
           repositories: claude-code-marketplace
 
       - name: Sync marketplace
-        if: steps.gh_release.outputs.created == 'true'
         env:
           GH_TOKEN: ${{ steps.marketplace-token.outputs.token }}
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           gh api repos/coo-quack/claude-code-marketplace/dispatches \
             -f event_type=plugin-released \
             -f 'client_payload[plugin]=sensitive-canary' \
-            -f 'client_payload[version]=${{ needs.check.outputs.version }}'
+            -f "client_payload[version]=$VERSION"

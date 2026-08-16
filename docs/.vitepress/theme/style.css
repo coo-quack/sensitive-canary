@@ -1,21 +1,21 @@
 :root {
-	--vp-c-brand-1: #b45309;
-	--vp-c-brand-2: #d97706;
-	--vp-c-brand-3: #f59e0b;
-	--vp-c-brand-soft: rgba(180, 83, 9, 0.12);
+  --vp-c-brand-1: #b45309;
+  --vp-c-brand-2: #d97706;
+  --vp-c-brand-3: #f59e0b;
+  --vp-c-brand-soft: rgba(180, 83, 9, 0.12);
 }
 
 .dark {
-	--vp-c-brand-1: #fbbf24;
-	--vp-c-brand-2: #f59e0b;
-	--vp-c-brand-3: #d97706;
-	--vp-c-brand-soft: rgba(251, 191, 36, 0.16);
+  --vp-c-brand-1: #fbbf24;
+  --vp-c-brand-2: #f59e0b;
+  --vp-c-brand-3: #d97706;
+  --vp-c-brand-soft: rgba(251, 191, 36, 0.16);
 }
 
 .vp-doc a {
-	color: var(--vp-c-brand-1);
+  color: var(--vp-c-brand-1);
 }
 
 .vp-doc a:hover {
-	color: var(--vp-c-brand-2);
+  color: var(--vp-c-brand-2);
 }

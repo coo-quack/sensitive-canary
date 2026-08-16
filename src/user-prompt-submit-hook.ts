@@ -1,17 +1,42 @@
 #!/usr/bin/env node
 
+import { blockOnUnhandledError, failClosed } from "./lib/fail-closed.ts";
 import {
+  allowTagLines,
   applyAllowTags,
   dedupeFindings,
   type Finding,
   findingsToLines,
   randomBird,
   resolveTagPriority,
+  typedTextOf,
 } from "./lib/inspector.ts";
-import { enabledCategoriesFromEnv, scan } from "./lib/rules.ts";
+import {
+  beginScanBudget,
+  enabledCategoriesFromEnv,
+  scan,
+} from "./lib/rules.ts";
+
+blockOnUnhandledError();
 
 interface HookInput {
-  prompt?: string;
+  prompt?: unknown;
+}
+
+// Depth at which a prompt stops being searched. The bound is here so a deeply
+// nested value cannot make the hook walk an arbitrary tree before every prompt.
+const MAX_PROMPT_DEPTH = 4;
+
+function collectStrings(value: unknown, depth = 0): string[] {
+  if (typeof value === "string") return [value];
+  if (depth >= MAX_PROMPT_DEPTH) return [];
+  if (Array.isArray(value))
+    return value.flatMap((item) => collectStrings(item, depth + 1));
+  if (value !== null && typeof value === "object")
+    return Object.values(value as Record<string, unknown>).flatMap((item) =>
+      collectStrings(item, depth + 1),
+    );
+  return [];
 }
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
@@ -20,20 +45,46 @@ let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string) => (raw += chunk));
 process.stdin.on("end", () => {
+  // Started here rather than at module load: the wait for stdin belongs to the
+  // runtime, and counting it against the scan let a slow handover spend the
+  // whole allowance before anything was read.
+  beginScanBudget();
   let data: HookInput;
   try {
-    data = JSON.parse(raw) as HookInput;
-  } catch {
-    process.exit(0);
+    // Empty stdin is nothing to check. Bytes that do not parse are a check that
+    // could not read its input, which is not the same as safe: two characters
+    // missing from the end of a payload are enough to hide a key.
+    if (raw.trim().length === 0) process.exit(0);
+    const parsed: unknown = JSON.parse(raw);
+    // `JSON.parse("null")` succeeds and returns null, which then threw on the
+    // first field read. A payload that is not an object carries no prompt.
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+      process.exit(0);
+    data = parsed as HookInput;
+  } catch (error) {
+    // The check never started, so it vouches for nothing. Everything else that
+    // cannot finish stops the call; input that will not parse is the same case.
+    failClosed(error);
   }
 
-  const prompt = data.prompt ?? "";
+  // Whatever the runtime sends. Not throwing on a prompt that is not a string
+  // was only half of it: coercing to "" made the hook exit 0 on the shapes it
+  // could not read, which is the same silence as never running. Every string
+  // inside the value is collected instead, to a bounded depth, so
+  // `{"prompt":{"text":"…"}}` and `{"prompt":["…"]}` are read like a prompt.
+  const prompt = collectStrings(data.prompt).join("\n");
 
   const allFindings = scan(prompt, ENABLED_CATEGORIES);
 
   if (allFindings.length === 0) process.exit(0);
 
-  const { effectiveAllow, effectiveMask } = resolveTagPriority(prompt);
+  // From what the user typed, not from what they pasted: a fenced log or a
+  // README quoting `[allow-secret]` would otherwise lift the guard on the key in
+  // the same message. Both hooks read tags this way, so the same text gets the
+  // same answer whichever one sees it.
+  const { effectiveAllow, effectiveMask } = resolveTagPriority(
+    typedTextOf(prompt),
+  );
 
   const afterAllow: Finding[] = dedupeFindings(
     applyAllowTags(allFindings, effectiveAllow),
@@ -48,8 +99,6 @@ process.stdin.on("end", () => {
   );
 
   if (maskableFindings.length > 0) {
-    const hasSecret = maskableFindings.some((f) => f.category === "secret");
-    const hasPii = maskableFindings.some((f) => f.category === "pii");
     const usedTags = effectiveMask.has("all")
       ? "[mask-all]"
       : (["secret", "pii"] as const)
@@ -69,17 +118,12 @@ process.stdin.on("end", () => {
       "",
       "  1. Manually redact the values above and resubmit",
       "  2. To send as-is, add an allow tag to your prompt:",
-      ...(hasSecret ? ["       [allow-secret]  — allow secrets"] : []),
-      ...(hasPii ? ["       [allow-pii]     — allow PII"] : []),
-      "       [allow-all]     — bypass all sensitive-canary checks",
+      ...allowTagLines(maskableFindings, { indent: "       " }),
       "",
     ];
     process.stderr.write(maskBlockLines.join("\n"));
     process.exit(2);
   }
-
-  const hasSecret = afterAllow.some((f) => f.category === "secret");
-  const hasPii = afterAllow.some((f) => f.category === "pii");
 
   const blockLines = [
     "",
@@ -88,9 +132,7 @@ process.stdin.on("end", () => {
     ...findingsToLines(afterAllow),
     "",
     "To allow, add a tag to your prompt:",
-    ...(hasSecret ? ["  [allow-secret]  — allow secrets"] : []),
-    ...(hasPii ? ["  [allow-pii]     — allow PII"] : []),
-    "  [allow-all]     — bypass all sensitive-canary checks",
+    ...allowTagLines(afterAllow),
     "",
   ];
 

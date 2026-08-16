@@ -1,0 +1,220 @@
+// Shared way to run the PreToolUse hook as a child process and read its verdict,
+// and to give it a file to read. The hook test files use these so that "run the
+// hook" and "write a fixture" each have one meaning and one options shape, rather
+// than a same-named helper per file.
+
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll } from "vitest";
+
+// fileURLToPath rather than `.pathname`, which leaves a checkout under a path
+// with spaces percent-encoded and hands `node` a filename that does not exist.
+// Exported so the integration test resolves the hook the same way: two copies of
+// this line meant one of them could be left behind.
+export const HOOK = fileURLToPath(
+  new URL("../pre-tool-use-hook.ts", import.meta.url),
+);
+const NODE_FLAGS = ["--experimental-strip-types"];
+
+export interface RunOptions {
+  // Variables to add to the child environment.
+  env?: Record<string, string>;
+  // Use `env` as the whole child environment instead of adding to the parent's.
+  // Include PATH when setting this, or `node` will not be found.
+  replaceEnv?: boolean;
+  // Transcript the hook should read allow tags from.
+  transcriptPath?: string;
+  // The directory the tool runs in, as the runtime reports it. A relative path
+  // in a command is relative to this.
+  cwd?: string;
+}
+
+export interface HookResult {
+  // 0 allows the tool call, 2 blocks it.
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  // Whether the tool call was blocked. Named for the outcome rather than for the
+  // payload it is read from, so a test says what it means and does not have to
+  // change if the way a block is returned ever does.
+  blocked: boolean;
+  // The text Claude receives on a block. Read from stderr, which is where a
+  // hook exiting 2 is heard; on an allowed call there is none, so a config
+  // warning printed to stderr is not mistaken for a reason.
+  reason: string | null;
+}
+
+// A hook that never returns is a fail-open in production, where Claude Code's
+// PreToolUse timeout kills it and lets the call through. `spawnSync` blocks the
+// worker, so without a limit here the same hang stops the test run rather than
+// failing it, and vitest's per-test timeout cannot interrupt it. A killed run
+// reports no status, which becomes -1 and fails whatever the test expected.
+const HOOK_TIMEOUT_MS = 15_000;
+
+// Spawn the hook with a raw stdin payload and assemble its verdict.
+function spawnHook(input: string, opts?: RunOptions): HookResult {
+  const result = spawnSync("node", [...NODE_FLAGS, HOOK], {
+    input,
+    encoding: "utf8",
+    env: opts?.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts?.env },
+    timeout: HOOK_TIMEOUT_MS,
+  });
+  const exitCode = result.status ?? -1;
+  return {
+    exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    blocked: exitCode === 2,
+    reason: exitCode === 2 ? result.stderr : null,
+  };
+}
+
+// Feed the hook a raw stdin payload, for cases where the payload is not valid
+// JSON and so cannot be described as a tool call.
+export function runHookWithRawInput(
+  input: string,
+  opts?: RunOptions,
+): HookResult {
+  return spawnHook(input, opts);
+}
+
+// Run the hook against an arbitrary tool call.
+export function runToolHook(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  opts?: RunOptions,
+): HookResult {
+  const input = JSON.stringify({
+    transcript_path: opts?.transcriptPath,
+    cwd: opts?.cwd,
+    tool_name: toolName,
+    tool_input: toolInput,
+  });
+  return spawnHook(input, opts);
+}
+
+// A tool call carrying a single `file_path`, as Read does.
+export function runHook(
+  toolName: string,
+  filePath: string,
+  opts?: RunOptions,
+): HookResult {
+  return runToolHook(toolName, { file_path: filePath }, opts);
+}
+
+export function runBashHook(command: string, opts?: RunOptions): HookResult {
+  return runToolHook("Bash", { command }, opts);
+}
+
+export function runGrepHook(searchPath: string, opts?: RunOptions): HookResult {
+  return runToolHook("Grep", { pattern: "foo", path: searchPath }, opts);
+}
+
+// A temp directory for one test file's fixtures, made before its tests and
+// removed after them, with the `writeFixture` that belongs to it.
+//
+// Three test files opened with the same twenty lines, differing only in the
+// mkdtemp prefix. This module already exists so that running the hook has one
+// meaning rather than one per file; writing a file for it to scan is the same
+// kind of thing.
+export interface FixtureWriter {
+  // Write a fixture and return its absolute path.
+  (name: string, content: string): string;
+  // A path inside the directory without writing anything — the directory itself
+  // when no name is given. For the cases that need a target which is not a
+  // regular file: a directory, or a name that does not exist.
+  path(name?: string): string;
+}
+
+export function useFixtureDir(label: string): FixtureWriter {
+  let dir = "";
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), `sensitive-canary-${label}-`));
+  });
+  afterAll(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const write = (name: string, content: string): string => {
+    const p = join(dir, name);
+    writeFileSync(p, content, "utf8");
+    return p;
+  };
+  return Object.assign(write, {
+    path: (name?: string) => (name === undefined ? dir : join(dir, name)),
+  });
+}
+
+// A transcript file, in the shape Claude Code writes: one JSON object per line.
+//
+// Beside the fixture directory rather than inside each test file, because four
+// files were writing transcripts and three of them had their own copy of this.
+// A tag reaching the hook from somewhere the user did not type it is the defect
+// these are for, and a second implementation is a second thing to keep right.
+export interface TranscriptWriter {
+  // Plain user messages, in order. The last one is what the hook reads.
+  (userMessages: string[]): string;
+  // Rows written out as given, for the lines the runtime writes itself: a
+  // compaction summary, a meta line, a task notification.
+  raw: (rows: unknown[]) => string;
+  // Text turns and tool results interleaved, to say what came after what.
+  withToolResults: (
+    entries: Array<{ text: string } | { toolResult: string }>,
+  ) => string;
+}
+
+export function useTranscripts(fixture: FixtureWriter): TranscriptWriter {
+  let sequence = 0;
+  const writeLines = (lines: string[]): string =>
+    fixture(`transcript-${++sequence}.jsonl`, lines.join("\n"));
+
+  const plain = (userMessages: string[]): string =>
+    writeLines(
+      userMessages.map((content) =>
+        JSON.stringify({ type: "user", message: { role: "user", content } }),
+      ),
+    );
+
+  return Object.assign(plain, {
+    raw: (rows: unknown[]): string =>
+      writeLines(rows.map((r) => JSON.stringify(r))),
+    withToolResults: (
+      entries: Array<{ text: string } | { toolResult: string }>,
+    ): string =>
+      writeLines(
+        entries.map((entry) =>
+          "text" in entry
+            ? JSON.stringify({
+                type: "user",
+                message: { role: "user", content: entry.text },
+              })
+            : JSON.stringify({
+                type: "user",
+                message: {
+                  role: "user",
+                  content: [{ type: "tool_result", content: entry.toolResult }],
+                },
+              }),
+        ),
+      ),
+  });
+}
+
+// Assembled so the full strings never appear in a test file's source. The
+// integration test deliberately uses neither: a canonical key is recited from
+// memory by a live session, which its leak assertion cannot tell from a leak.
+//
+// Not AWS's documented `…EXAMPLE` key, which the `aws-key` validator now treats
+// as the documentation it is. A fixture that must be blocked has to be a shape
+// the rule still reports.
+export const AWS_KEY = ["AKIA", "3QF7TZ9KLMN2", "PQRS"].join("");
+// AWS's own, which must not be reported.
+export const AWS_DOC_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
+export const TOKEN_VALUE = [
+  "ghp_",
+  "1234567890abcdefghij",
+  "klmnopqrstuvwxyz",
+].join("");

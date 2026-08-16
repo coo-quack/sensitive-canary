@@ -1,0 +1,51 @@
+name: CodeQL
+
+# Moved off GitHub's default setup, which only analyses pull requests whose base
+# is the default or a protected branch. A PR stacked on another feature branch
+# was therefore never scanned — the same gap `ci.yml` had, and for the same
+# reason. Advanced setup is the only way to lift it, since the branches default
+# setup covers are not configurable.
+#
+# The two configurations cannot coexist: default setup has to be off for these
+# analyses to be accepted.
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  # Default setup scanned on a schedule as well. Advisories land after a change
+  # merges, not only alongside one.
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions: {}
+
+# Two pushes in quick succession otherwise run two full analyses of the same
+# branch, and the older one's results are stale the moment it finishes.
+# Cancelling is safe here: every trigger analyses a single ref, so the surviving
+# run covers the tree the cancelled one was working towards.
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # The languages default setup was configured with. `actions` covers the
+        # workflow files themselves.
+        language: [actions, javascript-typescript]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: ${{ matrix.language }}
+      - uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: "/language:${{ matrix.language }}"
