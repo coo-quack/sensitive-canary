@@ -65,7 +65,7 @@
     {
       "id": "telegram-bot-token",
       "description": "Telegram Bot Token",
-      "regex": "\\b[0-9]{6,12}:AA[0-9A-Za-z_-]{30,40}\\b",
+      "regex": "\\b[0-9]{6,12}:AA[0-9A-Za-z_-]{30,128}\\b",
       "category": "secret"
     },
     {
