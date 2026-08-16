@@ -1,6 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  chmodSync,
+  globSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   AWS_KEY,
@@ -298,6 +305,109 @@ describe("pre-tool-use-hook — the documented limits", () => {
     writeFixture("g-clean.txt", "nothing here");
     writeFixture("g-secret.txt", `key=${AWS_KEY}`);
     expect(runBashHook(`cat ${dir}/g-*.txt`).exitCode).toBe(2);
+  });
+
+  // Both sides of the number the README states: "at most 256 matches of one
+  // pattern are scanned". The test above says the cap is not 1; this says what
+  // it is. Written as a pair because only the pair pins a number — a cap of 512
+  // passes the first case and the 256th here, and fails nothing else.
+  //
+  // The secret goes in the last match, so the case rests on the order of the
+  // expansion. That assumption is asserted rather than trusted: `globSync`
+  // returning its matches in another order would otherwise turn the second case
+  // into a test that passes or fails by chance.
+  describe("the 256-match cap on one pattern", () => {
+    const spread = (label: string, count: number): string => {
+      const dir = join(writeFixture.path(), label);
+      mkdirSync(dir, { recursive: true });
+      for (let i = 0; i < count; i++) {
+        // Zero-padded, so sorted order is the order they were made in.
+        const name = `sec${String(i).padStart(4, "0")}.txt`;
+        const last = i === count - 1;
+        writeFileSync(join(dir, name), last ? `key=${AWS_KEY}\n` : "nothing\n");
+      }
+      const expanded = globSync(join(dir, "sec*.txt"));
+      expect(expanded).toHaveLength(count);
+      expect(basename(expanded[count - 1] ?? "")).toBe(
+        `sec${String(count - 1).padStart(4, "0")}.txt`,
+      );
+      return dir;
+    };
+
+    it("the 256th match is scanned", () => {
+      const dir = spread("at-cap", 256);
+      expect(runBashHook(`cat ${dir}/sec*.txt`).exitCode).toBe(2);
+    });
+
+    // What the cap costs, stated as a test so it is a decision and not a
+    // surprise. README lists it under Known Limitations.
+    it("the 257th is not", () => {
+      const dir = spread("over-cap", 257);
+      expect(runBashHook(`cat ${dir}/sec*.txt`).exitCode).toBe(0);
+    });
+  });
+});
+
+// The read itself can fail after every check that it should not have. The
+// `catch` around it returns rather than blocking, which is right — a file the
+// hook cannot open is one the tool cannot read either — but nothing said so,
+// and the branch could be changed to anything without a test noticing.
+describe("pre-tool-use-hook — a file the scan cannot open", () => {
+  const writeFixture = useFixtureDir("unreadable");
+
+  // Skipped for a root user, who can open a mode-000 file and would see the
+  // content block this is asserting the absence of.
+  const unreadable = (name: string, content: string): string | null => {
+    const file = writeFixture(name, content);
+    chmodSync(file, 0o000);
+    try {
+      readFileSync(file);
+      chmodSync(file, 0o600);
+      return null;
+    } catch {
+      return file;
+    }
+  };
+
+  it("a file whose permissions forbid the read is allowed", () => {
+    const file = unreadable("locked.txt", `key=${AWS_KEY}\n`);
+    if (file === null) return;
+    expect(runHook("Read", file).exitCode).toBe(0);
+    chmodSync(file, 0o600);
+  });
+
+  // The name guard runs before the open and does not depend on it, so the one
+  // file where an unreadable read still matters is still blocked.
+  it("an unreadable .env is blocked on its name", () => {
+    const file = unreadable(".env", `TOKEN=${AWS_KEY}\n`);
+    if (file === null) return;
+    const result = runHook("Read", file);
+    expect(result.exitCode).toBe(2);
+    chmodSync(file, 0o600);
+  });
+
+  // A symlink is followed, because the read follows it: judging the link by its
+  // own name would scan nothing and allow a `notes.txt` pointing at a key.
+  it("a symlink is judged by what it points at", () => {
+    const target = writeFixture("link-target.txt", `key=${AWS_KEY}\n`);
+    const link = join(writeFixture.path(), "notes.txt");
+    symlinkSync(target, link);
+    expect(runHook("Read", link).exitCode).toBe(2);
+  });
+
+  // A link to nothing is not a read. `.env` is still blocked, because that
+  // guard reads the name; `.env.example` is not, because a path that names
+  // nothing has nothing to leak.
+  it.each([
+    [".env", 2],
+    [".env.example", 0],
+    ["notes.txt", 0],
+  ])("a broken symlink named %s exits %i", (name, want) => {
+    const dir = join(writeFixture.path(), `broken-${name}`);
+    mkdirSync(dir, { recursive: true });
+    const link = join(dir, name);
+    symlinkSync(join(dir, "nowhere"), link);
+    expect(runHook("Read", link).exitCode).toBe(want);
   });
 });
 
