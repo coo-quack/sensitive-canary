@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TOOLS_WITHOUT_FILE_OUTPUT } from "../lib/tool-inputs.ts";
 import {
@@ -32,8 +34,23 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.blocked).toBe(true);
     });
 
-    it("should allow on directory path (known limitation)", () => {
-      const result = runGrepHook(writeFixture.path());
+    // Isolated subdirectories rather than the shared fixture dir, which by this
+    // point holds a `.env` another test wrote.
+    it("blocks on a directory holding a secret", () => {
+      const dir = writeFixture.path("grep-dir-secret");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "config.txt"), `key=${AWS_KEY}`, "utf8");
+      const result = runGrepHook(dir);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("allows a directory of clean files", () => {
+      const dir = writeFixture.path("grep-dir-clean");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "notes.txt"), "nothing to see", "utf8");
+      writeFileSync(join(dir, "readme.md"), "# hello", "utf8");
+      const result = runGrepHook(dir);
       expect(result.exitCode).toBe(0);
     });
 

@@ -1,5 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -251,7 +257,7 @@ describe("pre-tool-use-hook — binary file handling", () => {
     expect(blocked).toBe(true);
   });
 
-  it("allows a binary file when no secret appears before the first NUL byte", () => {
+  it("blocks a secret that appears after the first NUL byte", () => {
     const content = Buffer.concat([
       Buffer.from("clean text\n"),
       Buffer.from([0x00]),
@@ -260,16 +266,34 @@ describe("pre-tool-use-hook — binary file handling", () => {
     const p = join(tmpDir, "binary-secret-after-nul.bin");
     writeFileSync(p, content);
     const { exitCode } = runHook("Read", p);
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(2);
   });
 
-  it("allows a binary file that starts with NUL", () => {
+  it("blocks a secret in a file that starts with NUL", () => {
     const content = Buffer.concat([
       Buffer.from([0x00]),
       Buffer.from("AKIAIOSFODNN7EXAMPLE"),
     ]);
     const p = join(tmpDir, "binary-nul-start.bin");
     writeFileSync(p, content);
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(2);
+  });
+
+  // The other direction: reading past the NULs scans a binary in full, and one
+  // holding no credential has to stay readable.
+  it("allows a binary file with no secret in it", () => {
+    const content = Buffer.alloc(64 * 1024);
+    for (let i = 0; i < content.length; i++) content[i] = i % 256;
+    const p = join(tmpDir, "binary-clean.bin");
+    writeFileSync(p, content);
+    const { exitCode } = runHook("Read", p);
+    expect(exitCode).toBe(0);
+  });
+
+  it("allows a real compiled binary", () => {
+    const p = join(tmpDir, "binary-real.bin");
+    writeFileSync(p, readFileSync(process.execPath).subarray(0, 512 * 1024));
     const { exitCode } = runHook("Read", p);
     expect(exitCode).toBe(0);
   });

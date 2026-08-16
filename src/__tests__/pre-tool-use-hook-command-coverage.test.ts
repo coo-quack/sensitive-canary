@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   AWS_KEY,
@@ -545,8 +547,20 @@ describe("pre-tool-use-hook — command classification", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it("a directory is not read", () => {
-      const result = runBashHook(`cat ${writeFixture.path()}`);
+    it("a directory holding a secret is read", () => {
+      const dir = writeFixture.path("cmd-dir-secret");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "creds.txt"), `key=${AWS_KEY}`, "utf8");
+      const result = runBashHook(`grep -r AKIA ${dir}`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("a directory of clean files is allowed", () => {
+      const dir = writeFixture.path("cmd-dir-clean");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "notes.txt"), "nothing to see", "utf8");
+      const result = runBashHook(`grep -r AKIA ${dir}`);
       expect(result.exitCode).toBe(0);
     });
 
