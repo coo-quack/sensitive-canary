@@ -5,15 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractCommandRefs } from "./lib/bash-commands.ts";
+import { detectUtf16, looksBinary, utf8Runs } from "./lib/encoding.ts";
 import {
   applyAllowTags,
   dedupeFindings,
   findingsToLines,
   forOutput,
-  type Message,
   randomBird,
-  resolveTagPriority,
-  userTypedText,
 } from "./lib/inspector.ts";
 import {
   beginScanBudget,
@@ -32,6 +30,7 @@ import {
   normalizeFieldName,
   TOOLS_WITHOUT_FILE_OUTPUT,
 } from "./lib/tool-inputs.ts";
+import { loadAllowTagsFromTranscript } from "./lib/transcript.ts";
 
 // A hook that crashes exits 1, and only exit 2 blocks — so until now any
 // unforeseen error was a silent pass, which is the failure this whole tool
@@ -71,18 +70,6 @@ interface HookInput {
   };
 }
 
-interface TranscriptLine {
-  type?: unknown;
-  // Runtime-written lines that carry the user's role without the user having
-  // typed them: a compaction summary, and a meta line such as a skill body.
-  isCompactSummary?: unknown;
-  isMeta?: unknown;
-  // Where the line came from. `human` is someone at a keyboard; the other
-  // values name the runtime writing under the user's role.
-  origin?: { kind?: unknown } | null;
-  message?: Message;
-}
-
 // Whether a tool is searching, and named nothing to search. `Grep` is the one
 // Claude Code ships; an MCP server offering the same thing is recognised by the
 // shape of its input rather than by name, since the names are the server's to
@@ -98,20 +85,7 @@ function searchesWithoutAPath(
   return searchTerm && (tool === "Grep" || tool.startsWith("mcp__"));
 }
 
-// Whether a transcript line records something a person typed.
-//
-// The field is only present on lines that have one, so a line without it is
-// left to the other tests rather than rejected: most user lines carry tool
-// results and have no origin, and an older runtime writes none at all.
-function wasTypedByAHuman(line: TranscriptLine): boolean {
-  const kind = line.origin?.kind;
-  return kind === undefined || kind === null || kind === "human";
-}
-
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-// Maximum bytes to read from the tail of a transcript file.
-const MAX_TRANSCRIPT_TAIL_BYTES = 65_536; // 64 KB
 
 // Maximum bytes scanned from the head of a file. readFileSync has no size
 // limit, so a file of any size was read whole and every rule run over all of
@@ -198,110 +172,6 @@ function currentDirectoryOrRoot(): string {
   } catch {
     return path.sep;
   }
-}
-
-// ── Transcript ────────────────────────────────────────────────────────────────
-
-// Returns true when the message carries text the user typed. A message that is
-// only tool results, or only the machinery above, is not user input.
-function hasTextContent(msg: Message): boolean {
-  if (
-    typeof msg.content !== "string" &&
-    !msg.content.some((b) => b.type === "text")
-  )
-    return false;
-  return userTypedText(msg).trim().length > 0;
-}
-
-// Load allow tags from the Claude Code session transcript.
-// Transcript format (JSONL): { "type": "user"|"assistant", "message": { role, content }, … }
-// Only the most recent user *text* message is consulted, and only if no tool_result
-// entries have been recorded after it. This means allow tags are consumed by the first
-// tool call — subsequent tool calls in the same AI turn will be blocked.
-function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
-  let raw: string;
-  try {
-    const stat = fs.statSync(transcriptPath);
-    // A FIFO here would block the read until something wrote to it, and a hook
-    // that never returns is killed by the timeout, which does not block.
-    if (!stat.isFile()) return new Set();
-    if (stat.size <= MAX_TRANSCRIPT_TAIL_BYTES) {
-      raw = fs.readFileSync(transcriptPath, "utf8");
-    } else {
-      const buf = Buffer.alloc(MAX_TRANSCRIPT_TAIL_BYTES);
-      const fd = fs.openSync(transcriptPath, "r");
-      try {
-        const bytesRead = fs.readSync(
-          fd,
-          buf,
-          0,
-          MAX_TRANSCRIPT_TAIL_BYTES,
-          stat.size - MAX_TRANSCRIPT_TAIL_BYTES,
-        );
-        raw = buf.subarray(0, bytesRead).toString("utf8");
-      } finally {
-        fs.closeSync(fd);
-      }
-    }
-  } catch {
-    return new Set();
-  }
-
-  let lastUserMessage: Message | null = null;
-  let toolResultAfterLastText = false;
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as TranscriptLine;
-      const msg = parsed.message;
-      // A line the runtime wrote as an assistant turn is not user input,
-      // whatever the message inside it says its role is. Absent rather than
-      // contradictory is fine: the field is rejected only when it names some
-      // other kind of line.
-      //
-      // `isCompactSummary` and `isMeta` are two the runtime writes as the user
-      // without the user having typed them. A compaction summary is a
-      // re-injection of earlier turns, so a tag anyone discussed at any point in
-      // the conversation comes back armed; a meta line carries skill bodies and
-      // other file content, so writing a `SKILL.md` would be enough to lift
-      // every check. Neither is someone asking for anything.
-      //
-      // `origin.kind` says outright which lines those are, and it is asked
-      // before any of the rest: a background task reporting back arrives as
-      // `task-notification`, carrying an agent's free-form prose under the
-      // user's role. Prose about these very tags is enough, so a report that
-      // quotes the documentation arms the guard it is describing.
-      //
-      // Only lines that carry the field are judged by it. Most do not — a tool
-      // result has no origin — and treating absent as non-human would ignore
-      // every transcript written by a runtime that predates it.
-      if (
-        (parsed.type === undefined || parsed.type === "user") &&
-        parsed.isCompactSummary !== true &&
-        parsed.isMeta !== true &&
-        wasTypedByAHuman(parsed) &&
-        msg?.role === "user" &&
-        msg.content !== undefined
-      ) {
-        if (hasTextContent(msg)) {
-          lastUserMessage = msg;
-          toolResultAfterLastText = false;
-        } else {
-          toolResultAfterLastText = true;
-        }
-      }
-    } catch {
-      // skip malformed lines
-    }
-  }
-
-  if (!lastUserMessage || toolResultAfterLastText) return new Set();
-  // Through the same resolution the prompt hook uses, over the typed text
-  // rather than the raw content. Collecting every tag instead meant this hook
-  // did not see mask tags at all, so `[mask-secret] [allow-secret]` stopped the
-  // prompt and then allowed the tool call it was stopping.
-  return resolveTagPriority(userTypedText(lastUserMessage)).effectiveAllow;
 }
 
 // ── .env pattern ──────────────────────────────────────────────────────────────
@@ -561,34 +431,6 @@ function filesDirectlyUnder(candidate: string): string[] {
   }
 }
 
-// Whether the first few kilobytes hold a NUL byte that UTF-16 does not explain.
-// UTF-16 text is half NUL by construction, and a `.env` written by PowerShell is
-// the file a sweep least wants to skip.
-const BINARY_SNIFF_BYTES = 4096;
-
-function looksBinary(filePath: string): boolean {
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(filePath, "r");
-    const head = Buffer.alloc(BINARY_SNIFF_BYTES);
-    const read = fs.readSync(fd, head, 0, head.length, 0);
-    const bytes = head.subarray(0, read);
-    if (!bytes.includes(0)) return false;
-    // Neither reading, rather than the UTF-16 verdict alone. That verdict is
-    // deliberately loose — the file scan covers a wrong guess by reading the
-    // bytes both ways — and a sweep has no such second chance, so it asks the
-    // question the answer is wanted for: does anything here read as text?
-    const utf16 = detectUtf16(bytes);
-    if (utf16 !== null && readsAsText(utf16.bytes)) return false;
-    return !readsAsUtf8Text(bytes);
-  } catch {
-    // Unreadable. Nothing to sweep, and the named-file path still guards it.
-    return true;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
 // Every command an input carries, whatever shape it arrives in.
 //
 // Reading only top-level strings left two shapes through, and both reach the
@@ -746,104 +588,6 @@ function scanPathsLiteralsFirst(
   for (const candidate of patterns) {
     for (const p of expandCandidate(candidate)) scanOne(p);
   }
-}
-
-// The bytes as little-endian UTF-16, with whether a byte-order mark said so.
-//
-// The mark decides it outright. Without one, the question is whether every NUL
-// falls on the same side of each pair — which it does in UTF-16 text, because
-// the high byte of a Latin character is zero. Requiring most pairs to carry one
-// is too strong: a file whose first few hundred characters are Japanese or
-// Chinese has neither byte zero. One NUL on a consistent side is enough to ask
-// the question; whether the answer is text is what settles it.
-//
-// A guess this loose is wrong sometimes, so `fromBom` marks the ones that are
-// guesses and the caller scans the bytes both ways rather than betting on it.
-type Utf16Reading = { bytes: Buffer; fromBom: boolean };
-
-function detectUtf16(raw: Buffer): Utf16Reading | null {
-  if (raw.length < 4) return null;
-  // Swapping is done on a copy: `raw` is a view into the shared read buffer.
-  const swapped = (): Buffer =>
-    Buffer.from(raw)
-      .subarray(0, raw.length & ~1)
-      .swap16();
-  if (raw[0] === 0xff && raw[1] === 0xfe) return { bytes: raw, fromBom: true };
-  if (raw[0] === 0xfe && raw[1] === 0xff)
-    return { bytes: swapped(), fromBom: true };
-
-  // Far enough in to reach a newline or a space. Five hundred pairs of Japanese
-  // carry no zero byte at all, and that prefix decided the whole file.
-  const pairs = Math.min(raw.length >> 1, 8192);
-  let evenNuls = 0;
-  let oddNuls = 0;
-  for (let i = 0; i < pairs; i++) {
-    if (raw[i * 2] === 0) evenNuls++;
-    if (raw[i * 2 + 1] === 0) oddNuls++;
-  }
-  // Several, not one: a single stray NUL is not an encoding.
-  const MINIMUM_NULS = 8;
-  if (Math.max(evenNuls, oddNuls) < MINIMUM_NULS) return null;
-
-  // How much the minority side holds is not asked. Characters in the U+xx00
-  // rows put a NUL on that side, and Japanese is full of them — `一` is U+4E00,
-  // and a full-width space is U+3000 — so any threshold tight enough to exclude
-  // a binary also excludes an ordinary Japanese document. The counts cannot
-  // separate those two cases, so the question is left to `readsAsText`, and
-  // being wrong costs only a pass: the caller reads the bytes both ways
-  // whenever the verdict did not come from a byte-order mark.
-  //
-  // Which side leads picks the order the two byte orders are tried in, not
-  // whether they are tried.
-  const orderings: Buffer[] =
-    oddNuls >= evenNuls ? [raw, swapped()] : [swapped(), raw];
-  for (const candidate of orderings) {
-    if (readsAsText(candidate)) return { bytes: candidate, fromBom: false };
-  }
-  return null;
-}
-
-// Whether the runs of text between the NUL bytes read as something someone
-// wrote. A `.env` written by a tool that terminates its values, and a log with
-// a stray zero in it, both pass; a JPEG's compressed bytes do not.
-function readsAsUtf8Text(raw: Buffer): boolean {
-  const sample = utf8Runs(raw.subarray(0, 4096));
-  if (sample.length === 0) return false;
-  let bad = 0;
-  for (const ch of sample) {
-    const code = ch.codePointAt(0) ?? 0;
-    const isControl =
-      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
-      code === 0x7f;
-    if (isControl || code === 0xfffd) bad++;
-  }
-  return bad / sample.length < 0.05;
-}
-
-// Every run of text between the NUL bytes, joined by newlines so that no rule
-// matches across two unrelated runs.
-function utf8Runs(raw: Buffer): string {
-  const text = raw.toString("utf8");
-  return text.indexOf("\0") === -1 ? text : text.split("\0").join("\n");
-}
-
-// Whether these bytes decoded as UTF-16 look like something someone wrote. A
-// binary file can have its NULs on one side by chance; text decoded from the
-// wrong encoding is mostly control characters and replacement characters, and
-// this is what separates the two.
-function readsAsText(le: Buffer): boolean {
-  const sample = le.subarray(0, 4096).toString("utf16le");
-  if (sample.length === 0) return false;
-  let bad = 0;
-  for (const ch of sample) {
-    const code = ch.codePointAt(0) ?? 0;
-    const isControl =
-      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
-      code === 0x7f;
-    if (isControl || code === 0xfffd || (code >= 0xe000 && code <= 0xf8ff))
-      bad++;
-  }
-  return bad / sample.length < 0.05;
 }
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
