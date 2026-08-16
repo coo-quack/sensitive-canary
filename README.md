@@ -102,7 +102,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash|Grep|mcp__.*",
+        "matcher": "Read|NotebookRead|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -151,7 +151,7 @@ Then add to `~/.claude/settings.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash|Grep|mcp__.*",
+        "matcher": "Read|NotebookRead|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -513,7 +513,7 @@ The `/` is what separates a path from a word, and it is there so that a search p
 
 Values are found up to four levels down and inside arrays, both of strings and of objects, so `{ "path": "…" }`, `{ "paths": ["…"] }`, `{ "args": ["/abs/…"] }` and `{ "args": { "paths": [{ "path": "…" }] } }` are all covered. A field naming a directory is left alone.
 
-Which tools reach the hook at all is the matcher's business, and the default (`Read|Bash|Grep|mcp__.*`) sends it `Read`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives.
+Which tools reach the hook at all is the matcher's business, and the default (`Read|NotebookRead|Bash|Grep|mcp__.*`) sends it `Read`, `NotebookRead`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives.
 
 Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Neither are the tools that surface no file contents — `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`, `AskUserQuestion` — nor any tool whose name leads with a write verb, such as `mcp__fs__write_file` or `createPage`.
 

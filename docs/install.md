@@ -87,7 +87,7 @@ in place of `<dist>` below, in `~/.claude/settings.json`:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash|Grep|mcp__.*",
+        "matcher": "Read|NotebookRead|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -168,7 +168,7 @@ Add the following to `~/.claude/settings.json`:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Bash|Grep|mcp__.*",
+        "matcher": "Read|NotebookRead|Bash|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -222,7 +222,7 @@ To allow, add a tag to your prompt:
 
 ### PreToolUse hook
 
-Runs before Claude uses `Read`, `Bash`, `Grep` or any MCP tool. It blocks:
+Runs before Claude uses `Read`, `NotebookRead`, `Bash`, `Grep` or any MCP tool. It blocks:
 
 - `.env` and `.env.*` files by filename (a secret guard; only while the `secret` category is enabled)
 - Any file whose contents contain secrets or PII

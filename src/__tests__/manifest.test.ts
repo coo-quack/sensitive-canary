@@ -112,6 +112,39 @@ describe("hooks.json", () => {
   });
 });
 
+// The install guide is a second manifest, kept by hand. A plugin install reads
+// `hooks/hooks.json`; an npm or from-source install is whatever the reader
+// copied out of the documentation, and the two are only the same while someone
+// remembers. They were not: `NotebookRead` was added to the matcher and to the
+// tests above, and all four documented snippets kept the matcher without it —
+// green here, and a narrower guard for everyone who installs by the guide.
+//
+// README.md ships inside the npm package, so a stale snippet there is published
+// rather than merely posted.
+describe("the documented matcher", () => {
+  const matcher = (events["PreToolUse"] ?? [])[0]?.matcher ?? "";
+
+  it.each(["README.md", "docs/install.md"])(
+    "%s registers the matcher hooks.json declares",
+    (relative) => {
+      const text = readFileSync(join(ROOT, relative), "utf8");
+      const quoted = [...text.matchAll(/"matcher":\s*"([^"]+)"/g)].map(
+        (m) => m[1],
+      );
+      // A guide that stopped showing a matcher would otherwise pass by having
+      // nothing to disagree with.
+      expect(quoted.length).toBeGreaterThan(0);
+      for (const found of quoted) expect(found).toBe(matcher);
+    },
+  );
+
+  // The prose beside the snippets names the same default. It drifted with them.
+  it("README describes the matcher it tells the reader to paste", () => {
+    const text = readFileSync(join(ROOT, "README.md"), "utf8");
+    expect(text).toContain(`the default (\`${matcher}\`)`);
+  });
+});
+
 describe("plugin.json", () => {
   const plugin = readJson(".claude-plugin/plugin.json");
   const pkg = readJson("package.json");

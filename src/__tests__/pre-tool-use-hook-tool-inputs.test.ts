@@ -134,6 +134,70 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
     });
   });
 
+  // A search with no path runs where the tool runs, and the field carrying the
+  // term is the server's to name. `pattern` had a case; `query` and `regex` did
+  // not, so either could be dropped from the test that recognises a search and
+  // the suite stayed green — and an MCP search would then print from a
+  // directory nobody looked at.
+  describe("a search term under any of its names", () => {
+    const withEnv = (label: string): string => {
+      const dir = writeFixture.path(`search-${label}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, ".env"), `TOKEN=${TOKEN_VALUE}\n`, "utf8");
+      return dir;
+    };
+
+    it.each(["pattern", "query", "regex"])(
+      "an MCP search under %s blocks when a .env sits where it runs",
+      (field) => {
+        const result = runToolHook(
+          "mcp__example__search",
+          { [field]: "TODO" },
+          { cwd: withEnv(field) },
+        );
+        expect(result.exitCode).toBe(2);
+        expect(result.blocked).toBe(true);
+      },
+    );
+
+    // Names only, for every spelling. Content-scanning a directory nobody named
+    // stopped a plain `rg TODO` in a third of the checkouts it was measured
+    // against, and the reason has nothing to do with which field the term is in.
+    it.each(["pattern", "query", "regex"])(
+      "an MCP search under %s allows ordinary files that mention secrets",
+      (field) => {
+        const dir = writeFixture.path(`prose-${field}`);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+          join(dir, "CHANGELOG.md"),
+          `- redact a key such as ${AWS_KEY} in the terminal\n`,
+          "utf8",
+        );
+        const result = runToolHook(
+          "mcp__example__search",
+          { [field]: "TODO" },
+          { cwd: dir },
+        );
+        expect(result.exitCode).toBe(0);
+      },
+    );
+
+    // The other half of the rule: the term makes it a search, the tool makes it
+    // one that searches here. Without the tool test every input with a `query`
+    // would scan the working directory.
+    it.each(["Read", "Write", "mcp__example__write_file"])(
+      "%s carrying a query does not scan the working directory",
+      (tool) => {
+        const result = runToolHook(
+          tool,
+          { query: "TODO" },
+          { cwd: withEnv(tool) },
+        );
+        expect(result.exitCode).toBe(0);
+      },
+    );
+  });
+
   describe("other tools and MCP", () => {
     it("mcp__filesystem__read_text_file should block on secret", () => {
       const file = writeFixture("mcp_secret.txt", `key=${AWS_KEY}`);

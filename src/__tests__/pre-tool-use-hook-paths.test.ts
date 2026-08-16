@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AWS_KEY,
@@ -195,6 +196,68 @@ describe("pre-tool-use-hook — shell expansion of a path", () => {
   it("a file whose name contains glob characters is scanned", () => {
     const file = writeFixture("report[2].txt", `key=${AWS_KEY}`);
     expect(runBashHook(`cat ${file}`).exitCode).toBe(2);
+  });
+});
+
+// ── file:// URIs ─────────────────────────────────────────────────────────────
+
+// MCP servers pass a `file://` URI under `uri` where another tool would pass
+// `path`. Resolved as a relative path it named nothing, so it fell to the
+// not-a-file check before the `.env` name guard could read it. Nothing here
+// exercised the conversion: it could be deleted and the suite stayed green.
+describe("pre-tool-use-hook — a file:// URI names a path", () => {
+  const writeFixture = useFixtureDir("file-url");
+
+  it("a URI naming a .env is blocked on the name", () => {
+    const file = writeFixture(".env", `TOKEN=${AWS_KEY}`);
+    const result = runToolHook("mcp__fs__read_resource", {
+      uri: pathToFileURL(file).href,
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.blocked).toBe(true);
+  });
+
+  it("a URI naming an ordinary file is scanned for content", () => {
+    const file = writeFixture("notes.txt", `key=${AWS_KEY}`);
+    const result = runToolHook("mcp__fs__read_resource", {
+      uri: pathToFileURL(file).href,
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
+  // The conversion belongs to the candidate, not to the field it arrived in.
+  it("a URI under file_path is converted too", () => {
+    const file = writeFixture("under-file-path.txt", `key=${AWS_KEY}`);
+    const result = runToolHook("Read", {
+      file_path: pathToFileURL(file).href,
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
+  // A percent-encoded name is the reason the conversion exists rather than a
+  // `slice(7)`: the URI for a file with a space in its name carries `%20`, and
+  // trimming the scheme by hand hands the filesystem a name nothing is called.
+  it("a URI for a name with a space is resolved, not trimmed", () => {
+    const file = writeFixture("my secrets.txt", `key=${AWS_KEY}`);
+    const result = runToolHook("mcp__fs__read_resource", {
+      uri: pathToFileURL(file).href,
+    });
+    expect(result.reason).toContain("my secrets.txt");
+    expect(result.exitCode).toBe(2);
+  });
+
+  // Both ways the conversion can refuse. `fileURLToPath` throws on a URI it
+  // cannot read and on one naming another host, and the candidate is then left
+  // as written — which names nothing on this disk. The hook has to come back
+  // either way: a throw here reaches the top level, and an unhandled throw is a
+  // hook that does not block.
+  it.each([
+    ["malformed", "file://%%%/nope"],
+    ["another host", "file://server/share/.env"],
+  ])("a URI that cannot be converted (%s) returns", (_label, uri) => {
+    const result = runToolHook("mcp__fs__read_resource", { uri });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("ERR_INVALID");
   });
 });
 
