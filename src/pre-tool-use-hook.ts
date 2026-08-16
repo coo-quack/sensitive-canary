@@ -73,6 +73,10 @@ interface HookInput {
 
 interface TranscriptLine {
   type?: unknown;
+  // Runtime-written lines that carry the user's role without the user having
+  // typed them: a compaction summary, and a meta line such as a skill body.
+  isCompactSummary?: unknown;
+  isMeta?: unknown;
   message?: Message;
 }
 
@@ -133,12 +137,19 @@ let bytesScanned = 0;
 // which cannot be interrupted: a pattern several directories deep still costs
 // what the walk costs. Files after the deadline are not scanned, and a `.env`
 // name reached after it falls back on the name.
-const DEADLINE = Date.now() + 5_000;
+// Both clocks start when the payload arrives, not when the process does. The
+// wait for stdin is the runtime's, and counting it against the scan meant a
+// slow handover spent the whole allowance before a single file was read — five
+// seconds of it and nothing was scanned, on an exit code of 0.
+let DEADLINE = Number.POSITIVE_INFINITY;
 
-// One budget for the whole invocation, started here rather than counted per
-// `scan()` call. A call is scanned per environment variable and per end of each
-// file, so the number of calls is set by the payload.
-beginScanBudget();
+function startTheClock(): void {
+  DEADLINE = Date.now() + 5_000;
+  // One budget for the whole invocation rather than one per `scan()` call: a
+  // call is made per environment variable and per end of each file, so the
+  // payload sets how many there are.
+  beginScanBudget();
+}
 
 // The directory a relative path is relative to. Set from the payload before any
 // scanning; `process.cwd()` is where the hook was started, which is not
@@ -220,8 +231,17 @@ function loadAllowTagsFromTranscript(transcriptPath: string): Set<string> {
       // whatever the message inside it says its role is. Absent rather than
       // contradictory is fine: the field is rejected only when it names some
       // other kind of line.
+      //
+      // `isCompactSummary` and `isMeta` are the two the runtime writes as the
+      // user without the user having typed them. A compaction summary is a
+      // re-injection of earlier turns, so a tag anyone discussed at any point in
+      // the conversation comes back armed; a meta line carries skill bodies and
+      // other file content, so writing a `SKILL.md` would be enough to lift
+      // every check. Neither is someone asking for anything.
       if (
         (parsed.type === undefined || parsed.type === "user") &&
+        parsed.isCompactSummary !== true &&
+        parsed.isMeta !== true &&
         msg?.role === "user" &&
         msg.content !== undefined
       ) {
@@ -477,16 +497,44 @@ function expandPath(candidate: string): string {
 // One level, and capped at the same limit a glob is, because the walk is the
 // part that cannot be interrupted. `readdirSync` rather than a glob: `*` does
 // not match a leading dot, and `.env` is the file this most needs to find.
+//
+// Binaries are skipped here, though a file the user names outright is still
+// scanned whole. Nobody asked for these: they are swept up because the
+// directory was named, and a folder of images cost three seconds and reported
+// the compressed bytes as email addresses.
 function filesDirectlyUnder(candidate: string): string[] {
   try {
     return fs
       .readdirSync(candidate, { withFileTypes: true })
       .filter((entry) => entry.isFile())
       .slice(0, MAX_GLOB_MATCHES)
-      .map((entry) => path.join(candidate, entry.name));
+      .map((entry) => path.join(candidate, entry.name))
+      .filter((file) => !looksBinary(file));
   } catch {
     // Not a directory, or not readable.
     return [];
+  }
+}
+
+// Whether the first few kilobytes hold a NUL byte that UTF-16 does not explain.
+// UTF-16 text is half NUL by construction, and a `.env` written by PowerShell is
+// the file a sweep least wants to skip.
+const BINARY_SNIFF_BYTES = 4096;
+
+function looksBinary(filePath: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const head = Buffer.alloc(BINARY_SNIFF_BYTES);
+    const read = fs.readSync(fd, head, 0, head.length, 0);
+    const bytes = head.subarray(0, read);
+    if (!bytes.includes(0)) return false;
+    return detectUtf16(bytes) === null;
+  } catch {
+    // Unreadable. Nothing to sweep, and the named-file path still guards it.
+    return true;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
@@ -670,8 +718,14 @@ function detectUtf16(raw: Buffer): Buffer | null {
   // other side, and a single one of those in a Japanese document is not
   // evidence the file is anything but UTF-16. `readsAsText` still has to agree,
   // which is what keeps a binary whose NULs happen to lean one way out.
+  // Both a ratio and an absolute cap. A ratio alone read four real binaries out
+  // of seventeen thousand as UTF-16 — a JPEG among them, which then decoded to
+  // nonsense and hid a key sitting in its bytes. The characters this exists for
+  // are rare in a document: a handful of U+xx00 in a page of Japanese, not the
+  // hundreds a binary contributes.
+  const MAX_MINORITY_NULS = 4;
   const dominates = (side: number, other: number): boolean =>
-    side >= MINIMUM_NULS && side >= other * 8;
+    side >= MINIMUM_NULS && other <= MAX_MINORITY_NULS && side >= other * 64;
   if (dominates(oddNuls, evenNuls) && readsAsText(raw)) return raw;
   if (dominates(evenNuls, oddNuls)) {
     const be = swapped();
@@ -896,6 +950,7 @@ let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string) => (raw += chunk));
 process.stdin.on("end", () => {
+  startTheClock();
   let data: HookInput;
   try {
     // Empty stdin is nothing to check. Bytes that do not parse are a check that

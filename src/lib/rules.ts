@@ -485,6 +485,12 @@ export function isNotSecretShaped(value: string): boolean {
   if (/^\d+$/.test(v)) return true;
   // A dotted lower-case identifier, as a storage key or a setting name.
   if (/^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$/.test(v)) return true;
+  // A reference to a value in code rather than the value: `process.env.API_KEY`,
+  // `user.password_digest`, `self.api_key`, `response.data.accessToken`. Of the
+  // distinct values `env-assignment` matched across thirty thousand real files,
+  // two in five were one of these. No credential format has a dot in it — a JWT
+  // does, and it is matched by its own rule, which this test does not run over.
+  if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(v)) return true;
   return false;
 }
 
@@ -907,10 +913,16 @@ function buildRules(): Rule[] {
 
 export const RULES: Rule[] = buildRules();
 
-// Show first 4 + **** + last 4 chars; fully mask strings of 8 chars or fewer
+// Enough of a value to say which one was found, and no more.
+//
+// The block reason is written to stderr, which is where Claude reads it, so
+// whatever is shown here reaches the API that the block exists to keep it from.
+// Four characters at each end returned eight of a nine-character password.
+// A quarter of the value, capped at four per end.
 export function redact(str: string): string {
-  if (str.length <= 8) return "****";
-  return `${str.slice(0, 4)}****${str.slice(-4)}`;
+  const shown = Math.min(4, Math.floor(str.length / 8));
+  if (shown === 0) return "****";
+  return `${str.slice(0, shown)}****${str.slice(-shown)}`;
 }
 
 // Longer than any honest scan and far shorter than the hook timeout. One rule

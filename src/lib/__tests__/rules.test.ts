@@ -92,18 +92,43 @@ describe("entropy", () => {
 // ── redact ────────────────────────────────────────────────────────────────────
 
 describe("redact", () => {
-  it("masks strings of 8 chars or fewer completely", () => {
+  it("masks a short value completely", () => {
     expect(redact("abc")).toBe("****");
-    expect(redact("12345678")).toBe("****");
-  });
-
-  it("shows first 4 and last 4 chars for strings longer than 8 chars", () => {
-    expect(redact("123456789")).toBe("1234****6789");
-    expect(redact("AKIAIOSFODNN7EXAMPLE")).toBe("AKIA****MPLE");
+    expect(redact("1234567")).toBe("****");
   });
 
   it("handles empty string", () => {
     expect(redact("")).toBe("****");
+  });
+
+  // Whatever this returns is written to stderr, which is where Claude reads it,
+  // so it reaches the API the block exists to keep the value from. A quarter of
+  // the value, capped at four characters per end.
+  it.each([
+    [9, 2],
+    [16, 4],
+    [24, 6],
+    [32, 8],
+    [64, 8],
+  ])("a %i-character value returns at most %i of it", (length, atMost) => {
+    const value = "abcdefghijklmnopqrstuvwxyz0123456789"
+      .repeat(2)
+      .slice(0, length);
+    const shown = redact(value);
+    expect(shown.replace(/\*/g, "")).toHaveLength(atMost);
+  });
+
+  it("never returns more than a quarter of the value", () => {
+    for (let length = 1; length <= 200; length++) {
+      const value = "a".repeat(length);
+      const kept = redact(value).replace(/\*/g, "").length;
+      expect(kept / length, `${length} characters`).toBeLessThanOrEqual(0.25);
+    }
+  });
+
+  it("shows the ends, so two findings can be told apart", () => {
+    expect(redact("AKIAIOSFODNN7EXAMPLE")).toBe("AK****LE");
+    expect(redact("AKIAQQQQQQQQQQQQQZZZ")).toBe("AK****ZZ");
   });
 });
 

@@ -77,6 +77,11 @@ const UNCLOSED_SYNTHETIC_ELEMENT = new RegExp(
 // followed advised adding the tag it had just ignored.
 const FENCED_CODE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
 
+// A fence that never closes takes the rest of the message with it, the way an
+// unclosed synthetic element does. Pairs alone let a truncated paste through:
+// the quoting is what the fence marks, and a paste cut short is still a paste.
+const UNCLOSED_FENCE = /(?:```|~~~)[\s\S]*$/g;
+
 // What the user actually typed, with the above taken out.
 export function userTypedText(msg: Message): string {
   const blocks =
@@ -87,7 +92,8 @@ export function userTypedText(msg: Message): string {
     .join("\n")
     .replace(SYNTHETIC_USER_ELEMENTS, " ")
     .replace(UNCLOSED_SYNTHETIC_ELEMENT, " ")
-    .replace(FENCED_CODE, " ");
+    .replace(FENCED_CODE, " ")
+    .replace(UNCLOSED_FENCE, " ");
 }
 
 // The same rules over a bare string, for the prompt, which is not a message.

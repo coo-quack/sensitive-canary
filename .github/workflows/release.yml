@@ -88,9 +88,13 @@ jobs:
             });
           '
 
+  # Not gated on `should_release`. Gating the whole job on it meant a failure
+  # after the publish could not be recovered: npm then has the version, the gate
+  # says there is nothing to release, and the tag, the GitHub Release and the
+  # catalog sync are never made. Only the publish itself is conditional; every
+  # other step is idempotent and re-runs harmlessly.
   release:
     needs: check
-    if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -200,10 +204,13 @@ jobs:
           # Exit 0 alone would pass for a hook that starts and checks nothing,
           # which is the failure this exists to catch. So both directions.
           #
-          # No `set -e` here, and every hook invocation captures its status with
-          # `|| status=$?`: a blocking hook exits 2 on purpose, and under the
-          # default `bash -e {0}` that killed the step before the assertion ran,
-          # which made the release unable to publish at all.
+          # `set +e` is load-bearing, and `set -uo pipefail` does not imply it:
+          # `-e` arrives from the step's own `bash -e {0}` invocation. A blocking
+          # hook exits 2 on purpose, and the `eval` below runs it as the last
+          # element of a pipeline, where errexit fires inside the subshell and
+          # the status reaching `|| status=$?` is 1 rather than 2 — so every
+          # blocking assertion fails and the release cannot publish.
+          set +e
           set -uo pipefail
           key="AKIA""IOSFODNN7EXAMPLE"
           fail=0
@@ -284,6 +291,7 @@ jobs:
           fi
 
       - name: Publish to npm
+        if: needs.check.outputs.should_release == 'true'
         run: pnpm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -327,8 +335,11 @@ jobs:
       # Scoped to the one repository this needs to reach, and minted per run.
       # It replaces a personal access token that was issued in March and never
       # rotated. calc-mcp already dispatches this way.
+      # Dispatched on every run, not only the one that cut the release. The sync
+      # workflow exits early when the catalog already names this version, so a
+      # repeat costs nothing — and gating it on "we just created the release"
+      # left the catalog stuck whenever that step was the one that failed.
       - name: Mint app token for marketplace sync
-        if: steps.gh_release.outputs.created == 'true'
         id: marketplace-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -338,7 +349,6 @@ jobs:
           repositories: claude-code-marketplace
 
       - name: Sync marketplace
-        if: steps.gh_release.outputs.created == 'true'
         env:
           GH_TOKEN: ${{ steps.marketplace-token.outputs.token }}
           VERSION: ${{ needs.check.outputs.version }}

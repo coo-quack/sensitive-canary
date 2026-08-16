@@ -62,14 +62,14 @@ function collectStrings(value: unknown, depth = 0): string[] {
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
-// One budget for the whole invocation. A prompt carries several strings and
-// each is a separate `scan()` call.
-beginScanBudget();
-
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string) => (raw += chunk));
 process.stdin.on("end", () => {
+  // Started here rather than at module load: the wait for stdin belongs to the
+  // runtime, and counting it against the scan let a slow handover spend the
+  // whole allowance before anything was read.
+  beginScanBudget();
   let data: HookInput;
   try {
     // Empty stdin is nothing to check. Bytes that do not parse are a check that
