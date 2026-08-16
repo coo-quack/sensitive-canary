@@ -29,7 +29,7 @@ const IN_PLACE_COMMANDS = Object.keys(IN_PLACE_EDITORS);
 describe("every write verb is exempt in every spelling", () => {
   it.each(VERBS)("%s", (verb) => {
     const upper = verb.toUpperCase();
-    const camel = verb + "File";
+    const camel = `${verb}File`;
     for (const name of [
       `${verb}_file`,
       `${upper}_FILE`,

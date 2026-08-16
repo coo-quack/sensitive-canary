@@ -38,6 +38,7 @@ jobs:
   # comment saying why — visible and reviewable, unlike a silent dismissal.
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -50,7 +51,7 @@ jobs:
         with:
           node-version: '24.19.0'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level high
 
   # The release checklist asks for `version` in package.json and
@@ -62,6 +63,7 @@ jobs:
   # requiring this check would stop a merge past it.
   versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -81,8 +83,11 @@ jobs:
           # side has to look like a version before the two are compared — a
           # shape test rather than a list of the ways it can be absent, which
           # would need extending every time a new one turns up.
+          #
+          # Anchored at both ends. `^` alone accepted anything trailing a valid
+          # prefix, and release.yml puts this same value into a shell.
           for value in "$pkg" "$plugin"; do
-            if ! printf '%s' "$value" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            if ! [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
               echo "::error::a manifest declares no usable version — package.json is '$pkg', .claude-plugin/plugin.json is '$plugin'."
               exit 1
             fi
@@ -96,6 +101,7 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -108,11 +114,12 @@ jobs:
         with:
           node-version: '24.19.0'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -125,11 +132,12 @@ jobs:
         with:
           node-version: '24.19.0'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
 
   format:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -142,11 +150,12 @@ jobs:
         with:
           node-version: '24.19.0'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run format:check
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -159,13 +168,14 @@ jobs:
         with:
           node-version: '24.19.0'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
   # docs.yml builds and deploys on push to main only, so a dependency change
   # that breaks vitepress reaches main before anyone sees it. Build here too.
   docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -178,5 +188,5 @@ jobs:
         with:
           node-version: '24.19.0'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run docs:build
