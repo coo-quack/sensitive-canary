@@ -1,6 +1,6 @@
 {
   "name": "@coo-quack/sensitive-canary",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Claude Code hooks that block secrets and PII before they reach the Anthropic API",
   "license": "MIT",
   "author": "coo-quack",
@@ -55,5 +55,5 @@
     "vitepress": "2.0.0-alpha.19",
     "vitest": "4.1.10"
   },
-  "packageManager": "pnpm@11.21.0"
+  "packageManager": "pnpm@11.22.0"
 }
