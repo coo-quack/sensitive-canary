@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.1 (2026-08-18)
+
+### Maintenance
+
+- Add a workflow to deprecate a published npm version from Actions (#219)
+- Update pnpm to 11.22.0 (#220); lock file maintenance (#221, #223)
+
 ## v0.8.0 (2026-08-16)
 
 ### Breaking changes
