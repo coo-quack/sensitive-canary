@@ -6,10 +6,12 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 
 ### Cloud
 
-| Rule ID | Description | Pattern |
-|---------|-------------|---------|
-| `aws-access-key` | AWS Access Key ID | `AKIA`, `ASIA`, `AGPA`, `AIDA`, `AROA`, … + 16 uppercase alphanumeric chars |
-| `gcp-api-key` | Google Cloud API Key | `AIza` + 35 alphanumeric/dash/underscore chars |
+| Rule ID | Description |
+|---------|-------------|
+| `aws-access-key` | AWS Access Key ID (`AKIA`, `ASIA`, `AGPA`, `AIDA`, `AROA`, … + 16 uppercase alphanumeric chars) |
+| `gcp-api-key` | Google Cloud API Key (`AIza` + 35 alphanumeric/dash/underscore chars) |
+| `digitalocean-pat` | DigitalOcean Personal Access Token (`dop_v1_` prefix) |
+| `supabase-key` | Supabase Personal Access Token (`sbp_` prefix) |
 
 ### Source Control
 
@@ -38,13 +40,6 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `openrouter-key` | OpenRouter API Key (`sk-or-v1-` prefix) |
 | `xai-key` | xAI (Grok) API Key (`xai-` prefix) |
 | `perplexity-key` | Perplexity API Key (`pplx-` prefix) |
-
-### Cloud / IaaS
-
-| Rule ID | Description |
-|---------|-------------|
-| `digitalocean-pat` | DigitalOcean Personal Access Token (`dop_v1_` prefix) |
-| `supabase-key` | Supabase Personal Access Token (`sbp_` prefix) |
 
 ### Communication
 
@@ -99,7 +94,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 |---------|-------------|
 | `openai-service-key` | OpenAI Service Account / Admin Key (`sk-svcacct-`, `sk-admin-`, `sk-proj-` prefix) |
 | `azure-storage-key` | Azure Storage Account Key (`AccountKey=` + 88-char base64) |
-| `azure-sas-key` | Azure Shared Access Key for Service Bus, Event Hubs and IoT Hub (`SharedAccessKey=` + 44-char base64). Separate from the storage account key, which is 88 characters |
+| `azure-sas-key` | Azure Shared Access Key for Service Bus, Event Hubs and IoT Hub (`SharedAccessKey=` + 22–86-char base64 with optional `=` padding). Separate from the storage account key, which is 88 characters |
 | `google-oauth-secret` | Google OAuth Client Secret (`GOCSPX-` prefix) |
 | `flyio-token` | Fly.io API Token (`FlyV1 fm2_` prefix) |
 | `databricks-token` | Databricks Personal Access Token (`dapi` + 32 hex) |
