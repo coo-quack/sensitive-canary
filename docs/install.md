@@ -48,7 +48,7 @@ Third-party marketplaces have auto-update disabled by default. To receive automa
 1. Run `/plugin` → **Marketplaces** tab
 2. Select the marketplace → **Enable auto-update**
 
-You can also update manually from the same tab. See [Discover and install plugins](https://docs.anthropic.com/en/docs/claude-code/discover-plugins) for details.
+You can also update manually from the same tab. See [Discover and install plugins](https://code.claude.com/docs/en/discover-plugins) for details.
 
 ## pnpm Install
 
@@ -191,6 +191,23 @@ Add the following to `~/.claude/settings.json`:
 }
 ```
 
+**4. Check that it blocks**
+
+An installation that checks nothing looks exactly like one that works, so this
+step is not optional. Run the hook by hand and read the exit code:
+
+```bash
+printf -- '-----BEGIN RSA PRIVATE KEY-----\n' > /tmp/canary-check.txt
+printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/canary-check.txt"}}' \
+  | node --experimental-strip-types ~/.claude/plugins/sensitive-canary/src/pre-tool-use-hook.ts; echo "exit=$?"
+```
+
+`exit=2` means it is working. Anything else — 0, 1, or a module-not-found error
+— means the path is wrong and nothing is being checked. The same fixture works
+for every install method; a private-key header is chosen because it carries no
+key material and is recognised on its own — see the note under the plugin
+install.
+
 ## Requirements
 
 - Node.js **22.6.0** or later (required for `--experimental-strip-types`)
@@ -201,6 +218,17 @@ Check your Node.js version:
 ```bash
 node --version
 ```
+
+## Configuration
+
+Two environment variables change what the hooks scan. Set them in the `env` block of your Claude Code `settings.json`:
+
+| Variable | Effect |
+|----------|--------|
+| `SENSITIVE_CANARY_CATEGORIES` | Limit which rule categories are active: `secret`, `pii`, or `secret,pii` / `all` (default) |
+| `SENSITIVE_CANARY_CONFIG` | Path to a custom rules file that adds rules or overrides built-in ones |
+
+A typical use of `SENSITIVE_CANARY_CATEGORIES` is `secret`, when the PII rules are too noisy against test fixtures. There is no per-rule or per-path exclusion environment variable: narrowing the scan means a category, or a config file that overrides the rule. See [Detection Rules](/rules) for both variables.
 
 ## What Happens
 
