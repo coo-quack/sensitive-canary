@@ -55,5 +55,5 @@
     "vitepress": "2.0.0-alpha.19",
     "vitest": "4.1.11"
   },
-  "packageManager": "pnpm@11.22.0"
+  "packageManager": "pnpm@11.24.0"
 }
