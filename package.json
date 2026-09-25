@@ -1,6 +1,6 @@
 {
   "name": "@coo-quack/sensitive-canary",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Claude Code hooks that block secrets and PII before they reach the Anthropic API",
   "license": "MIT",
   "author": "coo-quack",

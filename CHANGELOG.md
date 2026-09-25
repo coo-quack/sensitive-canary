@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.8.2 (2026-09-26)
+
+### Documentation
+
+- Update configuration pointers, add a block check for git-clone installs, and note the moved plugin docs URL
+- Align rules.md with the actual azure-sas-key pattern and merge the duplicate cloud sections
+
+### Maintenance
+
+- Update @biomejs/biome to 2.5.14 (#258, #252, #242, #238)
+- Update @types/node to 25.9.8 (#260, #257, #250)
+- Update vitest to 5.0.1 (#255, #244)
+- Update pnpm to 12.6.0 (#263, #261, #256, #253, #246, #240, #235)
+- Update github/codeql-action to v4.38.2 (#264, #259, #251, #236, #228)
+- Update pnpm/action-setup to v6.1.0 (#247)
+- Update actions/deploy-pages to v5.0.1 (#241)
+- Update postcss to v8.5.28 (#245, #243)
+- Update node to v24.21.0 (#249)
+- Update vitest to v5 (#244)
+- Lock file maintenance (#262, #254, #248, #239, #234)
+
 ## v0.8.1 (2026-08-18)
 
 ### Maintenance
