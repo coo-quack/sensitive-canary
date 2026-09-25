@@ -290,11 +290,10 @@ jobs:
             git push origin "$VERSION"
           fi
 
+      # Trusted publishing (OIDC): npm exchanges the job's id-token for a short-lived publish token, so no NPM_TOKEN is needed. Provenance is attached automatically.
       - name: Publish to npm
         if: needs.check.outputs.should_release == 'true'
-        run: pnpm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
       # Every step below reads the version from the environment rather than
       # splicing `${{ }}` into the script. The expression is substituted before
