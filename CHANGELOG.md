@@ -18,7 +18,6 @@
 - Update actions/deploy-pages to v5.0.1 (#241)
 - Update postcss to v8.5.28 (#245, #243)
 - Update node to v24.21.0 (#249)
-- Update vitest to v5 (#244)
 - Lock file maintenance (#262, #254, #248, #239, #234)
 
 ## v0.8.1 (2026-08-18)
