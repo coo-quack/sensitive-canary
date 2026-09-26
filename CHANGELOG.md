@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Maintenance
+
+- Publish to npm with trusted publishing (OIDC) instead of a long-lived token (#268)
+- Remove the `deprecate.yml` workflow, the last user of that token. Deprecating a version is now a manual `npm deprecate` with 2FA (see CONTRIBUTING.md)
+
 ## v0.8.2 (2026-09-26)
 
 ### Documentation

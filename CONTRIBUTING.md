@@ -93,9 +93,24 @@ When bumping a version, open a PR from `develop` → `main` with:
 
 After merging into `main`, `release.yml` automatically:
 - Creates a git tag `vX.Y.Z`
+- Publishes to npm with trusted publishing (OIDC), so no npm token is involved
 - Creates a GitHub Release with notes extracted from `CHANGELOG.md`
 
 The documentation site is also redeployed automatically on merge to `main`.
+
+### Deprecating a version
+
+Trusted publishing covers `npm publish` only, so deprecation is done by a
+maintainer from their own machine, authenticating with 2FA:
+
+```bash
+npm login --auth-type=web
+npm deprecate "@coo-quack/sensitive-canary@X.Y.Z" "What is wrong with it and what to use instead"
+```
+
+An empty message undeprecates instead, so always pass one. There is no
+workflow for this: it would need a long-lived npm token in Actions secrets,
+which is what trusted publishing removed.
 
 ## Integration test
 
