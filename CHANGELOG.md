@@ -6,9 +6,9 @@
 
 - Optionally ask a running [pii-sentinel](https://github.com/coo-quack/pii-sentinel) server about each file read and each prompt, after the rules, with a `piiSentinel` entry in the config file. It judges documents `none`, `low` or `high` and blocks at `high` by default; `[allow-pii]` lifts it. Without the entry nothing changes, and nothing is installed or started
 
-### Features
+### Fixes
 
-- Optionally ask a running [pii-sentinel](https://github.com/coo-quack/pii-sentinel) server about each file read and each prompt, after the rules, with a `piiSentinel` entry in the config file. It judges documents `none`, `low` or `high` and blocks at `high` by default; `[allow-pii]` lifts it. Without the entry nothing changes, and nothing is installed or started
+- An allow tag in the prompt was not honoured on the first tool call when the runtime had written more than 64 KB after it. Claude Code now writes its attachments (skill list, memory, CLAUDE.md) as transcript lines after the prompt, often over 100 KB, so `[allow-pii]` and the others did nothing until the next turn. The transcript is now read back from the end until the latest user line, up to 8 MiB
 
 ### Maintenance
 
