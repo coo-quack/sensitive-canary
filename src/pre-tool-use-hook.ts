@@ -17,6 +17,13 @@ import {
   randomBird,
 } from "./lib/inspector.ts";
 import {
+  connectionTarget,
+  judge,
+  reachesBlockLevel,
+  readPiiSentinelConfig,
+  verdictFindings,
+} from "./lib/pii-sentinel.ts";
+import {
   beginScanBudget,
   enabledCategoriesFromEnv,
   type Finding,
@@ -94,6 +101,11 @@ const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 // each of those is a file read and a scan.
 const scanned = new Set<string>();
 let bytesScanned = 0;
+
+// The file contents this invocation read and found clean, kept for the
+// pii-sentinel server when the user has set one up. The rules have already had
+// their say on each; the model is asked once they are all through.
+const modelTexts: { source: string; text: string }[] = [];
 
 // When this invocation has to stop reading files, whatever it has read.
 //
@@ -745,6 +757,59 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     `please read ${forOutput(filePath)}`,
     allowTags,
   );
+  modelTexts.push({ source: filePath, text: content });
+}
+
+// ── pii-sentinel ──────────────────────────────────────────────────────────────
+
+// Ask the user's pii-sentinel server about the files read, after every rule has
+// passed them. Nothing happens unless the config has a `piiSentinel` entry and
+// the PII category is on, and `[allow-pii]` lifts it as it lifts the PII rules.
+// A server that does not answer blocks unless the entry says otherwise: the user
+// asked for the check, and a check that silently did not run is a pass.
+async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
+  if (modelTexts.length === 0 || !ENABLED_CATEGORIES.has("pii")) return;
+  if (allowTags.has("pii") || allowTags.has("all")) return;
+  const config = readPiiSentinelConfig();
+  if (config === null) return;
+  const first = modelTexts[0]?.source ?? "file";
+  const hints = buildAllowHints(`please read ${forOutput(first)}`, [], false);
+  if (typeof config === "string") {
+    block(
+      "pii-sentinel settings",
+      [
+        `🚫 Blocked: the "piiSentinel" entry in the sensitive-canary config cannot be used: ${config}`,
+        "",
+        "Fix the entry, or remove it to stop asking pii-sentinel.",
+      ],
+      hints,
+    );
+  }
+  const { verdicts, unavailable } = await judge(modelTexts, config);
+  for (const verdict of verdicts) {
+    if (!reachesBlockLevel(verdict.level, config)) continue;
+    const findings = verdictFindings(verdict);
+    block(
+      verdict.source,
+      [
+        `🚫 Blocked: pii-sentinel judged this file ${verdict.level} sensitivity`,
+        "",
+        ...findingsToLines(findings),
+      ],
+      buildAllowHints(`please read ${forOutput(verdict.source)}`, findings),
+    );
+  }
+  if (unavailable !== null && config.onUnavailable === "block") {
+    block(
+      "pii-sentinel",
+      [
+        `🚫 Blocked: pii-sentinel did not answer at ${forOutput(connectionTarget(config))}: ${forOutput(unavailable)}`,
+        "",
+        'Start it with `pii-sentinel serve`, or set "onUnavailable": "allow" in the "piiSentinel" entry to fall back on the rules alone.',
+      ],
+      hints,
+    );
+  }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -752,7 +817,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string) => (raw += chunk));
-process.stdin.on("end", () => {
+process.stdin.on("end", async () => {
   startTheClock();
   let data: HookInput;
   try {
@@ -798,6 +863,7 @@ process.stdin.on("end", () => {
         scanFile(candidate, allowTags);
       }
     }
+    await consultPiiSentinel(allowTags);
     process.exit(0);
   }
 
@@ -870,6 +936,7 @@ process.stdin.on("end", () => {
       scanIfRegularFile(baseDirectory, allowTags, { namesOnly: true });
     }
 
+    await consultPiiSentinel(allowTags);
     process.exit(0);
   }
 
@@ -935,5 +1002,6 @@ process.stdin.on("end", () => {
     }
   }
 
+  await consultPiiSentinel(allowTags);
   process.exit(0);
 });

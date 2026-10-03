@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Features
+
+- Optionally ask a running [pii-sentinel](https://github.com/coo-quack/pii-sentinel) server about each file read and each prompt, after the rules, with a `piiSentinel` entry in the config file. It judges documents `none`, `low` or `high` and blocks at `high` by default; `[allow-pii]` lifts it. Without the entry nothing changes, and nothing is installed or started
+
+### Features
+
+- Optionally ask a running [pii-sentinel](https://github.com/coo-quack/pii-sentinel) server about each file read and each prompt, after the rules, with a `piiSentinel` entry in the config file. It judges documents `none`, `low` or `high` and blocks at `high` by default; `[allow-pii]` lifts it. Without the entry nothing changes, and nothing is installed or started
+
 ### Maintenance
 
 - Publish to npm with trusted publishing (OIDC) instead of a long-lived token (#268)

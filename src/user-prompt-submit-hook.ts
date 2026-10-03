@@ -12,6 +12,13 @@ import {
   typedTextOf,
 } from "./lib/inspector.ts";
 import {
+  connectionTarget,
+  judge,
+  reachesBlockLevel,
+  readPiiSentinelConfig,
+  verdictFindings,
+} from "./lib/pii-sentinel.ts";
+import {
   beginScanBudget,
   enabledCategoriesFromEnv,
   scan,
@@ -41,10 +48,69 @@ function collectStrings(value: unknown, depth = 0): string[] {
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
 
+function blockPrompt(lines: string[]): never {
+  try {
+    process.stderr.write(
+      [
+        "",
+        `${randomBird()} sensitive-canary: ${lines[0]}`,
+        "",
+        ...lines.slice(1),
+        "",
+      ].join("\n"),
+    );
+  } catch {
+    // The verdict stands without the message.
+  }
+  process.exit(2);
+}
+
+// Ask the user's pii-sentinel server about a prompt the rules let through. Only
+// with a `piiSentinel` entry in the config and the PII category on; `[allow-pii]`
+// lifts it. See the PreToolUse hook for why a silent server blocks by default.
+async function consultPiiSentinel(
+  prompt: string,
+  allow: Set<string>,
+): Promise<void> {
+  if (prompt.trim() === "" || !ENABLED_CATEGORIES.has("pii")) return;
+  if (allow.has("pii") || allow.has("all")) return;
+  const config = readPiiSentinelConfig();
+  if (config === null) return;
+  if (typeof config === "string")
+    blockPrompt([
+      `the "piiSentinel" entry in the config cannot be used — blocked`,
+      `  ${config}`,
+      "",
+      "Fix the entry, or remove it to stop asking pii-sentinel.",
+    ]);
+  const { verdicts, unavailable } = await judge(
+    [{ source: "prompt", text: prompt }],
+    config,
+  );
+  const verdict = verdicts[0];
+  if (verdict && reachesBlockLevel(verdict.level, config)) {
+    const findings = verdictFindings(verdict);
+    blockPrompt([
+      `pii-sentinel judged this prompt ${verdict.level} sensitivity — blocked`,
+      ...findingsToLines(findings),
+      "",
+      "To allow, add a tag to your prompt:",
+      ...allowTagLines(findings),
+    ]);
+  }
+  if (unavailable !== null && config.onUnavailable === "block")
+    blockPrompt([
+      "pii-sentinel did not answer — blocked",
+      `  ${connectionTarget(config)}: ${unavailable}`,
+      "",
+      'Start it with `pii-sentinel serve`, set "onUnavailable": "allow" in the "piiSentinel" entry, or add [allow-pii] to your prompt.',
+    ]);
+}
+
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string) => (raw += chunk));
-process.stdin.on("end", () => {
+process.stdin.on("end", async () => {
   // Started here rather than at module load: the wait for stdin belongs to the
   // runtime, and counting it against the scan let a slow handover spend the
   // whole allowance before anything was read.
@@ -76,8 +142,6 @@ process.stdin.on("end", () => {
 
   const allFindings = scan(prompt, ENABLED_CATEGORIES);
 
-  if (allFindings.length === 0) process.exit(0);
-
   // From what the user typed, not from what they pasted: a fenced log or a
   // README quoting `[allow-secret]` would otherwise lift the guard on the key in
   // the same message. Both hooks read tags this way, so the same text gets the
@@ -90,7 +154,10 @@ process.stdin.on("end", () => {
     applyAllowTags(allFindings, effectiveAllow),
   );
 
-  if (afterAllow.length === 0) process.exit(0);
+  if (afterAllow.length === 0) {
+    await consultPiiSentinel(prompt, effectiveAllow);
+    process.exit(0);
+  }
 
   const maskableFindings = afterAllow.filter(
     (f) =>
