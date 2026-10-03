@@ -63,6 +63,8 @@ export interface RuleConfig {
 export interface CanaryConfig {
   contextWindow?: number;
   rules: RuleConfig[];
+  // Settings for asking a running pii-sentinel server; see lib/pii-sentinel.ts.
+  piiSentinel?: unknown;
 }
 
 const ALL_CATEGORIES: ReadonlySet<Category> = new Set(["secret", "pii"]);
@@ -280,6 +282,16 @@ function loadDefaultConfig(): CanaryConfig {
 // Load user config if it exists. Returns null when the file is absent (the
 // common case). JSON parse errors and permission issues are reported on stderr
 // so that a broken config file is not silently ignored.
+let userConfigCache: { value: CanaryConfig | null } | null = null;
+
+// The user config, read once per process: the rules and the pii-sentinel
+// settings both come from it, and reading it twice would print a broken file's
+// warning twice.
+export function userConfigFromCache(): CanaryConfig | null {
+  userConfigCache ??= { value: loadUserConfig() };
+  return userConfigCache.value;
+}
+
 function loadUserConfig(): CanaryConfig | null {
   try {
     // A FIFO or a device here would block the read until something wrote to
@@ -322,7 +334,7 @@ function buildRules(): Rule[] {
     }
   }
 
-  const userConfig = loadUserConfig();
+  const userConfig = userConfigFromCache();
   if (userConfig) {
     if (
       typeof userConfig.contextWindow === "number" &&

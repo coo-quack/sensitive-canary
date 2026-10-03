@@ -24,7 +24,7 @@ const writeRawTranscript = writeTranscript.raw;
 
 // ── transcript tail read ────────────────────────────────────────────────────
 
-describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {
+describe("pre-tool-use-hook — how far back the transcript is read", () => {
   it("[allow-all] in a large transcript (>64KB) is respected when near the end", () => {
     // Build a transcript larger than 64KB with the allow tag in the last message
     const filler = JSON.stringify({
@@ -43,6 +43,66 @@ describe("pre-tool-use-hook — transcript tail read (64 KB)", () => {
     const p = writeFixture("large-transcript-test.txt", `key=${AWS_KEY}\n`);
     const { exitCode } = runHook("Read", p, { transcriptPath: tp });
     expect(exitCode).toBe(0);
+  });
+
+  // What the runtime writes after a prompt: the skill list, memory and
+  // CLAUDE.md as attachment lines, together well past 64 KB. The tag in the
+  // prompt before them is what the user typed for this tool call.
+  const attachments = (bytes: number): string =>
+    Array.from({ length: Math.ceil(bytes / 4096) }, () =>
+      JSON.stringify({
+        type: "attachment",
+        attachment: { content: "s".repeat(4000) },
+      }),
+    ).join("\n");
+  const prompt = (text: string): string =>
+    JSON.stringify({ type: "user", message: { role: "user", content: text } });
+
+  it("[allow-all] before 200 KB of attachment lines is respected", () => {
+    const tp = join(fixture.path(), "attachments.jsonl");
+    writeFileSync(
+      tp,
+      `${prompt("[allow-all] read it")}\n${attachments(200_000)}\n`,
+      "utf8",
+    );
+    const p = writeFixture("attachments-test.txt", `key=${AWS_KEY}\n`);
+    expect(runHook("Read", p, { transcriptPath: tp }).exitCode).toBe(0);
+  });
+
+  it("a tool result after the prompt still spends the tag, past the attachments", () => {
+    const toolResult = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", content: "ok" }],
+      },
+    });
+    const tp = join(fixture.path(), "attachments-spent.jsonl");
+    writeFileSync(
+      tp,
+      `${prompt("[allow-all] read it")}\n${attachments(100_000)}\n${toolResult}\n${attachments(100_000)}\n`,
+      "utf8",
+    );
+    const p = writeFixture("attachments-spent-test.txt", `key=${AWS_KEY}\n`);
+    expect(runHook("Read", p, { transcriptPath: tp }).exitCode).toBe(2);
+  });
+
+  it("a prompt more than 8 MiB back is not reached, and the call is blocked", () => {
+    const tp = join(fixture.path(), "too-far.jsonl");
+    writeFileSync(
+      tp,
+      `${prompt("[allow-all] read it")}\n${attachments(9 * 1_048_576)}\n`,
+      "utf8",
+    );
+    const p = writeFixture("too-far-test.txt", `key=${AWS_KEY}\n`);
+    expect(runHook("Read", p, { transcriptPath: tp }).exitCode).toBe(2);
+  });
+
+  it("a prompt on the first line of the file, with no newline after it, is read", () => {
+    const tp = join(fixture.path(), "single-line.jsonl");
+    writeFileSync(tp, prompt("[allow-all] read it"), "utf8");
+    const p = writeFixture("single-line-test.txt", `key=${AWS_KEY}\n`);
+    expect(runHook("Read", p, { transcriptPath: tp }).exitCode).toBe(0);
   });
 });
 
