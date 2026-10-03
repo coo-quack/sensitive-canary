@@ -58,7 +58,8 @@ Claude Code is a powerful development tool, but file reads and command execution
 - **Context gating** — the noisiest PII rules (non-US/JP phone numbers, postal codes, public IP addresses) only fire when a relevant label is nearby; US and JP phone numbers and JP postal codes are matched without one
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
-- **Local only** — all scanning runs in your terminal; nothing is sent anywhere
+- **Optional model check** — a [pii-sentinel](/pii-sentinel) server you run yourself can judge whether a file or prompt is sensitive, catching what has no fixed shape
+- **Local only** — all scanning runs on your machine, the optional model included; nothing is sent anywhere
 
 ## Detection Rules
 

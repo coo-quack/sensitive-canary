@@ -89,3 +89,4 @@ The plugin reads this file at startup. Rules with the same `id` as a built-in ru
 
 - [Installation](/install) — alternative installation methods
 - [Detection Rules](/rules) — all 76 detection rules explained
+- [pii-sentinel (optional)](/pii-sentinel) — a local model's judgement on top of the rules

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- The README's install check used AWS's documented `AKIAIOSFODNN7EXAMPLE`, which this tool allows on purpose, so a working install looked broken. It now uses the private-key header the documentation site already uses
+- Example block messages showed a masked documentation key; they now show a key that is actually blocked
+- The README describes where pii-sentinel sits in each hook, lists `transcript.ts` and `pii-sentinel.ts`, and no longer says the transcript is read from a 64 KB tail; the site links the pii-sentinel page from the installation, getting-started and home pages
+
 ## v0.9.0 (2026-10-03)
 
 ### Features
