@@ -138,7 +138,9 @@ describe("pre-tool-use-hook — an unforeseen error", () => {
       },
     );
     const { status: exitCode, stderr } = result;
-    expect(exitCode).toBe(2);
+    // The hook's own words when it does not stop the call: the exit code alone
+    // says nothing about why.
+    expect(exitCode, `stderr: ${stderr}\nsignal: ${result.signal}`).toBe(2);
     expect(stderr).toContain("the check could not complete");
     expect(stderr).not.toContain("sensitive data detected");
   }, 120_000);

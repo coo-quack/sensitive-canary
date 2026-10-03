@@ -23,6 +23,7 @@ export default defineConfig({
         items: [
           { text: "Getting Started", link: "/getting-started" },
           { text: "Installation", link: "/install" },
+          { text: "pii-sentinel (optional)", link: "/pii-sentinel" },
         ],
       },
       {
