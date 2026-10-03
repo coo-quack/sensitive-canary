@@ -110,7 +110,15 @@ async function consultPiiSentinel(
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string) => (raw += chunk));
-process.stdin.on("end", async () => {
+// The handler is async because the pii-sentinel server is asked over a socket.
+// An async listener's throw is a rejected promise, not an uncaught exception,
+// and on Node 24 a rejection here ended the process with 0 — a scan that could
+// not finish passed the call. Caught explicitly so it stops the call instead.
+process.stdin.on("end", () => {
+  main().catch(failClosed);
+});
+
+async function main(): Promise<void> {
   // Started here rather than at module load: the wait for stdin belongs to the
   // runtime, and counting it against the scan let a slow handover spend the
   // whole allowance before anything was read.
@@ -206,4 +214,4 @@ process.stdin.on("end", async () => {
   process.stderr.write(blockLines.join("\n"));
 
   process.exit(2);
-});
+}
