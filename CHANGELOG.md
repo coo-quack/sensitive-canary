@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Bug Fixes
+### Fixes
 
 - An allow tag in the prompt was not honoured on the first tool call when the runtime had written more than 64 KB after it. Claude Code now writes its attachments (skill list, memory, CLAUDE.md) as transcript lines after the prompt, often over 100 KB, so `[allow-pii]` and the others did nothing until the next turn. The transcript is now read back from the end until the latest user line, up to 8 MiB
 
