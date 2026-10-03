@@ -31,7 +31,8 @@ Claude Code is a powerful development tool, but file reads and command execution
 - **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP, EU/KR and Chinese postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough. RFC 1918 private addresses are not matched at all — they are non-routable, they identify nothing outside the network they belong to, and they fill the inventories, manifests and ssh configs this tool is most often pointed at
 - **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`, `user@host:path`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work. A template is exempt only when its contents can be read whole. One holding a NUL byte, running past the per-file cut, reached after the call's budget or deadline, or that is not a regular file at all is blocked on its name, since the contents are what the exemption relies on. A template name that exists on no disk is not blocked — there is nothing to read and nothing to leak
 - **Entropy filtering** — reduces false positives on low-entropy values
-- **Local only** — all scanning runs in your terminal; nothing is sent anywhere
+- **Optional model check** — a [pii-sentinel](#pii-sentinel-optional) server you run yourself can judge whether a file or prompt is sensitive, catching what has no fixed shape, such as a diagnosis next to a name
+- **Local only** — all scanning runs on your machine, the optional model included; nothing is sent anywhere
 
 ---
 
@@ -64,9 +65,16 @@ checks nothing — so start a new one.
 
 **Then check that it blocks.** An installation that checks nothing looks exactly
 like one that works, and only exit 2 stops a tool call, so a hook that fails to
-start is silent. Write a file holding `AKIA` followed by `IOSFODNN7EXAMPLE` and
-ask Claude to read it. It should refuse and say why. If it shows you the key, the
-hooks are not running.
+start is silent. Write a private-key header to a file:
+
+```bash
+printf -- '-----BEGIN RSA PRIVATE KEY-----\n' > /tmp/canary-check.txt
+```
+
+Ask Claude to read `/tmp/canary-check.txt`. It should refuse and say why. If it
+shows you what is in the file, the hooks are not running. AWS's documented
+`AKIAIOSFODNN7EXAMPLE` will not do as a test: it appears in AWS's own setup guides
+and in READMEs that copy them, so this tool reads it as documentation and allows it.
 
 > **Keeping up to date:** Third-party marketplaces have auto-update disabled by default. To receive automatic updates, run `/plugin` → **Marketplaces** tab → select the marketplace → **Enable auto-update**. You can also update manually from the same tab. See [Discover and install plugins](https://docs.anthropic.com/en/docs/claude-code/discover-plugins) for details.
 
@@ -225,7 +233,7 @@ Non-`.env` files are also blocked if their contents contain secrets or PII.
 
 🚫 Blocked: file contains sensitive data
 
-  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+  [Secret] AWS Access Key ID (aws-access-key): AKIA****PQRS
 ```
 
 ### Allow tags
@@ -510,6 +518,7 @@ User presses Enter
 UserPromptSubmit hook
       ↓ scans prompt
       ├─ secret / PII detected AND no matching [allow-xxx] tag → block (exit 2)
+      ├─ pii-sentinel configured: it judges the prompt high → block (exit 2)
       └─ nothing detected OR tag present → pass (exit 0)
 ```
 
@@ -545,6 +554,9 @@ PreToolUse hook
       └─ every other tool, Grep and mcp__* included ─────────────────────
          1. input fields naming an existing file are scanned for
             secret / PII → blocked
+
+      then, with pii-sentinel configured, the contents of every file read
+      above are sent to it, and one it judges high → blocked
 ```
 
 A value is scanned when either its field name says path or the value itself is shaped like one.
@@ -568,7 +580,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 
 - **Heredoc bodies** — a heredoc body is treated as text, not as commands, so `cat > deploy.sh <<'EOF'` writing a script that mentions `.env` is not itself a read. The trade-off is that a heredoc which *feeds* commands to another shell (`ssh host <<'EOF'` with a `cat /etc/secrets` in the body) is not inspected either.
 - **A tool that runs a command is read for the command, by field name** — `command`, `commands`, `cmd`, `script`, `code`, `commandline` and `shellcommand`, each read with punctuation and case ignored, so `command_line`, `command-line`, `commandLine` and `command.line` are the same name. A shell-running MCP server that names the field something else hands its command past unread.
-- **Only the first and last 1 MiB of a file are scanned** — a file larger than the cut is read at both ends rather than to its end, because a hook that does not return is killed by the PreToolUse timeout, and a killed hook does not block the call. The cut is in bytes, so a file of multi-byte characters gives up sooner in characters. What is missed is the middle of a file larger than both windows, and a secret straddling either edge, since the cut lands mid-match; the 64 KB transcript tail read makes the same trade. What the cut does *not* bound is the work done on what it read: that is a property of each rule's pattern, and `docs/rules.md` covers why three of them carry length bounds.
+- **Only the first and last 1 MiB of a file are scanned** — a file larger than the cut is read at both ends rather than to its end, because a hook that does not return is killed by the PreToolUse timeout, and a killed hook does not block the call. The cut is in bytes, so a file of multi-byte characters gives up sooner in characters. What is missed is the middle of a file larger than both windows, and a secret straddling either edge, since the cut lands mid-match; the search of the transcript for allow tags, which stops 8 MiB back, makes the same trade. What the cut does *not* bound is the work done on what it read: that is a property of each rule's pattern, and `docs/rules.md` covers why three of them carry length bounds.
 - **A write-named tool that also returns contents** — the exemption reads a tool's name, and assumes a name led by a write verb means the tool surfaces no file contents. `update` and `copy` are where those two things come apart: `mcp__*__update_file` and `mcp__*__copy_file` open a file to do their work, and one that returned the result would not be scanned. Scanning them instead would block writing to a file that already holds a secret, which is not a leak, so the exemption stays as it is.
 - **A bare filename under an unlisted field name** — a value is treated as a path when its field name says so or when it contains a `/`. A tool passing `{ "target": "secrets.txt" }` satisfies neither, so it is not scanned. Requiring the `/` is deliberate: without it, a search for the text `.env` would be blocked as though the file had been read.
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
@@ -658,6 +670,8 @@ src/
     shell.ts                   shell syntax: tokens, quoting, heredocs, substitutions
     bash-commands.ts           what each command does with the files it is given
     tool-inputs.ts             which input fields of a tool name a file
+    transcript.ts              allow tags from the session transcript
+    pii-sentinel.ts            the optional pii-sentinel client
 ```
 
 ---

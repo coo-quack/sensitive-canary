@@ -228,6 +228,8 @@ Two environment variables change what the hooks scan. Set them in the `env` bloc
 | `SENSITIVE_CANARY_CATEGORIES` | Limit which rule categories are active: `secret`, `pii`, or `secret,pii` / `all` (default) |
 | `SENSITIVE_CANARY_CONFIG` | Path to a custom rules file that adds rules or overrides built-in ones |
 
+The same config file can also point the hooks at a [pii-sentinel](/pii-sentinel) server you run yourself, for a model's judgement on top of the rules.
+
 A typical use of `SENSITIVE_CANARY_CATEGORIES` is `secret`, when the PII rules are too noisy against test fixtures. There is no per-rule or per-path exclusion environment variable: narrowing the scan means a category, or a config file that overrides the rule. See [Detection Rules](/rules) for both variables.
 
 ## What Happens
@@ -241,7 +243,7 @@ Runs before every prompt is sent to the Anthropic API. If secrets or PII are det
 ```
 🐦 sensitive-canary: sensitive data detected — blocked
 
-  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+  [Secret] AWS Access Key ID (aws-access-key): AKIA****PQRS
 
 To allow, add a tag to your prompt:
   [allow-secret]  — allow secrets
@@ -288,7 +290,7 @@ If you use a mask tag, sensitive-canary will display an explanation and list wha
   [mask-secret] cannot mask prompt content.
   The following sensitive data was detected:
 
-  [Secret] AWS Access Key ID (aws-access-key): AKIA****MPLE
+  [Secret] AWS Access Key ID (aws-access-key): AKIA****PQRS
 
   Please choose one of the following:
 
