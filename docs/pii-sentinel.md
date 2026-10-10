@@ -41,7 +41,7 @@ expanded there (replace `/Users/you` with your home directory):
   directory that other users can write to is refused unless it has the sticky bit, as `/tmp` does. Group write counts
   as writable by others unless the group contains only you, so fix a refusal with `chmod go-w <directory>`. Group membership is read from `/etc/group` and `/etc/passwd` only; directory services such as LDAP, sssd or macOS Directory Services are not consulted, so on macOS a group-writable directory is always refused. On Windows these checks are skipped. The socket
   itself must be a socket file owned by you or root.
-- `url` is no longer supported. The hook cannot tell whether the program on a TCP port is your server, so a config
+- `url` was removed in v0.10.0. The hook cannot tell whether the program on a TCP port is your server, so a config
   with `url` blocks with the reason. Replace it with `socket`.
 - An entry that cannot be used (a typo) blocks too, with the reason.
 - The text goes only to the local server, which never logs or stores it. Command lines and environment variables are

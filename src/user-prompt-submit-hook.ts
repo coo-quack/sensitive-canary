@@ -22,6 +22,7 @@ import {
   beginScanBudget,
   enabledCategoriesFromEnv,
   scan,
+  USER_CONFIG_PATH,
 } from "./lib/rules.ts";
 
 blockOnUnhandledError();
@@ -78,7 +79,7 @@ async function consultPiiSentinel(
   if (config === null) return;
   if (typeof config === "string")
     blockPrompt([
-      `the "piiSentinel" entry in the config cannot be used — blocked`,
+      `the "piiSentinel" entry in ${USER_CONFIG_PATH} cannot be used — blocked`,
       `  ${config}`,
       "",
       "Fix the entry, or remove it to stop asking pii-sentinel.",
