@@ -223,6 +223,19 @@ describe("pre-tool-use-hook — shell expansion of a path", () => {
     expect(result.reason).toContain("$CANARY_DIR/under-variable.txt");
     expect(result.reason).not.toContain(writeFixture.path());
   });
+
+  // The file's name begins with the variable's value, so showing the match by
+  // its own name printed the value. The pattern as written is shown instead.
+  it("a variable in the last component is shown whole, not by the file's name", () => {
+    const value = "distinct-value-7f3a";
+    writeFixture(`${value}-secret.env`, `key=${AWS_KEY}`);
+    const result = runBashHook(`cat ${writeFixture.path()}/$CANARY_PREFIX*`, {
+      env: { CANARY_PREFIX: value },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.reason).toContain("$CANARY_PREFIX*");
+    expect(result.reason).not.toContain(value);
+  });
 });
 
 // ── file:// URIs ─────────────────────────────────────────────────────────────

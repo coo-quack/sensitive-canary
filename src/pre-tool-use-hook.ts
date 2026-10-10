@@ -380,13 +380,18 @@ function expandCandidate(candidate: string): string[] {
   } catch {
     matches = [];
   }
-  // A match is shown under the directory as written. Its own name is one that
-  // exists on disk, which the expanded value is not unless it names a path.
+  // A match is shown under the directory as written. When the variable is in the
+  // last component (`$P*`), the match's name begins with the expanded value, so
+  // the whole pattern as written is shown instead.
   if (fromVariable) {
+    const lastIsVariable =
+      expandShellVars(path.basename(written)) !== path.basename(written);
     for (const match of matches) {
       writtenAs.set(
         match,
-        path.join(path.dirname(written), path.basename(match)),
+        lastIsVariable
+          ? written
+          : path.join(path.dirname(written), path.basename(match)),
       );
     }
   }
