@@ -6,6 +6,13 @@
 
 - A path built from an environment variable (`cat "$TOKEN/.env"`) was shown in the block reason after the variable was expanded, so the variable's value reached Claude unmasked; the reason now shows the path as written (`$TOKEN/.env`)
 
+### CI
+
+- The npm publish job runs in the `npm-release` environment, which only `main`
+  may deploy to. npm's trusted publishing checks the repository and workflow
+  file but not the branch, so a `release.yml` edited on another branch could
+  publish a release without review
+
 ## v0.9.1 (2026-10-04)
 
 ### Documentation
