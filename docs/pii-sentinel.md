@@ -9,24 +9,25 @@ sensitive-canary does not install, start or update pii-sentinel, and adds no dep
 (it needs [uv](https://docs.astral.sh/uv/); the first start downloads the model, about 1.2 GB):
 
 ```bash
+mkdir -m 700 ~/.pii-sentinel
 uvx --from git+https://github.com/coo-quack/pii-sentinel@v0.3.0 \
-  pii-sentinel serve --model coo-quack/mmBERT-pii-sentinel --socket /tmp/pii-sentinel.sock
+  pii-sentinel serve --model coo-quack/mmBERT-pii-sentinel --socket ~/.pii-sentinel/pii-sentinel.sock
 ```
 
-Then point the [config file](https://github.com/coo-quack/sensitive-canary#config-file-location) at it:
+Then point the [config file](#config-file-location) at it. The config needs the absolute path, because `~` is not
+expanded there (replace `/Users/you` with your home directory):
 
 ```json
 {
   "piiSentinel": {
-    "socket": "/tmp/pii-sentinel.sock"
+    "socket": "/Users/you/.pii-sentinel/pii-sentinel.sock"
   }
 }
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
-| `socket` | | The server's Unix socket. Set this or `url`. |
-| `url` | | `http://127.0.0.1:<port>` (or `localhost`, `[::1]`) when the server listens on TCP. |
+| `socket` | | The server's Unix socket, as an absolute path. |
 | `blockOn` | `"high"` | Block at this level or above (`"high"` or `"low"`). |
 | `timeoutMs` | `3000` | How long one hook call waits for the server, in total. |
 | `maxChars` | `20000` | How much of each file or prompt is sent; the model judges the beginning. |
@@ -36,7 +37,13 @@ Then point the [config file](https://github.com/coo-quack/sensitive-canary#confi
 - `[allow-pii]` and `[allow-all]` lift its blocks, as they lift the PII rules.
 - A server that does not answer blocks by default: you asked for the check, and a check that silently did not run
   would be a pass. Start the server before Claude Code, or set `"onUnavailable": "allow"`.
-- An entry that cannot be used (a typo, a non-loopback `url`) blocks too, with the reason.
+- Before sending any text, the hook checks the socket. Every directory on its path must belong to you or root, and a
+  directory that other users can write to is refused unless it has the sticky bit, as `/tmp` does. Group write counts
+  as writable by others unless the group contains only you, so fix a refusal with `chmod go-w <directory>`. The socket
+  itself must be a socket file owned by you or root.
+- `url` is no longer supported. The hook cannot tell whether the program on a TCP port is your server, so a config
+  with `url` blocks with the reason. Replace it with `socket`.
+- An entry that cannot be used (a typo, a `url`) blocks too, with the reason.
 - The text goes only to the local server, which never logs or stores it. Command lines and environment variables are
   not sent; the rules cover them.
 
