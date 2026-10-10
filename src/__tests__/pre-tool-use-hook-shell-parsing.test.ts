@@ -312,6 +312,8 @@ describe("pre-tool-use-hook — shell parsing", () => {
       writeFixture("f", "clean\n");
       const result = runBashHook("env 2>&1 cat f", {
         cwd: writeFixture.path(),
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
       });
       expect(result.exitCode).toBe(2);
     });
