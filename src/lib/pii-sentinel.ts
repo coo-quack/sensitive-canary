@@ -65,7 +65,7 @@ export function readPiiSentinelConfig(
   // A TCP port cannot be checked: any program can listen on it, so the text
   // would go to whatever answers. Only a socket file can be checked for owner.
   if (r["url"] !== undefined)
-    return '"url" is no longer supported: the hook cannot tell whether the program on a TCP port is your pii-sentinel server. Use "socket" with a path in a directory only you can write to.';
+    return '"url" was removed in sensitive-canary v0.10.0: the hook cannot tell whether the program on a TCP port is your pii-sentinel server. Replace it with "socket", the path of the server\'s Unix socket in a directory only you can write to.';
   const socket = r["socket"];
   if (typeof socket !== "string" || socket === "")
     return '"socket" must be a path';

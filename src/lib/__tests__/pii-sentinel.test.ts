@@ -182,7 +182,7 @@ describe("readPiiSentinelConfig", () => {
     [{ url: null }],
   ])("refuses %j as no longer supported", (raw) => {
     expect(readPiiSentinelConfig(raw)).toContain(
-      '"url" is no longer supported',
+      '"url" was removed in sensitive-canary v0.10.0',
     );
   });
 });
@@ -370,15 +370,16 @@ describe("PreToolUse hook with pii-sentinel", () => {
     expect(allowed.code).toBe(0);
   });
 
-  it("blocks on an entry it cannot use", async () => {
-    const result = await readFile(file, {
-      SENSITIVE_CANARY_CONFIG: writeConfig("c6.json", {
-        url: "http://127.0.0.1:1",
-      }),
-    });
+  it("blocks on an entry it cannot use and names the config file", async () => {
+    const config = writeConfig("c6.json", { url: "http://127.0.0.1:1" });
+    const result = await readFile(file, { SENSITIVE_CANARY_CONFIG: config });
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain('"piiSentinel" entry');
-    expect(result.stderr).toContain('"url" is no longer supported');
+    expect(result.stderr).toContain(
+      `"piiSentinel" entry in the sensitive-canary config (${config})`,
+    );
+    expect(result.stderr).toContain(
+      '"url" was removed in sensitive-canary v0.10.0',
+    );
   });
 });
 
@@ -402,5 +403,19 @@ describe("UserPromptSubmit hook with pii-sentinel", () => {
     );
     expect(allowed.code).toBe(0);
     expect(received).toHaveLength(1);
+  });
+
+  it("blocks on an entry it cannot use and names the config file", async () => {
+    const config = writeConfig("p2.json", { url: "http://127.0.0.1:1" });
+    const result = await runHook(
+      USER_PROMPT,
+      { prompt: "hello" },
+      { SENSITIVE_CANARY_CONFIG: config },
+    );
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain(`"piiSentinel" entry in ${config}`);
+    expect(result.stderr).toContain(
+      '"url" was removed in sensitive-canary v0.10.0',
+    );
   });
 });

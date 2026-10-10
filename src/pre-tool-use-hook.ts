@@ -28,6 +28,7 @@ import {
   enabledCategoriesFromEnv,
   type Finding,
   scan,
+  USER_CONFIG_PATH,
 } from "./lib/rules.ts";
 import {
   blankComments,
@@ -815,7 +816,7 @@ async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
     block(
       "pii-sentinel settings",
       [
-        `🚫 Blocked: the "piiSentinel" entry in the sensitive-canary config cannot be used: ${config}`,
+        `🚫 Blocked: the "piiSentinel" entry in the sensitive-canary config (${USER_CONFIG_PATH}) cannot be used: ${config}`,
         "",
         "Fix the entry, or remove it to stop asking pii-sentinel.",
       ],

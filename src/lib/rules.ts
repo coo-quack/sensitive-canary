@@ -145,7 +145,7 @@ function hasNearbyContextWord(
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG_PATH = join(MODULE_DIR, "default-config.json");
 const { SENSITIVE_CANARY_CONFIG: userConfigPath } = process.env;
-const USER_CONFIG_PATH =
+export const USER_CONFIG_PATH =
   userConfigPath ??
   join(homedir(), ".config", "sensitive-canary", "config.json");
 
