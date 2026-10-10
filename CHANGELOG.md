@@ -8,10 +8,11 @@
 
 ### CI
 
-- The npm publish job runs in the `npm-release` environment, which only `main`
-  may deploy to. npm's trusted publishing checks the repository and workflow
-  file but not the branch, so a `release.yml` edited on another branch could
-  publish a release without review
+- The release job, which publishes to npm, runs in the `npm-release`
+  environment, which only `main` may deploy to. npm's trusted publishing
+  checks the repository and workflow file but not the branch, so a
+  `release.yml` edited on another branch could publish a release without
+  review
 
 ## v0.9.1 (2026-10-04)
 
