@@ -5,6 +5,8 @@
 ### Fixes
 
 - A path built from an environment variable (`cat "$TOKEN/.env"`) was shown in the block reason after the variable was expanded, so the variable's value reached Claude unmasked; the reason now shows the path as written (`$TOKEN/.env`)
+- The `piiSentinel` entry no longer accepts `url`. The hook cannot tell whether the program listening on a TCP port is your pii-sentinel server, so file and prompt text could go to another local program that answers `"none"`. **This breaks configs that set `url`**: they now block with a reason until `url` is replaced by `socket`, the path to the server's Unix socket
+- The hook checks the pii-sentinel socket before it sends any text and refuses one another user could have put in place: a directory other users can write to (unless it has the sticky bit), or a socket not owned by you or root. The README and the pii-sentinel page now use `~/.pii-sentinel/pii-sentinel.sock` in a directory only you can write to, instead of the fixed `/tmp/pii-sentinel.sock`, and say that the config needs the absolute path
 
 ## v0.9.1 (2026-10-04)
 

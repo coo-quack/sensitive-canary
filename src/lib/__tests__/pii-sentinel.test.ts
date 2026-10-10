@@ -5,13 +5,26 @@
 // answering the hook lives on that loop.
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { judge, readPiiSentinelConfig } from "../pii-sentinel.ts";
+import {
+  checkSocket,
+  groupIsPrivate,
+  judge,
+  readPiiSentinelConfig,
+} from "../pii-sentinel.ts";
 
 const PRE_TOOL_USE = fileURLToPath(
   new URL("../../pre-tool-use-hook.ts", import.meta.url),
@@ -38,7 +51,7 @@ let answer: (text: string) => { status: number; body: unknown } = () => ({
   body: { sensitivity: { level: "none" }, categories: {}, findings: [] },
 });
 
-const server = http.createServer((req, res) => {
+const handler: http.RequestListener = (req, res) => {
   let raw = "";
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
@@ -52,11 +65,21 @@ const server = http.createServer((req, res) => {
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(out));
   });
-});
+};
+const server = http.createServer(handler);
+const others: http.Server[] = [];
+
+// A fake server on another socket path, for the directories made below.
+function serveAt(path: string): Promise<void> {
+  const s = http.createServer(handler);
+  others.push(s);
+  return new Promise((resolve) => s.listen(path, resolve));
+}
 
 beforeAll(() => new Promise<void>((resolve) => server.listen(socket, resolve)));
 afterAll(() => {
   server.close();
+  for (const s of others) s.close();
   rmSync(dir, { recursive: true, force: true });
 });
 afterEach(() => {
@@ -81,6 +104,14 @@ function high(findings: unknown[] = []) {
 function writeConfig(name: string, piiSentinel: unknown): string {
   const path = join(dir, name);
   writeFileSync(path, JSON.stringify({ piiSentinel }));
+  return path;
+}
+
+// A directory under our 0700 test directory with the given mode.
+function makeDir(name: string, mode: number): string {
+  const path = join(dir, name);
+  mkdirSync(path);
+  chmodSync(path, mode);
   return path;
 }
 
@@ -133,10 +164,8 @@ describe("readPiiSentinelConfig", () => {
 
   it.each([
     [[], "must be an object"],
-    [{}, "exactly one"],
-    [{ socket: "/a", url: "http://127.0.0.1:1" }, "exactly one"],
-    [{ url: "http://example.com:8765" }, "127.0.0.1"],
-    [{ url: "https://127.0.0.1:8765" }, "127.0.0.1"],
+    [{}, "must be a path"],
+    [{ socket: "" }, "must be a path"],
     [{ socket: "/a", timeoutMs: 50 }, "timeoutMs"],
     [{ socket: "/a", maxChars: 1.5 }, "maxChars"],
     [{ socket: "/a", blockOn: "none" }, "blockOn"],
@@ -145,9 +174,16 @@ describe("readPiiSentinelConfig", () => {
     expect(readPiiSentinelConfig(raw)).toContain(message);
   });
 
-  it("accepts a loopback URL", () => {
-    const config = readPiiSentinelConfig({ url: "http://[::1]:8765" });
-    expect(typeof config === "object" && config?.url?.hostname).toBe("[::1]");
+  it.each([
+    [{ url: "http://example.com:8765" }],
+    [{ url: "http://127.0.0.1:8765" }],
+    [{ url: "http://[::1]:8765" }],
+    [{ socket: "/a", url: "http://127.0.0.1:1" }],
+    [{ url: null }],
+  ])("refuses %j as no longer supported", (raw) => {
+    expect(readPiiSentinelConfig(raw)).toContain(
+      '"url" is no longer supported',
+    );
   });
 });
 
@@ -188,6 +224,83 @@ describe("judge", () => {
     expect(
       (await judge([{ source: "a", text: "x" }], config)).unavailable,
     ).toContain("413");
+  });
+});
+
+describe("socket checks", () => {
+  it("accepts a socket in a directory only we can write to", async () => {
+    const d = makeDir("private", 0o700);
+    const path = join(d, "p.sock");
+    await serveAt(path);
+    answer = () => high();
+    const config = readPiiSentinelConfig({ socket: path });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const { verdicts, unavailable } = await judge(
+      [{ source: "a", text: MEDICAL }],
+      config,
+    );
+    expect(unavailable).toBeNull();
+    expect(verdicts[0]?.level).toBe("high");
+  });
+
+  it("refuses a socket in a directory other users can write to, and sends nothing", async () => {
+    const d = makeDir("open-0777", 0o777);
+    const path = join(d, "o.sock");
+    await serveAt(path);
+    const config = readPiiSentinelConfig({ socket: path });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const { unavailable } = await judge(
+      [{ source: "a", text: MEDICAL }],
+      config,
+    );
+    expect(unavailable).toContain("can be written by other users");
+    expect(received).toEqual([]);
+  });
+
+  it("applies the group rule to a socket in a group-writable directory", async () => {
+    // The rule depends on the group of the directory on this machine: a group
+    // that is ours alone is accepted, any other group is refused.
+    const d = makeDir("group-0770", 0o770);
+    const path = join(d, "g.sock");
+    await serveAt(path);
+    const { gid } = statSync(d);
+    if (await groupIsPrivate(gid, process.getgid?.() ?? -1)) {
+      await expect(checkSocket(path)).resolves.toBeUndefined();
+    } else {
+      await expect(checkSocket(path)).rejects.toThrow(
+        "can be written by other users",
+      );
+    }
+  });
+
+  it("accepts a socket in a sticky directory others can write to", async () => {
+    const d = makeDir("sticky-1777", 0o1777);
+    const path = join(d, "t.sock");
+    await serveAt(path);
+    await expect(checkSocket(path)).resolves.toBeUndefined();
+  });
+
+  it("accepts a symlink we own in a sticky directory to our socket", async () => {
+    const d = makeDir("sticky-link", 0o1777);
+    const link = join(d, "link.sock");
+    symlinkSync(socket, link);
+    await expect(checkSocket(link)).resolves.toBeUndefined();
+  });
+
+  it("refuses a regular file as not a socket", async () => {
+    const file = join(dir, "plain.txt");
+    writeFileSync(file, "x");
+    await expect(checkSocket(file)).rejects.toThrow("is not a socket");
+  });
+
+  it("reports a missing socket as ENOENT", async () => {
+    await expect(checkSocket(join(dir, "gone.sock"))).rejects.toThrow("ENOENT");
+  });
+
+  it("refuses an abstract socket name", async () => {
+    await expect(checkSocket("\0pii-sentinel")).rejects.toThrow("abstract");
   });
 });
 
@@ -260,11 +373,12 @@ describe("PreToolUse hook with pii-sentinel", () => {
   it("blocks on an entry it cannot use", async () => {
     const result = await readFile(file, {
       SENSITIVE_CANARY_CONFIG: writeConfig("c6.json", {
-        url: "http://example.com:1",
+        url: "http://127.0.0.1:1",
       }),
     });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('"piiSentinel" entry');
+    expect(result.stderr).toContain('"url" is no longer supported');
   });
 });
 
