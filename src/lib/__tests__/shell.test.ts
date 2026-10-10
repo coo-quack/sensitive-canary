@@ -544,6 +544,44 @@ describe("comments", () => {
 
   // The stripping that follows the blanking reads the heredoc the blanked line
   // now holds, so a `<<` that sat in a comment opens nothing.
+  // Quoting and expansions before the comment, each of which bash reads to its
+  // own close: the `#` inside them is text, and the comment after them is still
+  // found. Each pair runs to the same output in bash.
+  it.each([
+    ["echo $'it\\'s' # it's\ncat .env", "echo $'it\\'s' \ncat .env"],
+    ["echo ${x:-'#'} # it's\ncat .env", "echo ${x:-'#'} \ncat .env"],
+    ['echo ${x:-"#"} # it\'s\ncat .env', 'echo ${x:-"#"} \ncat .env'],
+    ["echo ${x:-a\\}b} # it's\ncat .env", "echo ${x:-a\\}b} \ncat .env"],
+    ['echo "a\\"#b" # it\'s\ncat .env', 'echo "a\\"#b" \ncat .env'],
+    [
+      'echo $(( (1 + 2) * "3" )) # it\'s\ncat .env',
+      'echo $(( (1 + 2) * "3" )) \ncat .env',
+    ],
+    ["echo a\\#b # it's\ncat .env", "echo a\\#b \ncat .env"],
+    ["echo a \\\n# it's\ncat .env", "echo a \\\n\ncat .env"],
+    [
+      "cat <<-EOF\n\t# it's\n\tEOF\n# it's\ncat .env",
+      "cat <<-EOF\n\t# it's\n\tEOF\n\ncat .env",
+    ],
+    [
+      "cat << EOF\n# it's\nEOF\n# it's\ncat .env",
+      "cat << EOF\n# it's\nEOF\n\ncat .env",
+    ],
+  ])("finds only the comment in %j", (command, blanked) => {
+    expect(blankComments(command)).toBe(blanked);
+  });
+
+  it.each([
+    "echo $'a # b'",
+    "echo ${x#*/}",
+    "echo ${x:-$(echo '#')}",
+    "echo \"$(echo '#')\"",
+    'echo "`echo "#"`"',
+    "echo ${x:-\\} # x}",
+  ])("leaves the # inside %j", (command) => {
+    expect(blankComments(command)).toBe(command);
+  });
+
   it("lets heredoc stripping see the command without its comment", () => {
     expect(
       stripHeredocBodies(blankComments("# usage: cat <<EOF\ncat secrets.txt")),
