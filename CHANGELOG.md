@@ -10,6 +10,14 @@
 - A file read through a redirection bash joins to its operator was not collected: `cat 2>&1 .env`, `cat &>/dev/null .env`, `cat >|/dev/stdout .env` and the same with a line continuation inside the operator all let the file through, because the `&` or `|` was taken for a separator. These operators are now scanned as bash reads them, and the POSIX reading (`dash -c 'true &>/dev/stdout cat .env'`) is still scanned too
 - A `#` comment holding an unbalanced quote, a backquote, a `$(` or a `<<` hid the rest of the command: the quote or heredoc ran on past the newline, so `# Check what's configured` followed by `cat .env` collected no paths and the file was printed unscanned. Such a comment is now found the way bash finds it, and the command is read a second time with the comment removed, so the files the lines after it name are scanned; commands whose comments hold none of that read as before. The `cd` that sets the directory relative paths resolve against is now read with comments removed too, so `# it's` before `cd config` no longer hides the `cd`, and `cd config # ; cd ..` no longer follows the `cd ..` in the comment
 
+### CI
+
+- The release job, which publishes to npm, runs in the `npm-release`
+  environment, which only `main` may deploy to. npm's trusted publishing
+  checks the repository and workflow file but not the branch, so a
+  `release.yml` edited on another branch could publish a release without
+  review
+
 ## v0.9.1 (2026-10-04)
 
 ### Documentation
