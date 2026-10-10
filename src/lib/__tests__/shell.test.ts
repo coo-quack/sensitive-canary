@@ -20,9 +20,11 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  blankComments,
   extractEnvVarNames,
   extractQuotedLiterals,
   extractSubstitutions,
+  findComments,
   isNonCommandToken,
   MAX_QUOTED_LITERAL_LENGTH,
   SHELL_KEYWORD_TOKENS,
@@ -119,6 +121,193 @@ describe("tokenizeCommand", () => {
       expect(tokens.map((t) => t.value)).toEqual(["grep", ">", "secrets"]);
       expect(tokens.every((t) => !t.redirect)).toBe(true);
     });
+  });
+});
+
+// The tokens of every segment as `[value, redirect]`, which is what the joined
+// reading changes. Quote removal is not what these cases are about.
+function shape(
+  command: string,
+  options?: { joinRedirections: boolean },
+): [string, boolean][][] {
+  return tokenizeCommand(command, options).map((segment) =>
+    segment.map((t): [string, boolean] => [t.value, t.redirect]),
+  );
+}
+
+describe("tokenizeCommand, default reading", () => {
+  // These pin what every caller gets without the option. The cd-following loop
+  // in pre-tool-use-hook.ts relies on this shape, so changing it is a
+  // regression even where the joined reading would be more correct.
+  it("splits 2>&1 at the ampersand", () => {
+    expect(shape("cat 2>&1 .env")).toEqual([
+      [
+        ["cat", false],
+        [">", true],
+      ],
+      [
+        ["1", false],
+        [".env", false],
+      ],
+    ]);
+  });
+
+  it("splits &> at the ampersand", () => {
+    expect(shape("cat &>/dev/null .env")).toEqual([
+      [["cat", false]],
+      [
+        [">", true],
+        ["/dev/null", false],
+        [".env", false],
+      ],
+    ]);
+  });
+
+  it("splits 2>&1>out.txt, leaving out.txt in a segment led by >", () => {
+    expect(shape("cat plain.txt 2>&1>out.txt")).toEqual([
+      [
+        ["cat", false],
+        ["plain.txt", false],
+        [">", true],
+      ],
+      [
+        [">", true],
+        ["out.txt", false],
+      ],
+    ]);
+  });
+
+  it("keeps echo hi >&2 as an operator and an operand", () => {
+    expect(shape("echo hi >&2")).toEqual([
+      [
+        ["echo", false],
+        ["hi", false],
+        [">", true],
+      ],
+      [["2", false]],
+    ]);
+  });
+});
+
+describe("tokenizeCommand, joinRedirections", () => {
+  it("reads 2>&1 as one operator and keeps 1 as its target", () => {
+    expect(shape("cat 2>&1 .env", { joinRedirections: true })).toEqual([
+      [
+        ["cat", false],
+        [">&", true],
+        ["1", false],
+        [".env", false],
+      ],
+    ]);
+  });
+
+  it.each([
+    ["cat &>/dev/null .env", "&>"],
+    ["cat &>>/dev/null .env", "&>>"],
+    ["cat &>|/dev/null .env", "&>|"],
+  ])("reads the leading & of %s into one operator", (command, op) => {
+    const [segment] = shape(command, { joinRedirections: true });
+    expect(segment?.[1]).toEqual([op, true]);
+    expect(segment?.at(-1)).toEqual([".env", false]);
+  });
+
+  it("does not take a digit before &> as a descriptor", () => {
+    expect(shape("cat 2&>f", { joinRedirections: true })).toEqual([
+      [
+        ["cat", false],
+        ["2", false],
+        ["&>", true],
+        ["f", false],
+      ],
+    ]);
+  });
+
+  it.each([
+    ["cat 2>|/dev/null .env", ">|"],
+    ["cat >|/dev/stdout .env", ">|"],
+    ["cat >>|/dev/stdout .env", ">>|"],
+    ["cat >&|/dev/stdout .env", ">&|"],
+  ])("reads %s with the noclobber | as one operator", (command, op) => {
+    const [segment] = shape(command, { joinRedirections: true });
+    expect(segment?.[1]).toEqual([op, true]);
+    expect(segment?.at(-1)).toEqual([".env", false]);
+  });
+
+  it("drops the descriptor written before a joined operator", () => {
+    expect(shape("cat f 2>|/dev/null", { joinRedirections: true })).toEqual([
+      [
+        ["cat", false],
+        ["f", false],
+        [">|", true],
+        ["/dev/null", false],
+      ],
+    ]);
+  });
+
+  it("reads a line continuation between the characters of an operator", () => {
+    expect(
+      shape("cat 2>\\\n&1 .env", { joinRedirections: true })[0]?.slice(1),
+    ).toEqual([
+      [">&", true],
+      ["1", false],
+      [".env", false],
+    ]);
+    expect(
+      shape("cat >\\\n|/dev/stdout .env", { joinRedirections: true })[0]?.slice(
+        1,
+      ),
+    ).toEqual([
+      [">|", true],
+      ["/dev/stdout", false],
+      [".env", false],
+    ]);
+    expect(
+      shape("cat &\\\n>/dev/stdout .env", { joinRedirections: true })[0]?.slice(
+        1,
+      ),
+    ).toEqual([
+      ["&>", true],
+      ["/dev/stdout", false],
+      [".env", false],
+    ]);
+  });
+
+  it("emits the target of >& as a token of its own in 2>&1>out.txt", () => {
+    expect(
+      shape("cat plain.txt 2>&1>out.txt", { joinRedirections: true }),
+    ).toEqual([
+      [
+        ["cat", false],
+        ["plain.txt", false],
+        [">&", true],
+        ["1", false],
+        [">", true],
+        ["out.txt", false],
+      ],
+    ]);
+  });
+
+  it("reads <&3 with 3 as its target", () => {
+    expect(shape("cat <&3", { joinRedirections: true })).toEqual([
+      [
+        ["cat", false],
+        ["<&", true],
+        ["3", false],
+      ],
+    ]);
+  });
+
+  it("still splits at a bare & that is not a redirection", () => {
+    expect(shape("cat a & cat b", { joinRedirections: true })).toEqual([
+      [
+        ["cat", false],
+        ["a", false],
+      ],
+      [
+        ["cat", false],
+        ["b", false],
+      ],
+    ]);
   });
 });
 
@@ -301,5 +490,108 @@ describe("extractQuotedLiterals", () => {
 
   it("returns nothing for unquoted code", () => {
     expect(extractQuotedLiterals("print(open(path))")).toEqual([]);
+  });
+});
+
+// A `#` that starts a comment, and the command line once the comment is gone.
+// The scanner reads what the shell reads, so the cases split on what it must
+// not mistake for a comment: a quote, a substitution, a heredoc body, a shift.
+describe("comments", () => {
+  // The words of a comment are not commands, and a quote in one does not open a
+  // run that reaches the next line.
+  it.each([
+    ["# Check what's configured\ncat .env", "\ncat .env"],
+    ['# "x\ncat .env', "\ncat .env"],
+    ["# usage: cat <<EOF\ncat secrets.txt", "\ncat secrets.txt"],
+    ["(( 1 ))# it's\ncat .env", "(( 1 ))\ncat .env"],
+    ["case x in x)# it's\n cat .env;; esac", "case x in x)\n cat .env;; esac"],
+    ["f()# it's\n{ cat .env; }; f", "f()\n{ cat .env; }; f"],
+    ["ls # it's here\ncat secrets.txt", "ls \ncat secrets.txt"],
+  ])("blanks the comment in %j", (command, blanked) => {
+    expect(blankComments(command)).toBe(blanked);
+  });
+
+  // A `#` that is part of a word, or sits inside a quote, a substitution's
+  // closing mid-word, or a heredoc body, is not a comment and is left alone.
+  it.each([
+    "echo $(date)#x",
+    "echo '# not a comment'; cat x",
+    'echo "#not"',
+    "echo ${#x}",
+    "cat > s.sh <<'EOF'\n# it's\ncat .env\nEOF",
+  ])("leaves %j as it is", (command) => {
+    expect(blankComments(command)).toBe(command);
+  });
+
+  // `1 << 2` in arithmetic is a shift, so the `<<` opens no heredoc and the
+  // comment after the expansion is still found.
+  it("treats << inside arithmetic as a shift, not a heredoc", () => {
+    expect(blankComments("echo $(( 1 << 2 )) # it's\ncat .env")).toBe(
+      "echo $(( 1 << 2 )) \ncat .env",
+    );
+  });
+
+  // Inside a substitution a comment runs to the newline; inside backquotes it
+  // ends at the closing backquote, which is kept.
+  it("ends a comment inside $(...) at the newline and inside backquotes at the backquote", () => {
+    expect(blankComments("echo $(\n# it's\ncat .env\n)")).toBe(
+      "echo $(\n\ncat .env\n)",
+    );
+    expect(blankComments("echo `cat x # it's`; cat .env")).toBe(
+      "echo `cat x `; cat .env",
+    );
+  });
+
+  // The stripping that follows the blanking reads the heredoc the blanked line
+  // now holds, so a `<<` that sat in a comment opens nothing.
+  // Quoting and expansions before the comment, each of which bash reads to its
+  // own close: the `#` inside them is text, and the comment after them is still
+  // found. Each pair runs to the same output in bash.
+  it.each([
+    ["echo $'it\\'s' # it's\ncat .env", "echo $'it\\'s' \ncat .env"],
+    ["echo ${x:-'#'} # it's\ncat .env", "echo ${x:-'#'} \ncat .env"],
+    ['echo ${x:-"#"} # it\'s\ncat .env', 'echo ${x:-"#"} \ncat .env'],
+    ["echo ${x:-a\\}b} # it's\ncat .env", "echo ${x:-a\\}b} \ncat .env"],
+    ['echo "a\\"#b" # it\'s\ncat .env', 'echo "a\\"#b" \ncat .env'],
+    [
+      'echo $(( (1 + 2) * "3" )) # it\'s\ncat .env',
+      'echo $(( (1 + 2) * "3" )) \ncat .env',
+    ],
+    ["echo a\\#b # it's\ncat .env", "echo a\\#b \ncat .env"],
+    ["echo a \\\n# it's\ncat .env", "echo a \\\n\ncat .env"],
+    [
+      "cat <<-EOF\n\t# it's\n\tEOF\n# it's\ncat .env",
+      "cat <<-EOF\n\t# it's\n\tEOF\n\ncat .env",
+    ],
+    [
+      "cat << EOF\n# it's\nEOF\n# it's\ncat .env",
+      "cat << EOF\n# it's\nEOF\n\ncat .env",
+    ],
+  ])("finds only the comment in %j", (command, blanked) => {
+    expect(blankComments(command)).toBe(blanked);
+  });
+
+  it.each([
+    "echo $'a # b'",
+    "echo ${x#*/}",
+    "echo ${x:-$(echo '#')}",
+    "echo \"$(echo '#')\"",
+    'echo "`echo "#"`"',
+    "echo ${x:-\\} # x}",
+  ])("leaves the # inside %j", (command) => {
+    expect(blankComments(command)).toBe(command);
+  });
+
+  it("lets heredoc stripping see the command without its comment", () => {
+    expect(
+      stripHeredocBodies(blankComments("# usage: cat <<EOF\ncat secrets.txt")),
+    ).toBe("\ncat secrets.txt");
+  });
+
+  // A comment is found by scanning forward, not by recursing into nesting, so a
+  // line nested far past any call-stack depth still returns.
+  it("scans a deeply nested line without recursing", () => {
+    const deep = `${"$(".repeat(20_000)}# it's`;
+    expect(findComments(deep).length).toBe(1);
   });
 });

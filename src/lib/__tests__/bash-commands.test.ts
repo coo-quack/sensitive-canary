@@ -194,6 +194,62 @@ describe("git subcommands that print file contents", () => {
   });
 });
 
+// The default reading splits `2>&1` and `&>` at the `&`, so the file after them
+// is a segment of its own and goes unread. The joined reading keeps the
+// operator whole. Both are scanned, so each case here is a file the default
+// alone misses.
+describe("redirections that bash joins to their operator", () => {
+  it.each([
+    "cat 2>&1 .env",
+    "cat &>/dev/null .env",
+    "cat 2>|/dev/null .env",
+    "cat >|/dev/stdout .env",
+    "cat 2>\\\n&1 .env",
+    "cat >\\\n|/dev/stdout .env",
+    "cat &\\\n>/dev/stdout .env",
+    // bash closes descriptor 2 at the `-` and reads `.env` as the next word.
+    "cat 2>&-.env",
+  ])("collects the file in %j", (command) => {
+    expect(paths(command)).toContain(".env");
+  });
+
+  it("collects the config file after 2>&1 in a head", () => {
+    expect(paths("head -n 50 2>&1 secrets.yml")).toContain("secrets.yml");
+  });
+
+  // POSIX sh runs `cat .env` here: `&>/dev/stdout` is `&`, then `>/dev/stdout`.
+  // The default reading must keep that split, so the joined one cannot
+  // replace it.
+  it("still collects the command dash runs after &>", () => {
+    expect(paths("dash -c 'true &>/dev/stdout cat .env'")).toContain(".env");
+  });
+
+  // The target of `>&` is a write, and the operand after it is not. Taking the
+  // digit as a descriptor prefix of `>` made out.txt a file to read.
+  it("does not collect the write target of 2>&1>out.txt", () => {
+    expect(paths("cat plain.txt 2>&1>out.txt")).toEqual(["plain.txt"]);
+  });
+
+  it("does not collect the write target of 2>&1 >out.txt", () => {
+    expect(paths("cat plain.txt 2>&1 >out.txt")).toEqual(["plain.txt"]);
+  });
+
+  it("names no path for echo hi >&2", () => {
+    expect(paths("echo hi >&2")).toEqual([]);
+  });
+
+  it("does not collect the descriptor 3 of <&3 as a file", () => {
+    expect(paths("cat <&3")).toEqual([]);
+  });
+
+  // Not a path case. The joined reading sees `cat f` as the command after env,
+  // so it is not a dump. The default reading still sees a bare `env` and
+  // reports the dump, and the merge keeps that verdict.
+  it("keeps the environment dump verdict of env 2>&1 cat f", () => {
+    expect(extractCommandRefs("env 2>&1 cat f").dumpsEnvironment).toBe(true);
+  });
+});
+
 describe("redirection into a command", () => {
   it("stdin over < is read", () => {
     expect(paths("cat < secrets.txt")).toContain("secrets.txt");
@@ -608,5 +664,86 @@ describe("the tables", () => {
       "grep",
       "show",
     ]);
+  });
+});
+
+// A comment is not a command, and a quote, backquote, substitution, heredoc
+// operator or trailing backslash inside one used to fold the lines after it into
+// a single word. The second reading, which blanks the comment, is what finds the
+// files those lines name.
+describe("comments that carry syntax past their end", () => {
+  it.each([
+    "# Check what's configured\ncat .env",
+    '# "x\ncat .env',
+    "(( 1 ))# it's\ncat .env",
+    "case x in x)# it's\n cat .env;; esac",
+    "f()# it's\n{ cat .env; }; f",
+    // A backslash ends nothing in a comment; read as a continuation, it joined
+    // the next line to the comment.
+    "# note \\\ncat .env",
+  ])("%j reads the .env it names after the comment", (command) => {
+    expect(paths(command)).toContain(".env");
+  });
+
+  it("reads the file named after a comment that opens a heredoc", () => {
+    expect(paths("# usage: cat <<EOF\ncat secrets.txt")).toContain(
+      "secrets.txt",
+    );
+  });
+
+  it("reads the file after a comment that opens with a word", () => {
+    expect(paths("ls # it's here\ncat secrets.txt")).toContain("secrets.txt");
+  });
+
+  // The comment's own words are not operands. `.env` in the comment is not
+  // read, and the paths are what develop gave, so the second reading added
+  // nothing for this command.
+  it("does not read a name that appears only in a comment", () => {
+    expect(paths("cat notes.md # don't print .env")).toEqual([
+      "notes.md",
+      "#",
+      "dont print .env",
+    ]);
+    expect(paths("cat notes.md # don't print .env")).not.toContain(".env");
+  });
+
+  // A bare printenv dumps the environment, and the comment is not an argument
+  // that would name a variable. The variable names come out as develop reads
+  // them.
+  it("does not name variables from a comment after printenv", () => {
+    const refs = extractCommandRefs("printenv # it's HOME");
+    expect(refs.envVars).toEqual(["#", "its HOME"]);
+    expect(refs.dumpsEnvironment).toBe(true);
+  });
+
+  // Commands whose comments carry none of the syntax read as they always did.
+  it.each([
+    ["env # list", { paths: [], envVars: [], dumpsEnvironment: false }],
+    [
+      "printenv # all",
+      { paths: [], envVars: ["#", "all"], dumpsEnvironment: false },
+    ],
+    [
+      "rg TODO # find todos",
+      { paths: ["#", "find", "todos"], envVars: [], dumpsEnvironment: false },
+    ],
+    [
+      "grep -r foo # search",
+      { paths: ["#", "search"], envVars: [], dumpsEnvironment: false },
+    ],
+  ])("%j reads as it did on develop", (command, expected) => {
+    expect(extractCommandRefs(command)).toMatchObject(expected);
+  });
+
+  it("does not treat a # inside a substitution's word as a comment", () => {
+    expect(paths("echo $(date)#x")).toEqual([]);
+  });
+
+  it("does not treat a # inside quotes as a comment", () => {
+    expect(paths("echo '# not a comment'; cat x")).toEqual(["x"]);
+  });
+
+  it("does not treat a comment-like line inside a heredoc body as a comment", () => {
+    expect(paths("cat > s.sh <<'EOF'\n# it's\ncat .env\nEOF")).toEqual([]);
   });
 });

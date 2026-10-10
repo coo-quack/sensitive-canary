@@ -80,11 +80,34 @@ export function extractEnvVarNames(command: string): string[] {
   return [...names];
 }
 
+// Options for tokenizeCommand. The default reading is the one every caller has
+// always had, and it stays byte-for-byte the same.
+export interface TokenizeOptions {
+  // Read redirection operators the way bash spells them, rather than stopping
+  // each at the first character that is not part of its run.
+  //
+  // The default ends a `<` or `>` run before a following `&` or `|`, so `2>&1`
+  // becomes `2>` followed by a separator. That is right for POSIX sh, where
+  // `&>` is a background `&` and then `>`: `dash -c 'true &>/dev/stdout cat f'`
+  // runs `cat f`. So the default reading must stay, and a caller that wants
+  // the bash reading asks for it and scans both.
+  //
+  // The joined reading takes `>&`, `<&`, `>|`, `&>`, `&>>` and `&>|` as one
+  // operator each, skipping line continuations between their characters. After
+  // `>&` or `<&` a run of digits or a `-` is the operator's target, emitted as
+  // a token of its own so the operand after it is not mistaken for its target.
+  joinRedirections?: boolean;
+}
+
 // Split a command line into segments (at |, ;, &, &&, || and newlines) and each
 // segment into tokens with quotes removed. Redirection operators become tokens of
 // their own so that `wc -l <f` and `wc -l < f` tokenize alike. Substitutions are
 // left in place; extractSubstitutions handles them against the raw string.
-export function tokenizeCommand(command: string): ShellToken[][] {
+export function tokenizeCommand(
+  command: string,
+  options: TokenizeOptions = {},
+): ShellToken[][] {
+  const joined = options.joinRedirections === true;
   const segments: ShellToken[][] = [];
   let tokens: ShellToken[] = [];
   let current = "";
@@ -152,6 +175,21 @@ export function tokenizeCommand(command: string): ShellToken[][] {
       continue;
     }
 
+    // `&>` is a redirection in bash, but only in the joined reading. The
+    // default keeps it as a separator, because POSIX sh splits it into `&` and
+    // `>`.
+    if (joined && ch === "&") {
+      const gt = skipLineContinuations(command, i + 1);
+      if (command[gt] === ">") {
+        // Not a file descriptor prefix: `2&>f` is the word `2`, then `&>f`.
+        endToken();
+        const operator = readRedirectOperator(command, gt, true, "&");
+        tokens.push({ value: operator.op, redirect: true });
+        i = operator.next;
+        continue;
+      }
+    }
+
     if (ch === "|" || ch === ";" || ch === "&" || ch === "\n") {
       endSegment();
       while (i < command.length && /[|;&\n\s]/.test(command[i] as string)) i++;
@@ -193,13 +231,12 @@ export function tokenizeCommand(command: string): ShellToken[][] {
         hasCurrent = false;
       }
       endToken();
-      let op = ch;
-      i++;
-      while (i < command.length && command[i] === ch) {
-        op += ch;
-        i++;
+      const operator = readRedirectOperator(command, i, joined);
+      tokens.push({ value: operator.op, redirect: true });
+      if (operator.target !== null) {
+        tokens.push({ value: operator.target, redirect: false });
       }
-      tokens.push({ value: op, redirect: true });
+      i = operator.next;
       continue;
     }
 
@@ -216,6 +253,85 @@ export function tokenizeCommand(command: string): ShellToken[][] {
 
   endSegment();
   return segments;
+}
+
+// Index just past any line continuations (a backslash and a newline) at `i`.
+//
+// A continuation is removed before the shell reads an operator, so
+// `cat 2>\<newline>&1` is `2>&1`. The joined reading looks past them when it
+// decides whether an operator goes on, and the default reading does not, which
+// is why the two readings disagree on these spellings.
+function skipLineContinuations(command: string, i: number): number {
+  let j = i;
+  while (command[j] === "\\" && command[j + 1] === "\n") j += 2;
+  return j;
+}
+
+// The redirection operator whose first character is at `start`, and where the
+// tokenizer resumes after it. `prefix` is `&` for the `&>` forms.
+//
+// The default reading takes the run of `<` or `>` and nothing else. The joined
+// reading also takes a directly following `&`, and a `|` after a `>`, so that
+// `>&` and `>|` are each one operator. `target` is the digits or `-` that
+// `>&` and `<&` name, or null.
+interface RedirectOperator {
+  op: string;
+  target: string | null;
+  next: number;
+}
+
+function readRedirectOperator(
+  command: string,
+  start: number,
+  joined: boolean,
+  prefix = "",
+): RedirectOperator {
+  const ch = command[start] as string;
+  let op = prefix + ch;
+  let i = start + 1;
+
+  if (!joined) {
+    while (i < command.length && command[i] === ch) {
+      op += ch;
+      i++;
+    }
+    return { op, target: null, next: i };
+  }
+
+  for (;;) {
+    const j = skipLineContinuations(command, i);
+    if (command[j] !== ch) break;
+    op += ch;
+    i = j + 1;
+  }
+
+  // `>&` and `<&`. The `|` that follows `>&` in `>&|` is taken below, with the
+  // `|` of `>|`.
+  const amp = skipLineContinuations(command, i);
+  const joinedAmp = command[amp] === "&";
+  if (joinedAmp) {
+    op += "&";
+    i = amp + 1;
+  }
+  if (ch === ">") {
+    const bar = skipLineContinuations(command, i);
+    if (command[bar] === "|") {
+      op += "|";
+      i = bar + 1;
+    }
+  }
+
+  let target: string | null = null;
+  if (joinedAmp && !op.endsWith("|")) {
+    const at = skipLineContinuations(command, i);
+    const digits = /^(?:\d+|-)/.exec(command.slice(at));
+    if (digits) {
+      target = digits[0];
+      i = at + digits[0].length;
+    }
+  }
+
+  return { op, target, next: i };
 }
 
 // Length of the ANSI-C escape starting at `command[i]` (a backslash), so the
@@ -361,6 +477,345 @@ export function stripHeredocBodies(command: string): string {
   }
 
   return kept.join("\n");
+}
+
+// A comment in a command line, as the shell reads it. `start` is the `#` and
+// `end` is the newline or closing backquote that stops it, or the end of input.
+export interface CommentSpan {
+  start: number;
+  end: number;
+}
+
+// What the comment scanner is reading at a given point. `top`, `subshell`,
+// `cmdsub` (`$(...)`) and `procsub` (`<(...)`, `>(...)`) are command lines, and
+// `backquote` is a command line that ends at its closing backquote. `arithcmd`
+// is `((...))` and `arithexp` is `$((...))`, where `#` is not a comment. `param`
+// is `${...}`, also free of comments, and `dq` is a double-quoted run.
+// `parens` counts the parentheses opened inside an arithmetic frame.
+type ScanKind =
+  | "top"
+  | "subshell"
+  | "cmdsub"
+  | "procsub"
+  | "backquote"
+  | "arithcmd"
+  | "arithexp"
+  | "param"
+  | "dq";
+
+interface ScanFrame {
+  kind: ScanKind;
+  parens: number;
+}
+
+// Index just past the single-quoted run whose body starts at `from`. A run that
+// never closes runs to the end of the input, as the shell reads it.
+function skipSingleQuoted(command: string, from: number): number {
+  const close = command.indexOf("'", from);
+  return close === -1 ? command.length : close + 1;
+}
+
+// Index just past the `$'...'` run whose body starts at `from`. A backslash
+// escapes the next character, so `\'` does not close it.
+function skipAnsiCQuoted(command: string, from: number): number {
+  let i = from;
+  while (i < command.length && command[i] !== "'") {
+    i += command[i] === "\\" ? 2 : 1;
+  }
+  return Math.min(i + 1, command.length);
+}
+
+// Pushes the substitution or expansion that starts at `i` and returns the index
+// past its opener, or null when none starts there. Inside `"..."`, `${...}`,
+// `((...))` and backquotes these all open the same way.
+function openNested(
+  command: string,
+  i: number,
+  stack: ScanFrame[],
+): number | null {
+  const ch = command[i];
+  const next = command[i + 1];
+  if (ch === "$" && next === "(") {
+    if (command[i + 2] === "(") {
+      stack.push({ kind: "arithexp", parens: 0 });
+      return i + 3;
+    }
+    stack.push({ kind: "cmdsub", parens: 0 });
+    return i + 2;
+  }
+  if (ch === "$" && next === "{") {
+    stack.push({ kind: "param", parens: 0 });
+    return i + 2;
+  }
+  if (ch === "`") {
+    stack.push({ kind: "backquote", parens: 0 });
+    return i + 1;
+  }
+  return null;
+}
+
+// Index just past the body of each heredoc opened on the line just ended. A
+// body runs to the line that equals its delimiter, and nothing in it is a
+// comment or a quote, so `# it's` inside a heredoc is text.
+function skipHeredocBodies(
+  command: string,
+  from: number,
+  pending: HeredocDelimiter[],
+): number {
+  let i = from;
+  while (pending.length > 0 && i < command.length) {
+    const eol = command.indexOf("\n", i);
+    const end = eol === -1 ? command.length : eol;
+    const line = command.slice(i, end);
+    const first = pending[0] as HeredocDelimiter;
+    const cmp = first.allowTabs ? line.replace(/^\t+/, "") : line;
+    if (cmp === first.delim) pending.shift();
+    i = end + 1;
+  }
+  return Math.min(i, command.length);
+}
+
+// Every comment in a command line, found the way the shell finds them. A `#`
+// starts a comment only where a word starts outside quotes, `${...}` and
+// heredoc bodies. A word starts at the beginning of the input, after blanks,
+// newlines and the operators `;`, `&`, `|`, `<`, `>`, and after `(`. A `)` also
+// starts one when it closes a subshell, a function's `()`, an arithmetic command
+// or a case pattern, but not when it closes `$(...)`, `<(...)` or `$((...))`,
+// because the word goes on after those: `echo $(date)#x` has no comment.
+//
+// The scan is one pass with an explicit stack of the constructs it is inside,
+// so a deeply nested line cannot overflow the call stack. Where it cannot tell,
+// it errs toward a comment: callers only add a reading when a comment is found,
+// so a wrong comment can add scanning and cannot hide any.
+export function findComments(command: string): CommentSpan[] {
+  const spans: CommentSpan[] = [];
+  const stack: ScanFrame[] = [{ kind: "top", parens: 0 }];
+  const heredocs: HeredocDelimiter[] = [];
+  let wordStart = true;
+  let i = 0;
+
+  while (i < command.length) {
+    const frame = stack[stack.length - 1] as ScanFrame;
+    const ch = command[i] as string;
+    const next = command[i + 1];
+
+    if (frame.kind === "dq") {
+      if (ch === "\\") {
+        i += 2;
+      } else if (ch === '"') {
+        stack.pop();
+        i++;
+      } else {
+        i = openNested(command, i, stack) ?? i + 1;
+      }
+      continue;
+    }
+
+    if (frame.kind === "param") {
+      if (ch === "\\") {
+        i += 2;
+      } else if (ch === "}") {
+        stack.pop();
+        wordStart = false;
+        i++;
+      } else if (ch === "'") {
+        i = skipSingleQuoted(command, i + 1);
+      } else if (ch === '"') {
+        stack.push({ kind: "dq", parens: 0 });
+        i++;
+      } else {
+        i = openNested(command, i, stack) ?? i + 1;
+      }
+      continue;
+    }
+
+    if (frame.kind === "arithcmd" || frame.kind === "arithexp") {
+      // In arithmetic `<<` is a shift and `#` is not a comment, so neither is
+      // taken for a heredoc or a comment here.
+      if (ch === "\\") {
+        i += 2;
+      } else if (ch === "'") {
+        i = skipSingleQuoted(command, i + 1);
+      } else if (ch === '"') {
+        stack.push({ kind: "dq", parens: 0 });
+        i++;
+      } else if (ch === "(") {
+        frame.parens++;
+        i++;
+      } else if (ch === ")" && frame.parens > 0) {
+        frame.parens--;
+        i++;
+      } else if (ch === ")") {
+        // `))` closes the expression. A `((` command is followed by a command,
+        // so a word can start after it; a `$((` expansion is part of a word.
+        stack.pop();
+        wordStart = frame.kind === "arithcmd";
+        i += next === ")" ? 2 : 1;
+      } else {
+        i = openNested(command, i, stack) ?? i + 1;
+      }
+      continue;
+    }
+
+    // The rest are command lines, and a backquote body is one.
+    if (ch === "\\") {
+      // A backslash-newline joins the lines and does not start a word.
+      if (next === "\n") {
+        i += 2;
+      } else {
+        wordStart = false;
+        i += 2;
+      }
+      continue;
+    }
+
+    if (ch === "\n") {
+      wordStart = true;
+      i = skipHeredocBodies(command, i + 1, heredocs);
+      continue;
+    }
+
+    if (/[ \t\r;&|]/.test(ch)) {
+      wordStart = true;
+      i++;
+      continue;
+    }
+
+    if (ch === "#" && wordStart) {
+      const inBackquote = frame.kind === "backquote";
+      let end = i;
+      while (
+        end < command.length &&
+        command[end] !== "\n" &&
+        !(inBackquote && command[end] === "`")
+      ) {
+        end++;
+      }
+      spans.push({ start: i, end });
+      i = end;
+      continue;
+    }
+
+    if (ch === "'") {
+      i = skipSingleQuoted(command, i + 1);
+      wordStart = false;
+      continue;
+    }
+
+    if (ch === "$" && next === "'") {
+      i = skipAnsiCQuoted(command, i + 2);
+      wordStart = false;
+      continue;
+    }
+
+    if (ch === '"') {
+      stack.push({ kind: "dq", parens: 0 });
+      i++;
+      wordStart = false;
+      continue;
+    }
+
+    if (ch === "`") {
+      if (frame.kind === "backquote") {
+        stack.pop();
+        wordStart = false;
+      } else {
+        stack.push({ kind: "backquote", parens: 0 });
+        wordStart = true;
+      }
+      i++;
+      continue;
+    }
+
+    if (ch === "$" && (next === "(" || next === "{")) {
+      wordStart = next === "(";
+      i = openNested(command, i, stack) ?? i + 2;
+      continue;
+    }
+
+    if ((ch === "<" || ch === ">") && next === "(") {
+      stack.push({ kind: "procsub", parens: 0 });
+      wordStart = true;
+      i += 2;
+      continue;
+    }
+
+    if (ch === "<" && next === "<") {
+      wordStart = false;
+      if (command[i + 2] === "<") {
+        i += 3; // a herestring, not a heredoc
+        continue;
+      }
+      let j = i + 2;
+      let allowTabs = false;
+      if (command[j] === "-") {
+        allowTabs = true;
+        j++;
+      }
+      while (command[j] === " " || command[j] === "\t") j++;
+      // The delimiter is read from its own line only, so an unclosed quote in
+      // it cannot run on into the next line.
+      const eol = command.indexOf("\n", j);
+      const line = command.slice(0, eol === -1 ? command.length : eol);
+      const { delim, next: after } = readHeredocDelimiter(line, j);
+      if (delim) heredocs.push({ delim, allowTabs });
+      i = after;
+      continue;
+    }
+
+    if (ch === "<" || ch === ">") {
+      wordStart = true;
+      i++;
+      continue;
+    }
+
+    if (ch === "(") {
+      if (next === "(") {
+        stack.push({ kind: "arithcmd", parens: 0 });
+        i += 2;
+      } else {
+        stack.push({ kind: "subshell", parens: 0 });
+        i++;
+      }
+      wordStart = true;
+      continue;
+    }
+
+    if (ch === ")") {
+      if (
+        frame.kind === "subshell" ||
+        frame.kind === "cmdsub" ||
+        frame.kind === "procsub"
+      ) {
+        stack.pop();
+        wordStart = frame.kind === "subshell";
+      } else {
+        // A case pattern's `)`, or one with nothing open: a word may follow.
+        wordStart = true;
+      }
+      i++;
+      continue;
+    }
+
+    wordStart = false;
+    i++;
+  }
+
+  return spans;
+}
+
+// The command line with each comment removed, `#` included, up to but not
+// including the newline or closing backquote that ends it. The words of a
+// comment are not commands, so removing them is what lets a reading of the line
+// proceed past the comment as the shell does.
+export function blankComments(command: string): string {
+  let out = "";
+  let last = 0;
+  for (const { start, end } of findComments(command)) {
+    out += command.slice(last, start);
+    last = end;
+  }
+  return out + command.slice(last);
 }
 
 // Substitution syntaxes whose inner text is a command line in its own right.
