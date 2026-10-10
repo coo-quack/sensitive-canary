@@ -331,6 +331,24 @@ const GLOB_METACHARACTERS = /[*?[{]/;
 // a pattern over a large tree still costs the walk.
 const MAX_GLOB_MATCHES = 256;
 
+// Paths built by substituting an environment variable, each mapped to the path
+// as it was written. The expanded path is the one read; the written one is the
+// one shown. A block's message is sent to Claude, and `cat "$DB_PASSWORD/.env"`
+// is blocked on its name alone, so printing the path it expanded to put the
+// password in the message whether or not any rule would have caught it.
+const writtenAs = new Map<string, string>();
+
+// What a block calls a path: as written when a variable was substituted into
+// it, as resolved otherwise. A file found by listing a directory that came from
+// a variable is shown under the directory as written.
+function shownPath(filePath: string): string {
+  const written = writtenAs.get(filePath);
+  if (written !== undefined) return written;
+  const parent = writtenAs.get(path.dirname(filePath));
+  if (parent !== undefined) return path.join(parent, path.basename(filePath));
+  return filePath;
+}
+
 // The paths a candidate stands for.
 //
 // A token carrying glob metacharacters names whatever the shell will expand it
@@ -343,10 +361,10 @@ const MAX_GLOB_MATCHES = 256;
 // Expanded here rather than in the tokenizer because it needs the filesystem,
 // which is also why it can differ from what the shell will do a moment later.
 function expandCandidate(candidate: string): string[] {
-  const literal = path.resolve(
-    baseDirectory,
-    expandPath(fromFileUrl(candidate)),
-  );
+  const written = fromFileUrl(candidate);
+  const literal = path.resolve(baseDirectory, expandPath(written));
+  const fromVariable = expandShellVars(written) !== written;
+  if (fromVariable) writtenAs.set(literal, written);
   if (!GLOB_METACHARACTERS.test(literal)) return [literal];
   // `**` matches across directories, and expanding it walks a whole tree:
   // `cat ~/**/*` runs until the hook is killed, which is the failure this file
@@ -361,6 +379,21 @@ function expandCandidate(candidate: string): string[] {
     matches = fs.globSync(pattern).slice(0, MAX_GLOB_MATCHES);
   } catch {
     matches = [];
+  }
+  // When the last component contains a variable (`$P*`, `*$P.env`), a match's name
+  // can contain the expanded value, so the whole pattern as written is shown.
+  // Otherwise the match is shown under the directory as written.
+  if (fromVariable) {
+    const writtenName = path.basename(written);
+    const basenameHasVariable = expandShellVars(writtenName) !== writtenName;
+    for (const match of matches) {
+      writtenAs.set(
+        match,
+        basenameHasVariable
+          ? written
+          : path.join(path.dirname(written), path.basename(match)),
+      );
+    }
   }
   // The literal is kept as well as the expansion. Returning only the matches
   // would be a way through that this hook did not have before the expansion
@@ -506,10 +539,11 @@ function blockUnreadEnvFile(
   // above already decides the names that are blocked whether they exist or not.
   if (!fs.existsSync(filePath)) return;
   if (allowTags.has("secret") || allowTags.has("all")) return;
+  const shown = shownPath(filePath);
   block(
-    filePath,
+    shown,
     [ENV_BLOCK_REASON, "", reason],
-    buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
+    buildAllowHints(`please read ${forOutput(shown)}`, [], true),
   );
 }
 
@@ -575,6 +609,8 @@ function scanPathsLiteralsFirst(
 }
 
 function scanFile(filePath: string, allowTags: Set<string>): void {
+  // What every message below calls the file; `filePath` is what is opened.
+  const shown = shownPath(filePath);
   if (shouldBlockEnvFile(filePath)) {
     // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
     // secret category is on — so the tag that lifts it has to be one that allows
@@ -587,9 +623,9 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     // below drops the findings the tag really covers.
     if (!allowTags.has("secret") && !allowTags.has("all")) {
       block(
-        filePath,
+        shown,
         [ENV_BLOCK_REASON],
-        buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
+        buildAllowHints(`please read ${forOutput(shown)}`, [], true),
       );
     }
   }
@@ -726,13 +762,13 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     !allowTags.has("all")
   ) {
     block(
-      filePath,
+      shown,
       [
         ENV_BLOCK_REASON,
         "",
         "This one is named as a template, which is normally read. It could not be read whole — it holds a NUL byte or runs past the scan limit — so the name is what decides.",
       ],
-      buildAllowHints(`please read ${forOutput(filePath)}`, [], true),
+      buildAllowHints(`please read ${forOutput(shown)}`, [], true),
     );
   }
 
@@ -741,9 +777,9 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   if (tailContent.length > 0) {
     scanTextAndBlock(
       tailContent,
-      filePath,
+      shown,
       "🚫 Blocked: file contains sensitive data",
-      `please read ${forOutput(filePath)}`,
+      `please read ${forOutput(shown)}`,
       allowTags,
     );
   }
@@ -752,12 +788,12 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 
   scanTextAndBlock(
     content,
-    filePath,
+    shown,
     "🚫 Blocked: file contains sensitive data",
-    `please read ${forOutput(filePath)}`,
+    `please read ${forOutput(shown)}`,
     allowTags,
   );
-  modelTexts.push({ source: filePath, text: content });
+  modelTexts.push({ source: shown, text: content });
 }
 
 // ── pii-sentinel ──────────────────────────────────────────────────────────────
