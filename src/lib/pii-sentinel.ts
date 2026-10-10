@@ -11,15 +11,17 @@
 // the document — a diagnosis next to a name is sensitive although neither
 // matches a rule. It is told to skip its own copy of the rules, which run here.
 
+import type { Stats } from "node:fs";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import http from "node:http";
+import { userInfo } from "node:os";
 import type { Finding } from "./rules.ts";
 import { userConfigFromCache } from "./rules.ts";
 
 export type Level = "none" | "low" | "high";
 
 export interface PiiSentinelConfig {
-  socket?: string;
-  url?: URL;
+  socket: string;
   timeoutMs: number;
   maxChars: number;
   blockOn: Exclude<Level, "none">;
@@ -40,7 +42,8 @@ export interface Judgement {
 }
 
 const RANK: Record<Level, number> = { none: 0, low: 1, high: 2 };
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
+// The kernel follows at most this many symbolic links while resolving a path.
+const MAX_LINKS = 40;
 const DEFAULTS = {
   timeoutMs: 3_000,
   maxChars: 20_000,
@@ -59,25 +62,14 @@ export function readPiiSentinelConfig(
   if (typeof raw !== "object" || Array.isArray(raw))
     return '"piiSentinel" must be an object';
   const r = raw as Record<string, unknown>;
-  const config: PiiSentinelConfig = { ...DEFAULTS };
-  if ((r["socket"] === undefined) === (r["url"] === undefined))
-    return 'set exactly one of "socket" and "url"';
-  if (r["socket"] !== undefined) {
-    if (typeof r["socket"] !== "string" || r["socket"] === "")
-      return '"socket" must be a path';
-    config.socket = r["socket"];
-  } else {
-    let url: URL;
-    try {
-      url = new URL(String(r["url"]));
-    } catch {
-      return '"url" is not a URL';
-    }
-    // Only this machine: the text being checked is exactly what must not leave it.
-    if (url.protocol !== "http:" || !LOOPBACK.has(url.hostname))
-      return '"url" must be http:// on 127.0.0.1, localhost or [::1]';
-    config.url = url;
-  }
+  // A TCP port cannot be checked: any program can listen on it, so the text
+  // would go to whatever answers. Only a socket file can be checked for owner.
+  if (r["url"] !== undefined)
+    return '"url" is no longer supported: the hook cannot tell whether the program on a TCP port is your pii-sentinel server. Use "socket" with a path in a directory only you can write to.';
+  const socket = r["socket"];
+  if (typeof socket !== "string" || socket === "")
+    return '"socket" must be a path';
+  const config: PiiSentinelConfig = { ...DEFAULTS, socket };
   for (const [key, min, max] of [
     ["timeoutMs", 100, 60_000],
     ["maxChars", 1, 1_000_000],
@@ -111,16 +103,10 @@ function post(
   timeoutMs: number,
 ): Promise<unknown> {
   const body = Buffer.from(JSON.stringify({ text, rules: false }));
-  const target = config.socket
-    ? { socketPath: config.socket }
-    : {
-        host: config.url?.hostname.replace(/^\[|\]$/g, ""),
-        port: config.url?.port || 80,
-      };
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
-        ...target,
+        socketPath: config.socket,
         path: "/scan",
         method: "POST",
         headers: {
@@ -157,6 +143,132 @@ function post(
     req.on("error", reject);
     req.end(body);
   });
+}
+
+interface Directory {
+  path: string;
+  st: Stats;
+  // Other users can add or replace entries in it.
+  shared: boolean;
+}
+
+// Refuses a socket that another user could have put in the path, before any
+// text is sent. The kernel resolves the path again at connect time, so the walk
+// mirrors it one component at a time: each directory on the way must be safe,
+// and so must the socket. Only the path is checked, not the server behind it,
+// so the owner of the directory is trusted to run the server.
+export async function checkSocket(path: string): Promise<void> {
+  // An abstract name has no file to check; it is refused on every platform.
+  if (path.startsWith("\0"))
+    throw new Error(
+      "an abstract socket name is refused: use a socket file in a directory only you can write to",
+    );
+  // Windows has no owners or modes to compare.
+  const uid = process.getuid?.();
+  if (uid === undefined) return;
+  const gid = process.getgid?.() ?? -1;
+
+  const root = await directory("/", await lstat("/"), uid, gid);
+  let stack: Directory[] = [root];
+  let links = 0;
+  let leaf: Stats | null = null;
+  let pending = (
+    path.startsWith("/") ? path : `${process.cwd()}/${path}`
+  ).split("/");
+  while (pending.length > 0) {
+    const name = pending.shift() as string;
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      // Stack holds physical directories, so ".." goes to the real parent.
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    const parent = stack[stack.length - 1] as Directory;
+    const entry = parent.path === "/" ? `/${name}` : `${parent.path}/${name}`;
+    const st = await lstat(entry);
+    // In a directory others can write to, an entry can be renamed or replaced
+    // by anyone but its owner. Only a sticky directory keeps it safe, and then
+    // the entry must still be ours before it is followed.
+    if (parent.shared && (parent.st.mode & 0o1000) !== 0) owned(st, entry, uid);
+    if (st.isSymbolicLink()) {
+      if (++links > MAX_LINKS)
+        throw new Error(`too many symbolic links in ${path}`);
+      const target = await readlink(entry);
+      if (target.startsWith("/")) stack = [root];
+      pending = [...target.split("/"), ...pending];
+      continue;
+    }
+    if (pending.length > 0) {
+      if (!st.isDirectory()) throw new Error(`${entry} is not a directory`);
+      stack.push(await directory(entry, st, uid, gid));
+    } else {
+      leaf = st;
+    }
+  }
+  if (leaf === null || !leaf.isSocket())
+    throw new Error(`${path} is not a socket`);
+  owned(leaf, path, uid);
+}
+
+// Every directory the walk goes through: owned by us or root, and not writable
+// by others unless the sticky bit keeps each entry to its owner.
+async function directory(
+  path: string,
+  st: Stats,
+  uid: number,
+  gid: number,
+): Promise<Directory> {
+  owned(st, path, uid);
+  const shared = await writableByOthers(st, gid);
+  if (shared && !(st.mode & 0o1000))
+    throw new Error(`${path} can be written by other users`);
+  return { path, st, shared };
+}
+
+function owned(st: Stats, path: string, uid: number): void {
+  if (st.uid !== uid && st.uid !== 0)
+    throw new Error(`${path} belongs to another user`);
+}
+
+// Group write counts as "others can write" unless the group is ours alone.
+async function writableByOthers(st: Stats, gid: number): Promise<boolean> {
+  if (st.mode & 0o002) return true;
+  if (st.mode & 0o020) return !(await groupIsPrivate(st.gid, gid));
+  return false;
+}
+
+// True only when the group is provably ours: its gid is ours, the /etc/group
+// entries for it are named after us and list no one else, and no other account
+// has it as its primary group. Anything that cannot be read counts as shared.
+export async function groupIsPrivate(
+  group: number,
+  own: number,
+): Promise<boolean> {
+  if (group !== own) return false;
+  try {
+    const me = userInfo().username;
+    const gid = String(group);
+    const entries = (await readFile("/etc/group", "utf8"))
+      .split("\n")
+      .map((line) => line.split(":"))
+      .filter((fields) => fields[2] === gid);
+    const ours =
+      entries.length > 0 &&
+      entries.every(
+        (fields) =>
+          fields[0] === me &&
+          (fields[3] ?? "")
+            .split(",")
+            .every((member) => member === "" || member === me),
+      );
+    if (!ours) return false;
+    const accounts = (await readFile("/etc/passwd", "utf8"))
+      .split("\n")
+      .map((line) => line.split(":"));
+    return accounts.every((fields) => fields[3] !== gid || fields[0] === me);
+  } catch {
+    return false;
+  }
 }
 
 function toVerdict(source: string, report: unknown): Verdict {
@@ -196,6 +308,16 @@ export async function judge(
 ): Promise<Judgement> {
   const deadline = Date.now() + config.timeoutMs;
   const verdicts: Verdict[] = [];
+  // Checked once, inside the deadline and before any text leaves: a socket
+  // that fails the check is reported like a server that did not answer.
+  try {
+    await checkSocket(config.socket);
+  } catch (e) {
+    return {
+      verdicts,
+      unavailable: e instanceof Error ? e.message : String(e),
+    };
+  }
   for (const { source, text } of texts) {
     if (text.trim() === "") continue;
     const left = deadline - Date.now();
@@ -252,5 +374,5 @@ export function verdictFindings(verdict: Verdict): Finding[] {
 }
 
 export function connectionTarget(config: PiiSentinelConfig): string {
-  return config.socket ? `unix:${config.socket}` : String(config.url);
+  return `unix:${config.socket}`;
 }
