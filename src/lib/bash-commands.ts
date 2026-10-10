@@ -26,8 +26,10 @@ import {
   WRITE_TARGET_FLAGS,
 } from "./command-tables.ts";
 import {
+  blankComments,
   extractQuotedLiterals,
   extractSubstitutions,
+  findComments,
   isNonCommandToken,
   type ShellToken,
   stripHeredocBodies,
@@ -188,9 +190,48 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
   return /^-[A-Za-z]*[eE]$/.test(token);
 }
 
+// Syntax that can carry past the end of a comment. The shell reads nothing in
+// a comment, but the first reading does not know where one ends: a quote, a
+// backquote, a substitution, a heredoc operator or a trailing backslash opens a
+// run there that is closed only by the next match, so every line after the
+// comment is folded into one word and never seen. A comment with none of these
+// reads the same both ways, so the second reading is needed only for those.
+const CARRIES_PAST_COMMENT = /['"`]|\$\(|[<>]\(|<<|\\$/;
+
+// The command line with its comments blanked, when at least one comment holds
+// syntax that CARRIES_PAST_COMMENT names. Null otherwise, and then the command
+// has only the one reading it has always had.
+function blankCarryingComments(command: string): string | null {
+  const carries = findComments(command).some(({ start, end }) =>
+    CARRIES_PAST_COMMENT.test(command.slice(start, end)),
+  );
+  return carries ? blankComments(command) : null;
+}
+
 // Everything a Bash command reveals that the hook can inspect before it runs:
 // the files whose contents it may print, and the environment it may expose.
+//
+// The command is read as it always was. When a comment carries syntax (see
+// CARRIES_PAST_COMMENT), the command is read a second time with its comments
+// blanked, and the two readings' refs are merged. Blanking removes the comment's
+// words too, so a comment adds nothing to what the command names, and merging
+// can only add scanning to the first reading's result.
 export function extractCommandRefs(command: string, depth = 0): CommandRefs {
+  const refs = readCommandLine(command, depth);
+
+  const blanked = blankCarryingComments(command);
+  if (blanked !== null) mergeRefs(refs, readCommandLine(blanked, depth));
+
+  return {
+    paths: [...new Set(refs.paths)],
+    envVars: [...new Set(refs.envVars)],
+    dumpsEnvironment: refs.dumpsEnvironment,
+    searchesWorkingDirectory: refs.searchesWorkingDirectory,
+  };
+}
+
+// One reading of a command line, as extractCommandRefs has always made it.
+function readCommandLine(command: string, depth: number): CommandRefs {
   const refs: CommandRefs = {
     paths: [],
     envVars: [],
@@ -208,20 +249,31 @@ export function extractCommandRefs(command: string, depth = 0): CommandRefs {
     mergeRefs(refs, extractCommandRefs(inner, depth + 1));
   }
 
-  for (const tokens of tokenizeCommand(text)) {
-    const environment = inspectEnvironmentCommand(tokens);
-    if (environment.dumps) refs.dumpsEnvironment = true;
-    refs.envVars.push(...environment.named);
+  // Both readings are scanned, and their refs merged, so a mistake in either
+  // can only add scanning. The default is kept because POSIX sh reads `&>` as
+  // `&` then `>`, and a command behind that `&` runs. The joined reading is
+  // what bash does with `2>&1`, `>|` and `&>`. Where the two agree, a
+  // segment is identical and is processed once.
+  const readings = [
+    tokenizeCommand(text),
+    tokenizeCommand(text, { joinRedirections: true }),
+  ];
+  const seen = new Set<string>();
+  for (const segments of readings) {
+    for (const tokens of segments) {
+      const key = JSON.stringify(tokens);
+      if (seen.has(key)) continue;
+      seen.add(key);
 
-    mergeRefs(refs, collectSegmentRefs(tokens, depth));
+      const environment = inspectEnvironmentCommand(tokens);
+      if (environment.dumps) refs.dumpsEnvironment = true;
+      refs.envVars.push(...environment.named);
+
+      mergeRefs(refs, collectSegmentRefs(tokens, depth));
+    }
   }
 
-  return {
-    paths: [...new Set(refs.paths)],
-    envVars: [...new Set(refs.envVars)],
-    dumpsEnvironment: refs.dumpsEnvironment,
-    searchesWorkingDirectory: refs.searchesWorkingDirectory,
-  };
+  return refs;
 }
 
 // File paths one segment of a command line may print, plus anything found inside
