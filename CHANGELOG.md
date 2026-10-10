@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- A path built from an environment variable (`cat "$TOKEN/.env"`) was shown in the block reason after the variable was expanded, so the variable's value reached Claude unmasked; the reason now shows the path as written (`$TOKEN/.env`)
+
 ## v0.9.1 (2026-10-04)
 
 ### Documentation

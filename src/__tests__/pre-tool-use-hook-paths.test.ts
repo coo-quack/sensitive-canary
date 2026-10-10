@@ -197,6 +197,32 @@ describe("pre-tool-use-hook — shell expansion of a path", () => {
     const file = writeFixture("report[2].txt", `key=${AWS_KEY}`);
     expect(runBashHook(`cat ${file}`).exitCode).toBe(2);
   });
+
+  // A variable is substituted to find the file, and the reason for a block goes
+  // to Claude. Printing the path it expanded to put the variable's value in the
+  // reason, whatever the value was. The ANSI-C form is one the shell does not
+  // expand at all, so only the hook ever saw the value.
+  it.each([
+    ["in double quotes", 'cat "$CANARY_PATH_PART/.env"'],
+    ["in ANSI-C quotes", "cat $'\\x24CANARY_PATH_PART/.env'"],
+  ])("a variable in a path is shown as written (%s)", (_label, command) => {
+    const result = runBashHook(command, {
+      env: { CANARY_PATH_PART: "value-that-must-not-print" },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.reason).toContain("$CANARY_PATH_PART/.env");
+    expect(result.reason).not.toContain("value-that-must-not-print");
+  });
+
+  it("a file a pattern finds under a variable is shown under its name", () => {
+    writeFixture("under-variable.txt", `key=${AWS_KEY}`);
+    const result = runBashHook("cat $CANARY_DIR/under-*.txt", {
+      env: { CANARY_DIR: writeFixture.path() },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.reason).toContain("$CANARY_DIR/under-variable.txt");
+    expect(result.reason).not.toContain(writeFixture.path());
+  });
 });
 
 // ── file:// URIs ─────────────────────────────────────────────────────────────
