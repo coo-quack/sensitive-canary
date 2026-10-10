@@ -236,6 +236,20 @@ describe("pre-tool-use-hook — shell expansion of a path", () => {
     expect(result.reason).toContain("$CANARY_PREFIX*");
     expect(result.reason).not.toContain(value);
   });
+
+  it("a variable after the wildcard in the last component is shown whole, not by the file's name", () => {
+    const value = "distinct-suffix-9b2c";
+    writeFixture(`secret-${value}.env`, `key=${AWS_KEY}`);
+    const result = runBashHook(
+      `cat ${writeFixture.path()}/*$CANARY_SUFFIX.env`,
+      {
+        env: { CANARY_SUFFIX: value },
+      },
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.reason).toContain("*$CANARY_SUFFIX.env");
+    expect(result.reason).not.toContain(value);
+  });
 });
 
 // ── file:// URIs ─────────────────────────────────────────────────────────────
