@@ -189,7 +189,7 @@ export async function checkSocket(path: string): Promise<void> {
     // In a directory others can write to, an entry can be renamed or replaced
     // by anyone but its owner. Only a sticky directory keeps it safe, and then
     // the entry must still be ours before it is followed.
-    if (parent.shared && parent.st.mode & 0o1000) owned(st, entry, uid);
+    if (parent.shared && (parent.st.mode & 0o1000) !== 0) owned(st, entry, uid);
     if (st.isSymbolicLink()) {
       if (++links > MAX_LINKS)
         throw new Error(`too many symbolic links in ${path}`);
@@ -240,7 +240,10 @@ async function writableByOthers(st: Stats, gid: number): Promise<boolean> {
 // True only when the group is provably ours: its gid is ours, the /etc/group
 // entries for it are named after us and list no one else, and no other account
 // has it as its primary group. Anything that cannot be read counts as shared.
-async function groupIsPrivate(group: number, own: number): Promise<boolean> {
+export async function groupIsPrivate(
+  group: number,
+  own: number,
+): Promise<boolean> {
   if (group !== own) return false;
   try {
     const me = userInfo().username;
@@ -305,6 +308,16 @@ export async function judge(
 ): Promise<Judgement> {
   const deadline = Date.now() + config.timeoutMs;
   const verdicts: Verdict[] = [];
+  // Checked once, inside the deadline and before any text leaves: a socket
+  // that fails the check is reported like a server that did not answer.
+  try {
+    await checkSocket(config.socket);
+  } catch (e) {
+    return {
+      verdicts,
+      unavailable: e instanceof Error ? e.message : String(e),
+    };
+  }
   for (const { source, text } of texts) {
     if (text.trim() === "") continue;
     const left = deadline - Date.now();
@@ -314,7 +327,6 @@ export async function judge(
         unavailable: `no answer within ${config.timeoutMs} ms`,
       };
     try {
-      await checkSocket(config.socket);
       verdicts.push(
         toVerdict(
           source,

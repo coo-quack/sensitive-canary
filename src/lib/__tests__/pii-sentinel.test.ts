@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -18,7 +19,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { checkSocket, judge, readPiiSentinelConfig } from "../pii-sentinel.ts";
+import {
+  checkSocket,
+  groupIsPrivate,
+  judge,
+  readPiiSentinelConfig,
+} from "../pii-sentinel.ts";
 
 const PRE_TOOL_USE = fileURLToPath(
   new URL("../../pre-tool-use-hook.ts", import.meta.url),
@@ -251,6 +257,22 @@ describe("socket checks", () => {
     );
     expect(unavailable).toContain("can be written by other users");
     expect(received).toEqual([]);
+  });
+
+  it("applies the group rule to a socket in a group-writable directory", async () => {
+    // The rule depends on the group of the directory on this machine: a group
+    // that is ours alone is accepted, any other group is refused.
+    const d = makeDir("group-0770", 0o770);
+    const path = join(d, "g.sock");
+    await serveAt(path);
+    const { gid } = statSync(d);
+    if (await groupIsPrivate(gid, process.getgid?.() ?? -1)) {
+      await expect(checkSocket(path)).resolves.toBeUndefined();
+    } else {
+      await expect(checkSocket(path)).rejects.toThrow(
+        "can be written by other users",
+      );
+    }
   });
 
   it("accepts a socket in a sticky directory others can write to", async () => {
