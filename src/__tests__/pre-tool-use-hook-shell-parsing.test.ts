@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AWS_KEY,
   runBashHook,
+  runToolHook,
   TOKEN_VALUE,
   useFixtureDir,
 } from "./hook-harness.ts";
@@ -255,6 +256,69 @@ describe("pre-tool-use-hook — shell parsing", () => {
     });
   });
 
+  // Run from the fixture directory, so `.env` in the command is the fixture the
+  // test wrote, spelled as the command spells it.
+  describe("redirections that bash joins to their operator", () => {
+    it.each([
+      "cat 2>&1 .env",
+      "cat &>/dev/null .env",
+      "cat 2>|/dev/null .env",
+      "cat >|/dev/stdout .env",
+      "cat 2>\\\n&1 .env",
+      "cat >\\\n|/dev/stdout .env",
+      "dash -c 'true &>/dev/stdout cat .env'",
+    ])("%j should block on a .env with a secret", (command) => {
+      writeFixture(".env", `key=${AWS_KEY}`);
+      const result = runBashHook(command, { cwd: writeFixture.path() });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it("head 2>&1 on a secrets file should block", () => {
+      writeFixture("secrets.yml", `token: ${TOKEN_VALUE}`);
+      const result = runBashHook("head -n 50 2>&1 secrets.yml", {
+        cwd: writeFixture.path(),
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // A write target is not read, and neither is the descriptor after <&.
+    it.each([
+      ["cat plain.txt 2>&1>out.txt", "out.txt"],
+      ["cat plain.txt 2>&1 >out.txt", "out.txt"],
+    ])("%j does not read the write target %s", (command, target) => {
+      writeFixture("plain.txt", "clean\n");
+      writeFixture(target, `key=${AWS_KEY}`);
+      const result = runBashHook(command, { cwd: writeFixture.path() });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("echo hi >&2 should allow", () => {
+      const result = runBashHook("echo hi >&2");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("cat <&3 does not read a file named 3", () => {
+      writeFixture("3", `key=${AWS_KEY}`);
+      const result = runBashHook("cat <&3", { cwd: writeFixture.path() });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The joined reading sees `cat f` after `env`, which is not a dump, but the
+    // default reading still sees `env` alone and blocks. Both are scanned, so
+    // the verdict is the one the default reading gave before this change.
+    it("env 2>&1 cat f stays blocked as an environment dump", () => {
+      writeFixture("f", "clean\n");
+      const result = runBashHook("env 2>&1 cat f", {
+        cwd: writeFixture.path(),
+        env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+        replaceEnv: true,
+      });
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
   describe("environment variable expansion", () => {
     it("an expansion with a default should block when the var holds a secret", () => {
       const pathVal = process.env["PATH"] ?? "";
@@ -369,5 +433,75 @@ describe("pre-tool-use-hook — shell parsing", () => {
       expect(result.exitCode).toBe(2);
       expect(result.blocked).toBe(true);
     });
+  });
+});
+
+// A `#` comment is not a command. Its quotes, `<<` and substitutions must not
+// hide the lines after it, and its words must not name files to read.
+describe("pre-tool-use-hook — comments", () => {
+  // Each names a secret file after a comment that would have hidden it.
+  it.each([
+    "# Check what's configured\ncat .env",
+    '# "x\ncat .env',
+    "(( 1 ))# it's\ncat .env",
+    "case x in x)# it's\n cat .env;; esac",
+    "f()# it's\n{ cat .env; }; f",
+  ])("%j should block on a .env with a secret", (command) => {
+    writeFixture(".env", `key=${AWS_KEY}`);
+    const result = runBashHook(command, { cwd: writeFixture.path() });
+    expect(result.exitCode).toBe(2);
+    expect(result.blocked).toBe(true);
+  });
+
+  it("a << inside a comment does not hide the lines after it", () => {
+    writeFixture("secrets.txt", `token: ${TOKEN_VALUE}`);
+    const result = runBashHook("# usage: cat <<EOF\ncat secrets.txt", {
+      cwd: writeFixture.path(),
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.blocked).toBe(true);
+  });
+
+  it("a comment after a word does not hide the lines after it", () => {
+    writeFixture("secrets.txt", `token: ${TOKEN_VALUE}`);
+    const result = runBashHook("ls # it's here\ncat secrets.txt", {
+      cwd: writeFixture.path(),
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.blocked).toBe(true);
+  });
+
+  it("the MCP command field blocks the same way", () => {
+    writeFixture(".env", `key=${AWS_KEY}`);
+    const result = runToolHook(
+      "mcp__desktop-commander__start_process",
+      { command: "# Check what's configured\ncat .env" },
+      { cwd: writeFixture.path() },
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.blocked).toBe(true);
+  });
+
+  // The comment names `.env`, but nothing in it is read: allowed, even with a
+  // `.env` holding a secret in the directory.
+  it("cat notes.md # don't print .env allows a harmless notes.md", () => {
+    writeFixture("notes.md", "clean\n");
+    writeFixture(".env", `key=${AWS_KEY}`);
+    const result = runBashHook("cat notes.md # don't print .env", {
+      cwd: writeFixture.path(),
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // The `# it's` is a heredoc body line, so it is text and not a comment.
+  it("a heredoc body containing # it's stays text", () => {
+    writeFixture(".env", `key=${AWS_KEY}`);
+    const result = runBashHook(
+      "cat > deploy.sh <<'EOF'\n# it's\ncat .env\nEOF",
+      {
+        cwd: writeFixture.path(),
+      },
+    );
+    expect(result.exitCode).toBe(0);
   });
 });
