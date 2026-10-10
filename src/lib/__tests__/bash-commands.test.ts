@@ -207,6 +207,8 @@ describe("redirections that bash joins to their operator", () => {
     "cat 2>\\\n&1 .env",
     "cat >\\\n|/dev/stdout .env",
     "cat &\\\n>/dev/stdout .env",
+    // bash closes descriptor 2 at the `-` and reads `.env` as the next word.
+    "cat 2>&-.env",
   ])("collects the file in %j", (command) => {
     expect(paths(command)).toContain(".env");
   });
@@ -676,6 +678,9 @@ describe("comments that carry syntax past their end", () => {
     "(( 1 ))# it's\ncat .env",
     "case x in x)# it's\n cat .env;; esac",
     "f()# it's\n{ cat .env; }; f",
+    // A backslash ends nothing in a comment; read as a continuation, it joined
+    // the next line to the comment.
+    "# note \\\ncat .env",
   ])("%j reads the .env it names after the comment", (command) => {
     expect(paths(command)).toContain(".env");
   });

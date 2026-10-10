@@ -30,6 +30,7 @@ import {
   scan,
 } from "./lib/rules.ts";
 import {
+  blankComments,
   extractEnvVarNames,
   extractQuotedLiterals,
   tokenizeCommand,
@@ -931,8 +932,13 @@ async function main(): Promise<void> {
     // subshell, which the shell undoes on the way out. The tokenizer ends a
     // segment at a paren, so a subshell's `cd` is not distinguishable once split;
     // a command that opens with one is left resolving against the payload's cwd.
-    if (!command.trimStart().startsWith("(")) {
-      for (const segment of tokenizeCommand(command)) {
+    //
+    // Comments are blanked first: the tokenizer reads a comment's words as a
+    // command, so a quote in one hid the `cd` after it and a `;` in one started
+    // a `cd` the shell never runs.
+    const uncommented = blankComments(command);
+    if (!uncommented.trimStart().startsWith("(")) {
+      for (const segment of tokenizeCommand(uncommented)) {
         const [head, target] = segment;
         // `head.redirect` is defensive rather than reachable: the tokenizer
         // marks a token as a redirect only when it built it from `<` or `>`, so

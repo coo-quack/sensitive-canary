@@ -100,6 +100,23 @@ describe("pre-tool-use-hook — a cd that would not happen", () => {
       }).exitCode,
     ).toBe(2);
   });
+
+  // A comment is not a command. Read as one, a quote in it hid the `cd` after
+  // it, and a `;` in it made a `cd` the shell never runs move the base, so the
+  // relative path resolved where the file is not.
+  it.each([
+    "# it's\ncd commented && cat after-comment.txt",
+    "cd commented # ; cd ..\ncat after-comment.txt",
+  ])("%j moves the base as the shell does", (command) => {
+    const commented = writeFixture.path("commented");
+    mkdirSync(commented, { recursive: true });
+    writeFileSync(
+      join(commented, "after-comment.txt"),
+      `key=${AWS_KEY}`,
+      "utf8",
+    );
+    expect(runBashHook(command, { cwd: writeFixture.path() }).exitCode).toBe(2);
+  });
 });
 
 describe("pre-tool-use-hook — the directory a relative path is relative to", () => {

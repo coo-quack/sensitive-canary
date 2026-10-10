@@ -213,9 +213,9 @@ function blankCarryingComments(command: string): string | null {
 //
 // The command is read as it always was. When a comment carries syntax (see
 // CARRIES_PAST_COMMENT), the command is read a second time with its comments
-// blanked, and the two readings' refs are merged. Blanking removes the comment's
-// words too, so a comment adds nothing to what the command names, and merging
-// can only add scanning to the first reading's result.
+// blanked, and the two readings' refs are merged. The second reading has none
+// of the comment's words, so it adds only what the lines after the comment
+// name, and merging can only add scanning to the first reading's result.
 export function extractCommandRefs(command: string, depth = 0): CommandRefs {
   const refs = readCommandLine(command, depth);
 
