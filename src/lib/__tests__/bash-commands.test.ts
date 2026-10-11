@@ -667,11 +667,12 @@ describe("the tables", () => {
   });
 });
 
-// A comment is not a command, and a quote, backquote, substitution, heredoc
+// A comment is not a command. A quote, backquote, substitution, heredoc
 // operator or trailing backslash inside one used to fold the lines after it into
-// a single word. The second reading, which blanks the comment, is what finds the
-// files those lines name.
-describe("comments that carry syntax past their end", () => {
+// a single word, and even a plain one was read as arguments. The second
+// reading, which blanks the comment, is what finds the files those lines name
+// and what the command does without its comment.
+describe("comments", () => {
   it.each([
     "# Check what's configured\ncat .env",
     '# "x\ncat .env',
@@ -716,23 +717,58 @@ describe("comments that carry syntax past their end", () => {
     expect(refs.dumpsEnvironment).toBe(true);
   });
 
-  // Commands whose comments carry none of the syntax read as they always did.
+  // A comment's words are not arguments, so the command reads as it would
+  // without the comment. The first reading's refs stay — the comment's words
+  // among them — because merging only adds; what the second reading adds is
+  // what the comment had hidden.
   it.each([
-    ["env # list", { paths: [], envVars: [], dumpsEnvironment: false }],
-    [
-      "printenv # all",
-      { paths: [], envVars: ["#", "all"], dumpsEnvironment: false },
-    ],
-    [
-      "rg TODO # find todos",
-      { paths: ["#", "find", "todos"], envVars: [], dumpsEnvironment: false },
-    ],
-    [
-      "grep -r foo # search",
-      { paths: ["#", "search"], envVars: [], dumpsEnvironment: false },
-    ],
-  ])("%j reads as it did on develop", (command, expected) => {
+    ["env # list", { envVars: [], dumpsEnvironment: true }],
+    ["env\t# list", { envVars: [], dumpsEnvironment: true }],
+    ["env FOO=1 # set one", { envVars: [], dumpsEnvironment: true }],
+    ["env -u HOME # unset one", { envVars: [], dumpsEnvironment: true }],
+    ["printenv # all", { envVars: ["#", "all"], dumpsEnvironment: true }],
+    ["sudo printenv # as root", { dumpsEnvironment: true }],
+    ["timeout 5 env # bounded", { dumpsEnvironment: true }],
+    ["env # list\nls", { dumpsEnvironment: true }],
+    ["ls # first\nenv # then", { dumpsEnvironment: true }],
+    ["env | sort # sorted", { dumpsEnvironment: true }],
+  ])("%j dumps the environment", (command, expected) => {
     expect(extractCommandRefs(command)).toMatchObject(expected);
+  });
+
+  it.each([
+    "rg TODO # find todos",
+    "grep -r foo # search",
+    "grep -rn foo # numbered",
+    "rg TODO # it's here",
+  ])("%j searches the working directory", (command) => {
+    expect(extractCommandRefs(command).searchesWorkingDirectory).toBe(true);
+  });
+
+  // The other direction: blanking the comment of a command that already says
+  // what it does finds no dump or search, so the cases above are not passing on
+  // every commented command now reading as one. The comment's words stay among
+  // the first reading's refs, as `printenv HOME # one` shows.
+  it.each([
+    ["env FOO=1 ls # run ls", { dumpsEnvironment: false }],
+    ["env -i FOO=1 # empty start", { dumpsEnvironment: false }],
+    ["env -S 'echo hi' # split", { dumpsEnvironment: false }],
+    [
+      "printenv HOME # one",
+      { envVars: ["HOME", "#", "one"], dumpsEnvironment: false },
+    ],
+    ["grep -r foo src # named", { searchesWorkingDirectory: false }],
+    ["rg TODO docs # named", { searchesWorkingDirectory: false }],
+    ["ls # list", { dumpsEnvironment: false, searchesWorkingDirectory: false }],
+    ["echo '# env' # quoted", { dumpsEnvironment: false }],
+    ["echo env#x", { dumpsEnvironment: false }],
+  ])("%j gains no dump or search from its comment", (command, expected) => {
+    expect(extractCommandRefs(command)).toMatchObject(expected);
+  });
+
+  it("does not read a dump that only a comment names", () => {
+    expect(extractCommandRefs("ls # env").dumpsEnvironment).toBe(false);
+    expect(extractCommandRefs("ls # printenv").dumpsEnvironment).toBe(false);
   });
 
   it("does not treat a # inside a substitution's word as a comment", () => {

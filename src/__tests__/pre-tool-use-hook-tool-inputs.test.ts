@@ -558,6 +558,14 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       ).toBe(2);
     });
 
+    // Code in a tool field is read for quoted paths, and a quote in one of its
+    // comments shifted the pairs so the path after it was missed.
+    it("finds the path in code after a quote in a comment", () => {
+      const file = writeFixture("code-comment.txt", `key=${AWS_KEY}`);
+      const code = `# don't\nprint(open('${file}').read())`;
+      expect(runToolHook("mcp__ide__run", { code }).exitCode).toBe(2);
+    });
+
     // Every other tool name reached the shared collector and blocked; the Read
     // branch coerced a non-string to "" and exited 0. The same shape, two
     // answers.

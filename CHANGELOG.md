@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- A group-writable directory on the path to the pii-sentinel socket is accepted only when `/etc/nsswitch.conf` names no source other than `files` and `systemd` for `passwd`, `group` and `initgroups`, and, with `systemd`, only when its static records under `/etc/userdb` and the other directories it reads put no one else in the group. The group was judged from `/etc/group` and `/etc/passwd` alone, but LDAP, sssd, NIS, winbind and nss-systemd can add members those files do not show, and a local group's gid matching a directory group's is an ordinary accident. **This refuses group-writable socket directories where nsswitch.conf lists `sss`, `ldap` or another such source** (Fedora's default lists `sss`); `chmod g-w <directory>` fixes it (#310)
+
+### Fixes
+
+- A trailing comment hid what a command does: `env # list` and `printenv # all` were read as running a command, so the environment was not scanned, and `grep -r foo # search` and `rg TODO # x` as naming files, so the working directory was not checked for env files. Every command with a comment is now also read with the comment removed, as the shell runs it (#308)
+- In inline code (`python3 -c`, `node -e`, and a tool's `code` field), a quote in a comment (`# don't`, `/* it's */`) paired with the next quote and shifted every pair after it, so a path read later in the code was not scanned. Every quote is now tried as the opening one (#309)
+
 ## v0.10.0 (2026-10-11)
 
 ### Breaking changes

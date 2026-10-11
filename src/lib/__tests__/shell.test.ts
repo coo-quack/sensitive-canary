@@ -491,6 +491,56 @@ describe("extractQuotedLiterals", () => {
   it("returns nothing for unquoted code", () => {
     expect(extractQuotedLiterals("print(open(path))")).toEqual([]);
   });
+
+  // A quote in a comment paired with the next quote along, and every pair after
+  // it shifted so the path fell between two literals. The comment syntax
+  // differs per language, so each spelling gets a case.
+  it.each([
+    [
+      "a # comment on an earlier line",
+      "x = 1  # don't\nprint(open('.env').read())",
+    ],
+    ["a // comment on an earlier line", "// it's\nfs.readFileSync('.env')"],
+    ["a -- comment on an earlier line", "-- it's\nSELECT pg_read_file('.env')"],
+    ["a /* */ comment on the same line", "/* it's */ fs.readFileSync('.env')"],
+    ["a double quote in a comment", '# say "hi\nprint(open(".env").read())'],
+    ["a quote in a docstring", "'''it's'''\nopen('.env')"],
+    ["two stray quotes before it", "# it's\n# don't\nopen('.env')"],
+  ])("finds the path after %s", (_label, code) => {
+    expect(extractQuotedLiterals(code)).toContain(".env");
+  });
+
+  // Every pairing is kept, so the gaps between literals come back too. They are
+  // path candidates like any other literal, checked only for existing files.
+  it("keeps the literals and the gaps between them, in the order they close", () => {
+    expect(extractQuotedLiterals("'a' + 'b'")).toEqual(["a", " + ", "b"]);
+  });
+
+  it("reads a quote of the other kind as part of the literal", () => {
+    expect(extractQuotedLiterals(`say "it's"`)).toEqual(["it's"]);
+    expect(extractQuotedLiterals(`say 'a "b" c'`)).toEqual(["b", 'a "b" c']);
+  });
+
+  it("returns each literal once", () => {
+    expect(extractQuotedLiterals("open('.env'); open('.env')")).toEqual([
+      ".env",
+      "); open(",
+    ]);
+  });
+
+  it.each([
+    ["an unmatched quote", "a'b"],
+    ["only empty literals", "''''''"],
+    ["a run of quotes", "'".repeat(100_000)],
+  ])("returns nothing for %s", (_label, code) => {
+    expect(extractQuotedLiterals(code)).toEqual([]);
+  });
+
+  // The cap applies to every pairing, not just to the ones a regex would make.
+  it("drops a gap past the cap and keeps the literals on either side", () => {
+    const gap = "x".repeat(MAX_QUOTED_LITERAL_LENGTH + 1);
+    expect(extractQuotedLiterals(`'a'${gap}'b'`)).toEqual(["a", "b"]);
+  });
 });
 
 // A `#` that starts a comment, and the command line once the comment is gone.

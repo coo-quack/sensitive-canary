@@ -190,36 +190,27 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
   return /^-[A-Za-z]*[eE]$/.test(token);
 }
 
-// Syntax that can carry past the end of a comment. The shell reads nothing in
-// a comment, but the first reading does not know where one ends: a quote, a
-// backquote, a substitution, a heredoc operator or a trailing backslash opens a
-// run there that is closed only by the next match, so every line after the
-// comment is folded into one word and never seen. A comment with none of these
-// reads the same both ways, so the second reading is needed only for those.
-const CARRIES_PAST_COMMENT = /['"`]|\$\(|[<>]\(|<<|\\$/;
-
-// The command line with its comments blanked, when at least one comment holds
-// syntax that CARRIES_PAST_COMMENT names. Null otherwise, and then the command
-// has only the one reading it has always had.
-function blankCarryingComments(command: string): string | null {
-  const carries = findComments(command).some(({ start, end }) =>
-    CARRIES_PAST_COMMENT.test(command.slice(start, end)),
-  );
-  return carries ? blankComments(command) : null;
+// The command line with its comments blanked, or null when it has none. The
+// first reading takes a comment's words for arguments: a quote in one folds the
+// lines after it into a single word, and even a plain one hides what the
+// command does without it — `env # list` reads as env running `list`, and
+// `grep -r foo # search` as a grep of two files rather than of the working
+// directory.
+function withCommentsBlanked(command: string): string | null {
+  return findComments(command).length > 0 ? blankComments(command) : null;
 }
 
 // Everything a Bash command reveals that the hook can inspect before it runs:
 // the files whose contents it may print, and the environment it may expose.
 //
-// The command is read as it always was. When a comment carries syntax (see
-// CARRIES_PAST_COMMENT), the command is read a second time with its comments
-// blanked, and the two readings' refs are merged. The second reading has none
-// of the comment's words, so it adds only what the lines after the comment
-// name, and merging can only add scanning to the first reading's result.
+// The command is read as it always was. When it has a comment, it is read a
+// second time with its comments blanked, and the two readings' refs are
+// merged. The second reading has none of the comment's words, so merging can
+// only add scanning to the first reading's result.
 export function extractCommandRefs(command: string, depth = 0): CommandRefs {
   const refs = readCommandLine(command, depth);
 
-  const blanked = blankCarryingComments(command);
+  const blanked = withCommentsBlanked(command);
   if (blanked !== null) mergeRefs(refs, readCommandLine(blanked, depth));
 
   return {
