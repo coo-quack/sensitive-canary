@@ -196,7 +196,7 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
 // command does without it — `env # list` reads as env running `list`, and
 // `grep -r foo # search` as a grep of two files rather than of the working
 // directory.
-function blankedComments(command: string): string | null {
+function withCommentsBlanked(command: string): string | null {
   return findComments(command).length > 0 ? blankComments(command) : null;
 }
 
@@ -210,7 +210,7 @@ function blankedComments(command: string): string | null {
 export function extractCommandRefs(command: string, depth = 0): CommandRefs {
   const refs = readCommandLine(command, depth);
 
-  const blanked = blankedComments(command);
+  const blanked = withCommentsBlanked(command);
   if (blanked !== null) mergeRefs(refs, readCommandLine(blanked, depth));
 
   return {

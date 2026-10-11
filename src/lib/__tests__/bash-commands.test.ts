@@ -745,9 +745,10 @@ describe("comments", () => {
     expect(extractCommandRefs(command).searchesWorkingDirectory).toBe(true);
   });
 
-  // The other direction: a comment after a command that already says what it
-  // does adds nothing, so the cases above are not passing on every commented
-  // command now reading as a dump or a search.
+  // The other direction: blanking the comment of a command that already says
+  // what it does finds no dump or search, so the cases above are not passing on
+  // every commented command now reading as one. The comment's words stay among
+  // the first reading's refs, as `printenv HOME # one` shows.
   it.each([
     ["env FOO=1 ls # run ls", { dumpsEnvironment: false }],
     ["env -i FOO=1 # empty start", { dumpsEnvironment: false }],
@@ -761,7 +762,7 @@ describe("comments", () => {
     ["ls # list", { dumpsEnvironment: false, searchesWorkingDirectory: false }],
     ["echo '# env' # quoted", { dumpsEnvironment: false }],
     ["echo env#x", { dumpsEnvironment: false }],
-  ])("%j reads the same with or without its comment", (command, expected) => {
+  ])("%j gains no dump or search from its comment", (command, expected) => {
     expect(extractCommandRefs(command)).toMatchObject(expected);
   });
 

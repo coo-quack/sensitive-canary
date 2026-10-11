@@ -512,13 +512,13 @@ describe("extractQuotedLiterals", () => {
 
   // Every pairing is kept, so the gaps between literals come back too. They are
   // path candidates like any other literal, checked only for existing files.
-  it("keeps the literals and the gaps between them, in reading order", () => {
+  it("keeps the literals and the gaps between them, in the order they close", () => {
     expect(extractQuotedLiterals("'a' + 'b'")).toEqual(["a", " + ", "b"]);
   });
 
   it("reads a quote of the other kind as part of the literal", () => {
     expect(extractQuotedLiterals(`say "it's"`)).toEqual(["it's"]);
-    expect(extractQuotedLiterals(`say 'a "b" c'`)).toEqual(['a "b" c', "b"]);
+    expect(extractQuotedLiterals(`say 'a "b" c'`)).toEqual(["b", 'a "b" c']);
   });
 
   it("returns each literal once", () => {

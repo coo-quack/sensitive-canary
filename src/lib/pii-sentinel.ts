@@ -12,9 +12,10 @@
 // matches a rule. It is told to skip its own copy of the rules, which run here.
 
 import type { Stats } from "node:fs";
-import { lstat, readFile, readlink } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink } from "node:fs/promises";
 import http from "node:http";
 import { userInfo } from "node:os";
+import { join } from "node:path";
 import type { Finding } from "./rules.ts";
 import { userConfigFromCache } from "./rules.ts";
 
@@ -241,23 +242,30 @@ async function writableByOthers(st: Stats, gid: number): Promise<boolean> {
 // entries for it are named after us and list no one else, and no other account
 // has it as its primary group. Anything that cannot be read counts as shared.
 //
-// The two files are the whole answer only when /etc/nsswitch.conf names no
-// other source for accounts and groups. LDAP, sssd, NIS and nss-systemd can each
-// add members to a group the files define — nss-systemd from no more than a
-// `user:group.membership` file in /etc/userdb — and none of that shows in
-// /etc/group. Where there is no /etc/nsswitch.conf, macOS among them, the
-// group is never provably ours either.
+// Those files are the whole answer only when /etc/nsswitch.conf takes accounts
+// and groups from them alone, or from them and nss-systemd. LDAP, sssd, NIS and
+// winbind add members /etc/group does not show, and a local group's gid
+// colliding with a directory group's is an ordinary accident there, so any of
+// them makes the group unprovable. nss-systemd adds what its static JSON
+// records say, and those are read here too. Where there is no
+// /etc/nsswitch.conf, macOS among them, the group is never provably ours.
+//
+// `root` is where the system's files are looked up, so tests can lay out a
+// system of their own.
 export async function groupIsPrivate(
   group: number,
   own: number,
+  root = "/",
 ): Promise<boolean> {
   if (group !== own) return false;
   try {
-    const nsswitch = await readFile("/etc/nsswitch.conf", "utf8");
-    if (!nssReadsOnlyFiles(nsswitch)) return false;
+    const sources = trustedNssSources(
+      await readFile(join(root, "etc/nsswitch.conf"), "utf8"),
+    );
+    if (sources === null) return false;
     const me = userInfo().username;
     const gid = String(group);
-    const entries = (await readFile("/etc/group", "utf8"))
+    const entries = (await readFile(join(root, "etc/group"), "utf8"))
       .split("\n")
       .map((line) => line.split(":"))
       .filter((fields) => fields[2] === gid);
@@ -271,59 +279,134 @@ export async function groupIsPrivate(
             .every((member) => member === "" || member === me),
       );
     if (!ours) return false;
-    const accounts = (await readFile("/etc/passwd", "utf8"))
+    const accounts = (await readFile(join(root, "etc/passwd"), "utf8"))
       .split("\n")
       .map((line) => line.split(":"));
-    return accounts.every((fields) => fields[3] !== gid || fields[0] === me);
+    if (!accounts.every((fields) => fields[3] !== gid || fields[0] === me))
+      return false;
+    return !sources.has("systemd") || (await userdbIsPrivate(root, group, me));
   } catch {
     return false;
   }
 }
 
-// True when accounts and group memberships come from /etc/passwd and /etc/group
-// alone. `initgroups`, which glibc consults for another account's supplementary
-// groups, falls back to `group` when it has no line of its own.
-export function nssReadsOnlyFiles(nsswitch: string): boolean {
-  return (
-    namesOnlyFiles(nsswitch, "passwd") &&
-    namesOnlyFiles(nsswitch, "group") &&
-    (!hasDatabase(nsswitch, "initgroups") ||
-      namesOnlyFiles(nsswitch, "initgroups"))
-  );
-}
-
-function databaseLines(nsswitch: string, database: string): string[] {
-  const head = new RegExp(`^${database}\\s*:`, "i");
-  return nsswitch
-    .split("\n")
-    .map((line) => line.replace(/#.*/, "").trim())
-    .filter((line) => head.test(line));
-}
-
-function hasDatabase(nsswitch: string, database: string): boolean {
-  return databaseLines(nsswitch, database).length > 0;
-}
-
-// True when every line for `database` in an nsswitch.conf lists `files` as its
-// only source. Actions such as `[NOTFOUND=return]` are not sources. A database
-// with no line falls back to a default that differs between C libraries, so it
-// is not taken to mean files. Names are matched in any case and with space
-// before the colon, so a line spelled differently is checked rather than missed.
-function namesOnlyFiles(nsswitch: string, database: string): boolean {
-  const lines = databaseLines(nsswitch, database);
-  return (
-    lines.length > 0 &&
-    lines.every((line) => {
+// The sources /etc/nsswitch.conf names for accounts and groups, or null when
+// any of them is one whose members cannot be read here, or when `passwd` or
+// `group` has no line: a missing line falls back to a default that differs
+// between C libraries. `initgroups`, which glibc consults for another account's
+// supplementary groups, falls back to `group` when it has no line of its own.
+// Actions such as `[NOTFOUND=return]` are not sources. Names are matched in any
+// case and with space before the colon, so a line spelled differently is
+// checked rather than missed.
+export function trustedNssSources(nsswitch: string): Set<string> | null {
+  const found = new Set<string>();
+  for (const database of ["passwd", "group", "initgroups"]) {
+    const head = new RegExp(`^${database}\\s*:`, "i");
+    const lines = nsswitch
+      .split("\n")
+      .map((line) => line.replace(/#.*/, "").trim())
+      .filter((line) => head.test(line));
+    if (lines.length === 0) {
+      if (database === "initgroups") continue;
+      return null;
+    }
+    for (const line of lines) {
       const sources = line
         .slice(line.indexOf(":") + 1)
         .replace(/\[[^\]]*\]/g, " ")
         .split(/\s+/)
         .filter((source) => source !== "");
-      return (
-        sources.length > 0 && sources.every((source) => source === "files")
+      if (sources.length === 0) return null;
+      for (const source of sources) {
+        if (source !== "files" && source !== "systemd") return null;
+        found.add(source);
+      }
+    }
+  }
+  return found;
+}
+
+// Where nss-systemd reads static JSON user and group records (nss-systemd(8)).
+const USERDB_DIRECTORIES = [
+  "etc/userdb",
+  "run/userdb",
+  "run/host/userdb",
+  "usr/lib/userdb",
+];
+
+// False when nss-systemd's static records put anyone else in our group: a
+// `user:group.membership` file, which counts by existing; a group record with
+// our gid under another name or with other members; or a user record whose
+// primary group is ours or that lists our group in `memberOf`. A user record's
+// fields can also sit under `binding` and `perMachine`, so those are read as
+// well. Records that services hand out over Varlink, systemd-homed's among
+// them, are not files and are not read.
+async function userdbIsPrivate(
+  root: string,
+  gid: number,
+  me: string,
+): Promise<boolean> {
+  for (const directory of USERDB_DIRECTORIES) {
+    let names: string[];
+    try {
+      names = await readdir(join(root, directory));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      return false;
+    }
+    for (const name of names) {
+      if (name.endsWith(".membership")) {
+        const [user, group] = name.slice(0, -".membership".length).split(":");
+        if (group === me && user !== me) return false;
+        continue;
+      }
+      const kind = name.endsWith(".user")
+        ? "user"
+        : name.endsWith(".group")
+          ? "group"
+          : null;
+      if (kind === null) continue;
+      const record: unknown = JSON.parse(
+        await readFile(join(root, directory, name), "utf8"),
       );
-    })
-  );
+      if (typeof record !== "object" || record === null) return false;
+      const r = record as Record<string, unknown>;
+      const views = [
+        r,
+        ...Object.values(
+          typeof r["binding"] === "object" && r["binding"] !== null
+            ? (r["binding"] as Record<string, unknown>)
+            : {},
+        ),
+        ...(Array.isArray(r["perMachine"]) ? r["perMachine"] : []),
+      ].filter(
+        (view): view is Record<string, unknown> =>
+          typeof view === "object" && view !== null,
+      );
+      if (kind === "group") {
+        const named = r["groupName"] === me;
+        for (const view of views) {
+          if (view["gid"] === gid && !named) return false;
+          const members = view["members"];
+          if (
+            named &&
+            Array.isArray(members) &&
+            members.some((member) => member !== me)
+          )
+            return false;
+        }
+      } else {
+        if (r["userName"] === me) continue;
+        for (const view of views) {
+          if ((view["gid"] ?? view["uid"]) === gid) return false;
+          const memberOf = view["memberOf"];
+          if (Array.isArray(memberOf) && memberOf.includes(me)) return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 function toVerdict(source: string, report: unknown): Verdict {

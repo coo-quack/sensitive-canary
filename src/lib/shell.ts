@@ -961,20 +961,17 @@ export const MAX_QUOTED_LITERAL_LENGTH = 4096;
 // among them, and the extra ones are the gaps between literals.
 export function extractQuotedLiterals(code: string): string[] {
   const literals = new Set<string>();
-  // The position of the next quote of the same kind, for each quote.
-  const closing = new Map<number, number>();
-  const after: Record<string, number> = {};
-  for (let i = code.length - 1; i >= 0; i--) {
+  // Where the last quote of each kind was seen, so each quote closes the
+  // literal the previous one of its kind opened.
+  const opened: Record<string, number> = {};
+  for (let i = 0; i < code.length; i++) {
     const ch = code.charAt(i);
     if (ch !== "'" && ch !== '"') continue;
-    const next = after[ch];
-    if (next !== undefined) closing.set(i, next);
-    after[ch] = i;
-  }
-  // Filled from the end, so reversed to keep the literals in reading order.
-  for (const [open, close] of [...closing].reverse()) {
-    if (close - open - 1 > MAX_QUOTED_LITERAL_LENGTH) continue;
-    const value = code.slice(open + 1, close);
+    const open = opened[ch];
+    opened[ch] = i;
+    if (open === undefined || i - open - 1 > MAX_QUOTED_LITERAL_LENGTH)
+      continue;
+    const value = code.slice(open + 1, i);
     if (value && !/[\t\r\n]/.test(value)) literals.add(value);
   }
   return [...literals];
