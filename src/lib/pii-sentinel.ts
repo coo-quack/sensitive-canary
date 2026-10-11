@@ -240,12 +240,21 @@ async function writableByOthers(st: Stats, gid: number): Promise<boolean> {
 // True only when the group is provably ours: its gid is ours, the /etc/group
 // entries for it are named after us and list no one else, and no other account
 // has it as its primary group. Anything that cannot be read counts as shared.
+//
+// The two files are the whole answer only when /etc/nsswitch.conf names no
+// other source for accounts and groups. LDAP, sssd, NIS and nss-systemd can each
+// add members to a group the files define — nss-systemd from no more than a
+// `user:group.membership` file in /etc/userdb — and none of that shows in
+// /etc/group. Where there is no /etc/nsswitch.conf, macOS among them, the
+// group is never provably ours either.
 export async function groupIsPrivate(
   group: number,
   own: number,
 ): Promise<boolean> {
   if (group !== own) return false;
   try {
+    const nsswitch = await readFile("/etc/nsswitch.conf", "utf8");
+    if (!nssReadsOnlyFiles(nsswitch)) return false;
     const me = userInfo().username;
     const gid = String(group);
     const entries = (await readFile("/etc/group", "utf8"))
@@ -269,6 +278,52 @@ export async function groupIsPrivate(
   } catch {
     return false;
   }
+}
+
+// True when accounts and group memberships come from /etc/passwd and /etc/group
+// alone. `initgroups`, which glibc consults for another account's supplementary
+// groups, falls back to `group` when it has no line of its own.
+export function nssReadsOnlyFiles(nsswitch: string): boolean {
+  return (
+    namesOnlyFiles(nsswitch, "passwd") &&
+    namesOnlyFiles(nsswitch, "group") &&
+    (!hasDatabase(nsswitch, "initgroups") ||
+      namesOnlyFiles(nsswitch, "initgroups"))
+  );
+}
+
+function databaseLines(nsswitch: string, database: string): string[] {
+  const head = new RegExp(`^${database}\\s*:`, "i");
+  return nsswitch
+    .split("\n")
+    .map((line) => line.replace(/#.*/, "").trim())
+    .filter((line) => head.test(line));
+}
+
+function hasDatabase(nsswitch: string, database: string): boolean {
+  return databaseLines(nsswitch, database).length > 0;
+}
+
+// True when every line for `database` in an nsswitch.conf lists `files` as its
+// only source. Actions such as `[NOTFOUND=return]` are not sources. A database
+// with no line falls back to a default that differs between C libraries, so it
+// is not taken to mean files. Names are matched in any case and with space
+// before the colon, so a line spelled differently is checked rather than missed.
+function namesOnlyFiles(nsswitch: string, database: string): boolean {
+  const lines = databaseLines(nsswitch, database);
+  return (
+    lines.length > 0 &&
+    lines.every((line) => {
+      const sources = line
+        .slice(line.indexOf(":") + 1)
+        .replace(/\[[^\]]*\]/g, " ")
+        .split(/\s+/)
+        .filter((source) => source !== "");
+      return (
+        sources.length > 0 && sources.every((source) => source === "files")
+      );
+    })
+  );
 }
 
 function toVerdict(source: string, report: unknown): Verdict {

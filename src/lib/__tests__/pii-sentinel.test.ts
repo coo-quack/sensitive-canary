@@ -9,6 +9,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -23,6 +24,7 @@ import {
   checkSocket,
   groupIsPrivate,
   judge,
+  nssReadsOnlyFiles,
   readPiiSentinelConfig,
 } from "../pii-sentinel.ts";
 
@@ -275,6 +277,22 @@ describe("socket checks", () => {
     }
   });
 
+  // On a machine whose nsswitch.conf names another source, or that has none
+  // (macOS), not even our own group is provably ours. The CI runners name
+  // `systemd`, so this is where the check is seen to be wired in.
+  it("does not trust our own group unless nsswitch.conf names only files", async () => {
+    const conf = (() => {
+      try {
+        return readFileSync("/etc/nsswitch.conf", "utf8");
+      } catch {
+        return "";
+      }
+    })();
+    if (nssReadsOnlyFiles(conf)) return;
+    const own = process.getgid?.() ?? -1;
+    expect(await groupIsPrivate(own, own)).toBe(false);
+  });
+
   it("accepts a socket in a sticky directory others can write to", async () => {
     const d = makeDir("sticky-1777", 0o1777);
     const path = join(d, "t.sock");
@@ -417,5 +435,65 @@ describe("UserPromptSubmit hook with pii-sentinel", () => {
     expect(result.stderr).toContain(
       '"url" was removed in sensitive-canary v0.10.0',
     );
+  });
+});
+
+// Whether /etc/passwd and /etc/group are the whole answer. Every other source
+// can add a member the two files do not show, so only `files` is trusted.
+describe("nssReadsOnlyFiles", () => {
+  it.each([
+    ["files alone", "passwd: files\ngroup: files\n"],
+    [
+      "comments and other databases",
+      "# local only\npasswd: files # users\ngroup: files\nhosts: files dns\nnetgroup: nis\n",
+    ],
+    [
+      "an action between sources",
+      "passwd: files [NOTFOUND=return]\ngroup: files [ NOTFOUND=return ]\n",
+    ],
+    ["space before the colon and tabs", "passwd :\tfiles\ngroup\t: files\n"],
+    [
+      "an initgroups line of files",
+      "passwd: files\ngroup: files\ninitgroups: files\n",
+    ],
+  ])("trusts %s", (_label, conf) => {
+    expect(nssReadsOnlyFiles(conf)).toBe(true);
+  });
+
+  it.each([
+    [
+      "the Debian and Ubuntu default",
+      "passwd: files systemd\ngroup: files systemd\n",
+    ],
+    [
+      "the Fedora default",
+      "passwd: files sss systemd\ngroup: files [SUCCESS=merge] sss [SUCCESS=merge] systemd\n",
+    ],
+    ["LDAP for groups", "passwd: files\ngroup: files ldap\n"],
+    ["LDAP for accounts", "passwd: files ldap\ngroup: files\n"],
+    ["compat, which reads NIS entries", "passwd: compat\ngroup: compat\n"],
+    ["winbind", "passwd: files winbind\ngroup: files winbind\n"],
+    [
+      "an initgroups line with another source",
+      "passwd: files\ngroup: files\ninitgroups: files sss\n",
+    ],
+    [
+      "a second line with another source",
+      "passwd: files\ngroup: files\ngroup: ldap\n",
+    ],
+    [
+      "a line in another case",
+      "passwd: files\ngroup: files\nGROUP: files ldap\n",
+    ],
+    ["a database with no source", "passwd: files\ngroup:\n"],
+    [
+      "a database with only an action",
+      "passwd: files\ngroup: [NOTFOUND=return]\n",
+    ],
+    ["no group line", "passwd: files\n"],
+    ["the group line commented out", "passwd: files\n# group: files\n"],
+    ["an empty file", ""],
+  ])("does not trust %s", (_label, conf) => {
+    expect(nssReadsOnlyFiles(conf)).toBe(false);
   });
 });

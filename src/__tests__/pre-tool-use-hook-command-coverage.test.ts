@@ -688,6 +688,53 @@ describe("pre-tool-use-hook — command classification", () => {
     });
   });
 
+  // A trailing comment was read as the command's arguments, so `env # list`
+  // looked like env running `list` and `grep -r foo # x` like a grep of two
+  // files. The shell drops the comment and runs the bare command.
+  describe("a comment after the command", () => {
+    const secretEnv = {
+      env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+      replaceEnv: true,
+    };
+
+    it.each(["env # list", "printenv # all", "env\n# note", "sudo env # root"])(
+      "%j blocks when the environment holds a secret",
+      (command) => {
+        const result = runBashHook(command, secretEnv);
+        expect(result.exitCode).toBe(2);
+        expect(result.blocked).toBe(true);
+      },
+    );
+
+    it.each(["env FOO=1 ls # run ls", "printenv HOME # one", "ls # env"])(
+      "%j allows when the environment holds a secret",
+      (command) => {
+        expect(runBashHook(command, secretEnv).exitCode).toBe(0);
+      },
+    );
+
+    it.each(["grep -r TODO # search", "rg TODO # it's here"])(
+      "%j blocks when a .env sits where it runs",
+      (command) => {
+        const dir = writeFixture.path(`comment-search-${command.length}`);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, ".env"), `TOKEN=${TOKEN_VALUE}\n`, "utf8");
+        const result = runBashHook(command, { cwd: dir });
+        expect(result.exitCode).toBe(2);
+        expect(result.blocked).toBe(true);
+      },
+    );
+
+    it("allows a commented search where no env file sits", () => {
+      const dir = writeFixture.path("comment-search-clean");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "notes.md"), "TODO: tidy\n", "utf8");
+      expect(runBashHook("grep -r TODO # search", { cwd: dir }).exitCode).toBe(
+        0,
+      );
+    });
+  });
+
   describe("environment dumps behind a wrapper", () => {
     it("sudo printenv should block when the environment holds a secret", () => {
       const result = runBashHook("sudo printenv", {
@@ -816,6 +863,24 @@ describe("pre-tool-use-hook — command classification", () => {
     it("python3 -c with file read should block", () => {
       const file = writeFixture("python_script.txt", `key=${AWS_KEY}`);
       const result = runBashHook(`python3 -c "print(open('${file}').read())"`);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    // A quote in the script's comment shifted every quote pair after it, so
+    // the path was read as code between two literals and never scanned.
+    it.each([
+      ["python3", "-c", "x = 1  # don't\nprint(open('FILE').read())"],
+      [
+        "node",
+        "-e",
+        "/* it's */ console.log(require('fs').readFileSync('FILE', 'utf8'))",
+      ],
+    ])("%s %s with a quote in a comment should block", (cmd, flag, code) => {
+      const file = writeFixture("commented_script.txt", `key=${AWS_KEY}`);
+      const result = runBashHook(
+        `${cmd} ${flag} "${code.replace("FILE", file)}"`,
+      );
       expect(result.exitCode).toBe(2);
       expect(result.blocked).toBe(true);
     });

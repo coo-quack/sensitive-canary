@@ -951,17 +951,31 @@ export const MAX_QUOTED_LITERAL_LENGTH = 4096;
 // `python3 -c "print(open('.env').read())"`. Literals containing line breaks or
 // tabs are skipped: those are messages and patterns, not paths. Spaces are kept,
 // so a path like `open('my secret.txt')` is still found.
+//
+// Every quote is taken as an opening one, running to the next quote of the
+// same kind. Pairing them off from the start, as a regex does, let a quote in a
+// comment (`# don't`, `/* it's */`) pair with the next quote along and shift
+// every pair after it, so the paths fell in the gaps between literals. Which
+// syntax is a comment depends on the language, so instead of looking for
+// comments, every pairing is kept: the literals a correct pairing finds are
+// among them, and the extra ones are the gaps between literals.
 export function extractQuotedLiterals(code: string): string[] {
-  const literals: string[] = [];
-  for (const match of code.matchAll(/'([^']*)'|"([^"]*)"/g)) {
-    const value = match[1] ?? match[2];
-    if (
-      value &&
-      value.length <= MAX_QUOTED_LITERAL_LENGTH &&
-      !/[\t\r\n]/.test(value)
-    ) {
-      literals.push(value);
-    }
+  const literals = new Set<string>();
+  // The position of the next quote of the same kind, for each quote.
+  const closing = new Map<number, number>();
+  const after: Record<string, number> = {};
+  for (let i = code.length - 1; i >= 0; i--) {
+    const ch = code.charAt(i);
+    if (ch !== "'" && ch !== '"') continue;
+    const next = after[ch];
+    if (next !== undefined) closing.set(i, next);
+    after[ch] = i;
   }
-  return literals;
+  // Filled from the end, so reversed to keep the literals in reading order.
+  for (const [open, close] of [...closing].reverse()) {
+    if (close - open - 1 > MAX_QUOTED_LITERAL_LENGTH) continue;
+    const value = code.slice(open + 1, close);
+    if (value && !/[\t\r\n]/.test(value)) literals.add(value);
+  }
+  return [...literals];
 }

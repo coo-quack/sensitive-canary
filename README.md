@@ -315,7 +315,7 @@ expanded there (replace `/Users/you` with your home directory):
   would be a pass. Start the server before Claude Code, or set `"onUnavailable": "allow"`.
 - Before sending any text, the hook checks the socket. Every directory on its path must belong to you or root, and a
   directory that other users can write to is refused unless it has the sticky bit, as `/tmp` does. Group write counts
-  as writable by others unless the group contains only you, so fix a refusal with `chmod go-w <directory>`. Group membership is read from `/etc/group` and `/etc/passwd` only; directory services such as LDAP, sssd or macOS Directory Services are not consulted, so on macOS a group-writable directory is always refused. On Windows these checks are skipped. The socket
+  as writable by others unless the group contains only you, so fix a refusal with `chmod go-w <directory>`. Group membership is read from `/etc/group` and `/etc/passwd`, and is trusted only when `/etc/nsswitch.conf` names `files` as the only source for `passwd` and `group` (and `initgroups`, if listed): any other source, such as `systemd`, `sss`, `ldap` or `compat`, can add members those files do not show. So on Linux distributions whose defaults list `systemd` or `sss` (Ubuntu, Fedora and Arch among them) and on macOS, which has no `nsswitch.conf`, a group-writable directory is always refused. On Windows these checks are skipped. The socket
   itself must be a socket file owned by you or root.
 - `url` was removed in v0.10.0. The hook cannot tell whether the program on a TCP port is your server, so a config
   with `url` blocks with the reason. Replace it with `socket`.
