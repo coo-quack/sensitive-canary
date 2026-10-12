@@ -26,6 +26,7 @@ import {
   WRAPPER_COMMANDS,
   WRITE_TARGET_FLAGS,
 } from "./command-tables.ts";
+import { addProgramEnvironment } from "./program-environment.ts";
 import {
   blankComments,
   extractQuotedLiterals,
@@ -273,6 +274,9 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
     return /^-[abefhilmnpuvxCPT]*c$/.test(token);
   }
   if (token === "-r") return true; // php -r
+  // `node -p` and `bun -p` evaluate the expression and print its value.
+  if ((cmd === "node" || cmd === "bun") && /^(?:-p|--print)$/.test(token))
+    return true;
   return /^-[A-Za-z]*[eE]$/.test(token);
 }
 
@@ -341,11 +345,11 @@ function readCommandLine(command: string, depth: number): CommandRefs {
   for (const segments of readings) {
     // `echo env | bash` runs what echo prints, read the way `bash -c` is. The
     // readings mostly find the same programs, and each is read once.
-    for (const program of stdinPrograms(segments, bodies)) {
-      if (programsRead.has(program)) continue;
-      programsRead.add(program);
-      mergeRefs(refs, extractCommandRefs(program, depth + 1));
-      refs.paths.push(...extractQuotedLiterals(program));
+    for (const { interpreter, text } of stdinPrograms(segments, bodies)) {
+      const key = `${interpreter}\0${text}`;
+      if (programsRead.has(key)) continue;
+      programsRead.add(key);
+      readProgram(refs, interpreter, text, depth);
     }
 
     for (const { tokens } of segments) {
@@ -362,6 +366,12 @@ function readCommandLine(command: string, depth: number): CommandRefs {
   }
 
   return refs;
+}
+
+// A program and the interpreter that runs it.
+interface StdinProgram {
+  interpreter: string;
+  text: string;
 }
 
 // The text a command line hands a shell or interpreter on stdin, which it runs
@@ -386,11 +396,15 @@ function readCommandLine(command: string, depth: number): CommandRefs {
 // command runs is not read: a variable (`echo $v | bash`), a substitution
 // (`bash <<< $(…)`, `bash < <(echo env)`), or the output of several commands
 // joined into one line (`(echo -n en; echo v) | bash`).
-function stdinPrograms(segments: ShellSegment[], bodies: string[]): string[] {
-  const programs: string[] = [];
+function stdinPrograms(
+  segments: ShellSegment[],
+  bodies: string[],
+): StdinProgram[] {
+  const programs: StdinProgram[] = [];
   const written: string[] = [];
   let heredocWritten = false;
-  let heredocFed = false;
+  // The interpreters a heredoc on the line may feed.
+  const heredocReaders = new Set<string>();
 
   for (const { tokens, afterPipe } of segments) {
     const start = findCommandIndex(tokens);
@@ -399,8 +413,8 @@ function stdinPrograms(segments: ShellSegment[], bodies: string[]): string[] {
     const interpreter =
       INLINE_CODE_COMMANDS.has(cmd) || cmd === "source" || cmd === ".";
     if (interpreter && afterPipe) {
-      for (const text of written) programs.push(text);
-      if (heredocWritten) heredocFed = true;
+      for (const text of written) programs.push({ interpreter: cmd, text });
+      if (heredocWritten) heredocReaders.add(cmd);
     }
 
     const hereStrings: string[] = [];
@@ -421,8 +435,8 @@ function stdinPrograms(segments: ShellSegment[], bodies: string[]): string[] {
     }
 
     if (interpreter) {
-      programs.push(...hereStrings);
-      if (heredoc) heredocFed = true;
+      for (const text of hereStrings) programs.push({ interpreter: cmd, text });
+      if (heredoc) heredocReaders.add(cmd);
       continue;
     }
     for (const text of hereStrings) written.push(text);
@@ -437,7 +451,8 @@ function stdinPrograms(segments: ShellSegment[], bodies: string[]): string[] {
       }
     }
   }
-  if (heredocFed) for (const body of bodies) programs.push(body);
+  for (const interpreter of heredocReaders)
+    for (const text of bodies) programs.push({ interpreter, text });
   return programs;
 }
 
@@ -482,6 +497,20 @@ function decodeEscapes(text: string): string {
       return String.fromCharCode(code);
     },
   );
+}
+
+// Program text `interpreter` runs, from `-c` or on stdin: read as a command
+// line, for the paths its quoted literals may name, and for what it does with
+// the environment.
+function readProgram(
+  refs: CommandRefs,
+  interpreter: string,
+  program: string,
+  depth: number,
+): void {
+  mergeRefs(refs, extractCommandRefs(program, depth + 1));
+  refs.paths.push(...extractQuotedLiterals(program));
+  addProgramEnvironment(refs, interpreter, program);
 }
 
 // File paths one segment of a command line may print, plus anything found inside
@@ -578,8 +607,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       // command takes inline code *and* a leading pattern, an assumption the
       // tests pin, so there is no pattern here to mark as supplied.
       if (behaviour.inlineCodeReadsOperands) inlineCodeSeen = true;
-      mergeRefs(refs, extractCommandRefs(tok.value, depth + 1));
-      refs.paths.push(...extractQuotedLiterals(tok.value));
+      readProgram(refs, cmd, tok.value, depth);
       continue;
     }
 

@@ -24,6 +24,7 @@ import {
   readPiiSentinelConfig,
   verdictFindings,
 } from "./lib/pii-sentinel.ts";
+import { addProgramEnvironment } from "./lib/program-environment.ts";
 import {
   beginScanBudget,
   enabledCategoriesFromEnv,
@@ -1015,7 +1016,7 @@ async function main(): Promise<void> {
     // so `mcp__desktop-commander__start_process` with `{"command":"cat .env"}`
     // was looked at as a path, found not to be a file, and let through — with
     // the default matcher sending every `mcp__*` tool here.
-    for (const value of collectCommandFields(input)) {
+    for (const { value, field } of collectCommandFields(input)) {
       // What the command says, as well as what it opens. A key in an argument
       // list is a key whichever tool runs the shell.
       scanTextAndBlock(
@@ -1032,6 +1033,10 @@ async function main(): Promise<void> {
       // same shape inline `-c` text is read for.
       refs.paths.push(...extractQuotedLiterals(value));
       scanPathsLiteralsFirst(refs.paths, allowTags, { onlyExisting: true });
+
+      // Code reaches the environment in its own language:
+      // `print(os.environ)` prints every value as `env` does.
+      if (field === "code") addProgramEnvironment(refs, null, value);
 
       // A command names an environment as readily as a file. The Bash branch
       // has always scanned the variables a command would print; a tool that

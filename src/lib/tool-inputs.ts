@@ -199,6 +199,13 @@ export function collectPathFields(
   return found;
 }
 
+// A command field's text, and its name as normalizeFieldName spells it. A
+// `code` field holds a program in a language the hook is not told.
+export interface CommandField {
+  value: string;
+  field: string;
+}
+
 // Every command an input carries, whatever shape it arrives in.
 //
 // Reading only top-level strings left two shapes through, and both reach the
@@ -214,17 +221,18 @@ export function collectPathFields(
 export function collectCommandFields(
   input: Record<string, unknown>,
   depth = 0,
-): string[] {
+): CommandField[] {
   if (depth > MAX_COMMAND_FIELD_DEPTH) return [];
-  const found: string[] = [];
+  const found: CommandField[] = [];
   for (const [key, value] of Object.entries(input)) {
-    const named = COMMAND_FIELD_NAMES.has(normalizeFieldName(key));
+    const field = normalizeFieldName(key);
+    const named = COMMAND_FIELD_NAMES.has(field);
     if (named && typeof value === "string") {
-      found.push(value);
+      found.push({ value, field });
     } else if (named && Array.isArray(value)) {
       // An argv array is one command line with the spaces taken out.
       const argv = value.filter((v): v is string => typeof v === "string");
-      if (argv.length > 0) found.push(argv.join(" "));
+      if (argv.length > 0) found.push({ value: argv.join(" "), field });
     } else if (value !== null && typeof value === "object") {
       found.push(
         ...collectCommandFields(value as Record<string, unknown>, depth + 1),

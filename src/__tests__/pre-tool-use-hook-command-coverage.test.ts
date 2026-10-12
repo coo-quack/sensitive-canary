@@ -803,6 +803,31 @@ describe("pre-tool-use-hook — command classification", () => {
     );
   });
 
+  describe("interpreters reading the environment", () => {
+    const secretEnv = {
+      env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+      replaceEnv: true,
+    };
+
+    it.each([
+      "python3 -c 'import os; print(os.environ)'",
+      "python3 -c 'import os; print(os.environ[\"TOKEN\"])'",
+      "node -p process.env.TOKEN",
+      "echo 'p ENV' | ruby",
+    ])("%j blocks when the environment holds a secret", (command) => {
+      const result = runBashHook(command, secretEnv);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it.each([
+      "python3 -c 'import os; print(os.environ[\"HOME\"])'",
+      "grep -r process.env src",
+    ])("%j allows when the environment holds a secret", (command) => {
+      expect(runBashHook(command, secretEnv).exitCode).toBe(0);
+    });
+  });
+
   describe("environment dumps behind a wrapper", () => {
     it("sudo printenv should block when the environment holds a secret", () => {
       const result = runBashHook("sudo printenv", {
