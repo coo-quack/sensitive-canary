@@ -547,9 +547,10 @@ PreToolUse hook
       │
       ├─ Bash tool ──────────────────────────────────────────────────────
       │  1. env var values referenced in the command contain secret / PII → blocked
-      │  2. a bare env / printenv, or a variable listing such as export -p, set
-      │     or declare -p, would print the whole environment → every variable
-      │     is scanned
+      │  2. a bare env / printenv, a variable listing such as export -p, set
+      │     or declare -p, or inline code such as print(os.environ) or
+      │     console.log(process.env), would print the whole environment →
+      │     every variable is scanned; os.environ["NAME"] scans NAME
       │  3. command string itself contains secret / PII (e.g. echo AKIA...) → blocked
       │  4. the command is located past any wrapper (sudo, env VAR=1, timeout,
       │     nice, xargs) and any leading VAR=value assignment
@@ -588,6 +589,7 @@ The terminal also receives a direct message (via `/dev/tty`).
 ### Known Limitations
 
 - **Heredoc bodies** — a heredoc body is treated as text, not as commands, so `cat > deploy.sh <<'EOF'` writing a script that mentions `.env` is not itself a read. The trade-off is that a heredoc which *feeds* commands to a remote shell (`ssh host <<'EOF'` with a `cat /etc/secrets` in the body) is not inspected either. One fed to a local shell or interpreter (`bash <<'EOF'`, `python3 - <<'EOF'`) is read as the program it is.
+- **An environment reached by a computed route in inline code** — Python, JavaScript, Ruby, Perl and PHP code is read for the environment by how each language spells it (`os.environ`, `process.env`, `ENV`, `%ENV`, `getenv()`, `$_SERVER`), and a lookup whose name is not a literal counts as the whole environment. A route only the running program builds (`getattr(os, "environ")`, `globalThis["process"]`) is not followed. In a tool's `code` field, whose language is not given, a bare Ruby `ENV` and a JavaScript `process` on its own (`console.log(process)`) are not read, since both words are common elsewhere; `ENV[…]`, `ENV.…` and `process.env` are.
 - **A program a shell gets from a file, another command or a variable** — program text written on the command line is read wherever it reaches a shell or interpreter: `bash -c`, a here-string, a heredoc, and what `echo`, `printf` or a heredoc piped through `cat` hands one on stdin. A program it reads from a file or from another command's output (`bash setup.sh`, `curl … | sh`, `bash < <(echo env)`) is not, nor one that only exists once the command runs: a variable (`echo $v | bash`), a substitution (`bash <<< $(…)`), or the output of several commands joined into one line (`(echo -n en; echo v) | bash`).
 - **A tool that runs a command is read for the command, by field name** — `command`, `commands`, `cmd`, `script`, `code`, `commandline` and `shellcommand`, each read with punctuation and case ignored, so `command_line`, `command-line`, `commandLine` and `command.line` are the same name. A shell-running MCP server that names the field something else hands its command past unread.
 - **Only the first and last 1 MiB of a file are scanned** — a file larger than the cut is read at both ends rather than to its end, because a hook that does not return is killed by the PreToolUse timeout, and a killed hook does not block the call. The cut is in bytes, so a file of multi-byte characters gives up sooner in characters. What is missed is the middle of a file larger than both windows, and a secret straddling either edge, since the cut lands mid-match; the search of the transcript for allow tags, which stops 8 MiB back, makes the same trade. What the cut does *not* bound is the work done on what it read: that is a property of each rule's pattern, and `docs/rules.md` covers why three of them carry length bounds.
@@ -679,6 +681,7 @@ src/
     default-config.json        the rules themselves, as data
     shell.ts                   shell syntax: tokens, quoting, heredocs, substitutions
     bash-commands.ts           what each command does with the files it is given
+    program-environment.ts     what inline code does with the environment
     tool-inputs.ts             which input fields of a tool name a file
     transcript.ts              allow tags from the session transcript
     pii-sentinel.ts            the optional pii-sentinel client

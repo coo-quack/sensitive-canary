@@ -970,3 +970,48 @@ describe("programs a command line hands to a shell", () => {
     expect(paths(command)).toEqual([]);
   });
 });
+
+// The program an interpreter runs is read for what it does with the
+// environment, wherever the command line hands it over.
+describe("interpreters reading the environment", () => {
+  it.each([
+    "python3 -c 'import os; print(os.environ)'",
+    "node -e 'console.log(process.env)'",
+    "node -p process.env",
+    "node --print 'process.env'",
+    "bun -p 'process.env'",
+    "ruby -e 'p ENV'",
+    "perl -e 'print %ENV'",
+    "php -r 'print_r(getenv());'",
+    "sudo python3 -c 'import os; print(os.environ)'",
+    "echo 'print(__import__(\"os\").environ)' | python3",
+    "echo 'p ENV' | ruby",
+    "python3 - <<'EOF'\nimport os\nprint(os.environ)\nEOF",
+    "node <<< 'console.log(process.env)'",
+    "bash -c \"python3 -c 'import os; print(os.environ)'\"",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    ["python3 -c 'import os; print(os.environ[\"TOKEN\"])'", ["TOKEN"]],
+    ["node -p process.env.TOKEN", ["TOKEN"]],
+    ["echo 'puts ENV[\"TOKEN\"]' | ruby", ["TOKEN"]],
+    ["perl -e 'print $ENV{TOKEN}'", ["TOKEN"]],
+  ])("%j reads %j", (command, named) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.dumpsEnvironment).toBe(false);
+    expect(refs.envVars).toEqual(named);
+  });
+
+  it.each([
+    "grep -r process.env src",
+    "python3 script.py",
+    "bash -c 'echo p ENV'",
+    "echo 'print(os.environ)'",
+    "echo 'print(os.environ)' > show.py",
+    "python3 -c 'print(1)'",
+  ])("%j does not dump the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(false);
+  });
+});
