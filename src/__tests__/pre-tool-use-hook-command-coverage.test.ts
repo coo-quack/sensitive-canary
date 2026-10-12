@@ -777,6 +777,32 @@ describe("pre-tool-use-hook — command classification", () => {
     });
   });
 
+  describe("programs handed to a shell", () => {
+    const secretEnv = {
+      env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+      replaceEnv: true,
+    };
+
+    it.each([
+      "function f { env; }; f",
+      "echo env | bash",
+      "printf '%s\\n' 'export -p' | sh",
+      "bash <<< env",
+      "bash <<'EOF'\nenv\nEOF",
+    ])("%j blocks when the environment holds a secret", (command) => {
+      const result = runBashHook(command, secretEnv);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it.each(["echo env | grep env", "cat > s.sh <<'EOF'\nenv\nEOF"])(
+      "%j allows when the environment holds a secret",
+      (command) => {
+        expect(runBashHook(command, secretEnv).exitCode).toBe(0);
+      },
+    );
+  });
+
   describe("environment dumps behind a wrapper", () => {
     it("sudo printenv should block when the environment holds a secret", () => {
       const result = runBashHook("sudo printenv", {

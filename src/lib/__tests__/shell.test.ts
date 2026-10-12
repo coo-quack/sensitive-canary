@@ -29,9 +29,15 @@ import {
   MAX_QUOTED_LITERAL_LENGTH,
   SHELL_KEYWORD_TOKENS,
   type ShellToken,
-  stripHeredocBodies,
+  splitHeredocBodies,
   tokenizeCommand,
+  tokenizeSegments,
 } from "../shell.ts";
+
+// A command line with its heredoc bodies removed.
+function withoutBodies(command: string): string {
+  return splitHeredocBodies(command).text;
+}
 
 // The words of one segment, dropping the redirection operators, which is what
 // most cases below are asking about.
@@ -311,15 +317,67 @@ describe("tokenizeCommand, joinRedirections", () => {
   });
 });
 
-describe("stripHeredocBodies", () => {
+describe("tokenizeSegments", () => {
+  it.each([
+    ["echo env | bash", [false, true]],
+    ["echo env |& bash", [false, true]],
+    ["echo env |\n  bash", [false, true]],
+    ["echo env || bash", [false, false]],
+    ["echo env; bash", [false, false]],
+    ["echo env && bash", [false, false]],
+    ["echo env & bash", [false, false]],
+    ["(echo env) | bash", [false, true]],
+    ["echo env | (bash)", [false, true]],
+    ["{ echo env; } | bash", [false, false, true]],
+    ["a | b | c; d", [false, true, true, false]],
+    ['echo "a | b"', [false]],
+  ])("%j marks the segments a pipe feeds as %j", (command, piped) => {
+    expect(tokenizeSegments(command).map((s) => s.afterPipe)).toEqual(piped);
+  });
+
+  it("splits the tokens as tokenizeCommand does", () => {
+    const command = "cat a 2>&1 | (grep b) && echo 'c | d'";
+    for (const joinRedirections of [false, true]) {
+      expect(
+        tokenizeSegments(command, { joinRedirections }).map((s) => s.tokens),
+      ).toEqual(tokenizeCommand(command, { joinRedirections }));
+    }
+  });
+});
+
+describe("splitHeredocBodies", () => {
+  it("returns each body without its delimiter lines, in order", () => {
+    expect(splitHeredocBodies("cmd <<A <<-B\na1\na2\nA\nb1\n\tB\nls")).toEqual({
+      text: "cmd <<A <<-B\nls",
+      bodies: ["a1\na2", "b1"],
+    });
+  });
+
+  // The shell reads a body that is never closed to the end of the input.
+  it("returns a body the input ends inside of", () => {
+    expect(splitHeredocBodies("bash <<EOF\nenv")).toEqual({
+      text: "bash <<EOF",
+      bodies: ["env"],
+    });
+  });
+
+  it("returns no bodies for a command with no heredoc", () => {
+    expect(splitHeredocBodies("grep x <<< env")).toEqual({
+      text: "grep x <<< env",
+      bodies: [],
+    });
+  });
+});
+
+describe("splitHeredocBodies, the text it leaves", () => {
   it("removes the body and keeps the command line", () => {
-    const stripped = stripHeredocBodies("cat > s.sh <<EOF\ncat /secret\nEOF");
+    const stripped = withoutBodies("cat > s.sh <<EOF\ncat /secret\nEOF");
     expect(stripped).toBe("cat > s.sh <<EOF");
   });
 
   it("honours a quoted delimiter and the <<- form", () => {
-    expect(stripHeredocBodies("cat <<'EOF'\nx\nEOF")).toBe("cat <<'EOF'");
-    expect(stripHeredocBodies("cat <<-EOF\nx\n\tEOF")).toBe("cat <<-EOF");
+    expect(withoutBodies("cat <<'EOF'\nx\nEOF")).toBe("cat <<'EOF'");
+    expect(withoutBodies("cat <<-EOF\nx\n\tEOF")).toBe("cat <<-EOF");
   });
 
   // A herestring is not a heredoc: it carries its text on the same line and
@@ -328,7 +386,7 @@ describe("stripHeredocBodies", () => {
   // left the read unscanned.
   it("does not treat a herestring as opening a body", () => {
     const command = 'grep x <<< "y"\ncat secrets';
-    expect(stripHeredocBodies(command)).toBe(command);
+    expect(withoutBodies(command)).toBe(command);
   });
 
   // Two heredocs on one line close in the order they were opened. Taking the
@@ -336,11 +394,11 @@ describe("stripHeredocBodies", () => {
   // text follows the second delimiter is kept as though it were a command.
   it("closes several heredocs in the order they were opened", () => {
     const command = "cmd <<A <<B\nbody a\nA\nbody b\nB\ncat secrets";
-    expect(stripHeredocBodies(command)).toBe("cmd <<A <<B\ncat secrets");
+    expect(withoutBodies(command)).toBe("cmd <<A <<B\ncat secrets");
   });
 
   it("leaves a command with no heredoc alone", () => {
-    expect(stripHeredocBodies("cat a\ncat b")).toBe("cat a\ncat b");
+    expect(withoutBodies("cat a\ncat b")).toBe("cat a\ncat b");
   });
 });
 
@@ -634,7 +692,7 @@ describe("comments", () => {
 
   it("lets heredoc stripping see the command without its comment", () => {
     expect(
-      stripHeredocBodies(blankComments("# usage: cat <<EOF\ncat secrets.txt")),
+      withoutBodies(blankComments("# usage: cat <<EOF\ncat secrets.txt")),
     ).toBe("\ncat secrets.txt");
   });
 

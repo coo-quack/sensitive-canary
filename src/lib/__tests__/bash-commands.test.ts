@@ -875,3 +875,96 @@ describe("shell builtins that list variables", () => {
     expect(refs.envVars).toEqual(named);
   });
 });
+
+// A function body behind the `function` keyword, and a program a shell or
+// interpreter reads on stdin: what an echo or printf pipes into it, a
+// here-string, or a heredoc. Every dump below prints the environment's values
+// in bash 5 or zsh 5, apart from `echo 'env\nls' | bash`, which only zsh's
+// echo turns into two lines; reading it as two can only add scanning.
+describe("programs a command line hands to a shell", () => {
+  it.each([
+    "function f { env; }; f",
+    "function f() { env; }; f",
+    "function f { export -p; }; f",
+    "function f {\n  printenv\n}",
+    "echo env | bash",
+    "echo 'export -p' | sh",
+    "echo env |& bash",
+    "echo env | sudo bash",
+    "echo -n env | zsh",
+    "printf '%s\\n' env | sh",
+    "printf 'env\\n' | sh",
+    "printf '%s' env | sh",
+    "printf 'e%sv' n | bash",
+    "printf '%s%s\\n' e nv ls '' | sh",
+    "printf 'e\\156v' | bash",
+    "printf '\\x65nv' | bash",
+    "echo -e '\\x65nv' | bash",
+    "echo -e '\\0145nv' | bash",
+    "echo env | source /dev/stdin",
+    "echo env | . /dev/stdin",
+    "echo 'env\\nls' | zsh",
+    "{ echo env; } | bash",
+    "(echo env) | bash",
+    "echo env | (bash)",
+    "echo env | bash -s",
+    "bash <<< env",
+    "<<< env bash",
+    "bash <<< 'set'",
+    "bash <<'EOF'\nenv\nEOF",
+    "bash <<-EOF\n\tprintenv\n\tEOF",
+    "sh <<EOF\nexport -p\nEOF",
+    "bash <<EOF\nenv",
+    "cat > s.sh <<'A'; bash <<'B'\nls\nA\nenv\nB",
+    "cat <<'EOF' | bash\nenv\nEOF",
+    "cat <<< env | sh",
+    "{ cat <<X; } | bash\nprintenv\nX",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    "function f { ls; }",
+    "echo env",
+    "echo env || bash",
+    "echo env; bash",
+    "echo env && sh",
+    "echo env | grep x",
+    "echo env | tee out.txt",
+    "echo hi | bash",
+    "echo hi 2> env | bash",
+    "bash | echo env",
+    "cat x | bash",
+    "echo env > s.sh; bash s.sh",
+    "bash <<< ls",
+    "grep x <<< env",
+    "cat <<< env",
+    "cat <<'EOF' | grep x\nenv\nEOF",
+    "cat > s.sh <<'EOF'\nenv\nEOF",
+    "ssh host <<'EOF'\nenv\nEOF",
+  ])("%j does not dump the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(false);
+  });
+
+  // Inline program text yields every quoted pairing as a candidate, so the
+  // file is looked for among them rather than as the only one.
+  it.each([
+    "echo 'cat secrets' | bash",
+    "printf '%s\\n' 'cat secrets' | sh",
+    "bash <<< 'cat secrets'",
+    "bash <<'EOF'\ncat secrets\nEOF",
+    "echo \"print(open('secrets').read())\" | python3",
+    "python3 <<'EOF'\nprint(open('secrets').read())\nEOF",
+    "node <<< \"require('fs').readFileSync('secrets')\"",
+  ])("%j reads secrets", (command) => {
+    expect(paths(command)).toContain("secrets");
+  });
+
+  it.each([
+    "cat > s.sh <<'EOF'\ncat secrets\nEOF",
+    "echo 'cat secrets'",
+    "echo 'cat secrets' | grep cat",
+  ])("%j reads nothing", (command) => {
+    expect(paths(command)).toEqual([]);
+  });
+});
