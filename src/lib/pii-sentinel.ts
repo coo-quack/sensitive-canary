@@ -40,7 +40,21 @@ export interface Judgement {
   verdicts: Verdict[];
   // Why the server could not answer, when it could not.
   unavailable: string | null;
+  // Why the socket was refused, when another user could have put it in place.
+  // No text was sent, and `onUnavailable` does not apply: the server may be
+  // running, so a fallback to the rules would skip the check for as long as
+  // the socket stays where it is, with nothing said.
+  refused: string | null;
 }
+
+// A socket another user could have put in place. Kept apart from a server
+// that is not there, which `onUnavailable` covers. Each message ends with how
+// to fix that refusal, since the fix differs with the cause.
+export class UnsafeSocketError extends Error {}
+
+// What both hooks say under a refusal, after the reason.
+export const REFUSED_SOCKET_NOTE =
+  'Another user could have put that socket in place, so nothing was sent. Fix the path as the reason says, or remove the "piiSentinel" entry. "onUnavailable" does not apply: the server may be running, and falling back on the rules would skip it without a word.';
 
 const RANK: Record<Level, number> = { none: 0, low: 1, high: 2 };
 // The kernel follows at most this many symbolic links while resolving a path.
@@ -161,7 +175,7 @@ interface Directory {
 export async function checkSocket(path: string): Promise<void> {
   // An abstract name has no file to check; it is refused on every platform.
   if (path.startsWith("\0"))
-    throw new Error(
+    throw new UnsafeSocketError(
       "an abstract socket name is refused: use a socket file in a directory only you can write to",
     );
   // Windows has no owners or modes to compare.
@@ -220,22 +234,31 @@ async function directory(
   gid: number,
 ): Promise<Directory> {
   owned(st, path, uid);
-  const shared = await writableByOthers(st, gid);
-  if (shared && !(st.mode & 0o1000))
-    throw new Error(`${path} can be written by other users`);
-  return { path, st, shared };
+  const writers = await describeOtherWriters(st, gid);
+  if (writers !== null && !(st.mode & 0o1000))
+    throw new UnsafeSocketError(
+      `${path} can be written by ${writers}: run \`chmod go-w ${path}\` or move the socket to a directory only you can write to`,
+    );
+  return { path, st, shared: writers !== null };
 }
 
 function owned(st: Stats, path: string, uid: number): void {
   if (st.uid !== uid && st.uid !== 0)
-    throw new Error(`${path} belongs to another user`);
+    throw new UnsafeSocketError(
+      `${path} belongs to another user: move the socket to a directory you own`,
+    );
 }
 
-// Group write counts as "others can write" unless the group is ours alone.
-async function writableByOthers(st: Stats, gid: number): Promise<boolean> {
-  if (st.mode & 0o002) return true;
-  if (st.mode & 0o020) return !(await groupIsPrivate(st.gid, gid));
-  return false;
+// Who besides us can write to the directory, in words for the refusal, or null
+// when no one can. Group write counts unless the group is ours alone.
+async function describeOtherWriters(
+  st: Stats,
+  gid: number,
+): Promise<string | null> {
+  if (st.mode & 0o002) return "other users";
+  if (st.mode & 0o020 && !(await groupIsPrivate(st.gid, gid)))
+    return `its group (gid ${st.gid}), which cannot be shown to contain only you`;
+  return null;
 }
 
 // True only when the group is provably ours: its gid is ours, the /etc/group
@@ -446,15 +469,15 @@ export async function judge(
 ): Promise<Judgement> {
   const deadline = Date.now() + config.timeoutMs;
   const verdicts: Verdict[] = [];
-  // Checked once, inside the deadline and before any text leaves: a socket
-  // that fails the check is reported like a server that did not answer.
+  // Checked once, inside the deadline and before any text leaves. A socket
+  // that is not there is reported like a server that did not answer.
   try {
     await checkSocket(config.socket);
   } catch (e) {
-    return {
-      verdicts,
-      unavailable: e instanceof Error ? e.message : String(e),
-    };
+    const reason = e instanceof Error ? e.message : String(e);
+    return e instanceof UnsafeSocketError
+      ? { verdicts, unavailable: null, refused: reason }
+      : { verdicts, unavailable: reason, refused: null };
   }
   for (const { source, text } of texts) {
     if (text.trim() === "") continue;
@@ -463,6 +486,7 @@ export async function judge(
       return {
         verdicts,
         unavailable: `no answer within ${config.timeoutMs} ms`,
+        refused: null,
       };
     try {
       verdicts.push(
@@ -475,10 +499,11 @@ export async function judge(
       return {
         verdicts,
         unavailable: e instanceof Error ? e.message : String(e),
+        refused: null,
       };
     }
   }
-  return { verdicts, unavailable: null };
+  return { verdicts, unavailable: null, refused: null };
 }
 
 export function reachesBlockLevel(

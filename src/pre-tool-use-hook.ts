@@ -19,6 +19,7 @@ import {
 import {
   connectionTarget,
   judge,
+  REFUSED_SOCKET_NOTE,
   reachesBlockLevel,
   readPiiSentinelConfig,
   verdictFindings,
@@ -805,6 +806,8 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 // the PII category is on, and `[allow-pii]` lifts it as it lifts the PII rules.
 // A server that does not answer blocks unless the entry says otherwise: the user
 // asked for the check, and a check that silently did not run is a pass.
+// A socket another user could have put in place blocks whatever the entry
+// says, since the server behind it may well be running.
 async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
   if (modelTexts.length === 0 || !ENABLED_CATEGORIES.has("pii")) return;
   if (allowTags.has("pii") || allowTags.has("all")) return;
@@ -823,7 +826,18 @@ async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
       hints,
     );
   }
-  const { verdicts, unavailable } = await judge(modelTexts, config);
+  const { verdicts, unavailable, refused } = await judge(modelTexts, config);
+  if (refused !== null) {
+    block(
+      "pii-sentinel",
+      [
+        `🚫 Blocked: the pii-sentinel socket at ${forOutput(connectionTarget(config))} was refused: ${forOutput(refused)}`,
+        "",
+        REFUSED_SOCKET_NOTE,
+      ],
+      hints,
+    );
+  }
   for (const verdict of verdicts) {
     if (!reachesBlockLevel(verdict.level, config)) continue;
     const findings = verdictFindings(verdict);

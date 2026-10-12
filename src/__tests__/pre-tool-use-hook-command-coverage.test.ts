@@ -735,6 +735,48 @@ describe("pre-tool-use-hook — command classification", () => {
     });
   });
 
+  describe("shell builtins that list variables", () => {
+    const secretEnv = {
+      env: { PATH: process.env["PATH"] ?? "", TOKEN: AWS_KEY },
+      replaceEnv: true,
+    };
+
+    it.each([
+      "export -p",
+      "export",
+      "set",
+      "declare -px",
+      "typeset",
+      "set | grep TOKEN",
+      "declare -p TOKEN",
+      "builtin declare -p",
+    ])("%j blocks when the environment holds a secret", (command) => {
+      const result = runBashHook(command, secretEnv);
+      expect(result.exitCode).toBe(2);
+      expect(result.blocked).toBe(true);
+    });
+
+    it.each(["export -p", "set", "declare -p"])(
+      "%j allows when the environment holds no secret",
+      (command) => {
+        const result = runBashHook(command, {
+          env: { PATH: process.env["PATH"] ?? "" },
+          replaceEnv: true,
+        });
+        expect(result.exitCode).toBe(0);
+      },
+    );
+
+    it.each([
+      "export TOKEN",
+      "export FOO=1",
+      "set -euo pipefail",
+      "declare -f",
+    ])("%j allows when the environment holds a secret", (command) => {
+      expect(runBashHook(command, secretEnv).exitCode).toBe(0);
+    });
+  });
+
   describe("environment dumps behind a wrapper", () => {
     it("sudo printenv should block when the environment holds a secret", () => {
       const result = runBashHook("sudo printenv", {

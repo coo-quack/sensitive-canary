@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import {
   chmodSync,
+  chownSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -25,6 +26,7 @@ import {
   judge,
   readPiiSentinelConfig,
   trustedNssSources,
+  UnsafeSocketError,
 } from "../pii-sentinel.ts";
 
 const PRE_TOOL_USE = fileURLToPath(
@@ -215,9 +217,10 @@ describe("judge", () => {
     });
     if (missing === null || typeof missing === "string")
       throw new Error(String(missing));
-    expect(
-      (await judge([{ source: "a", text: "x" }], missing)).unavailable,
-    ).toContain("ENOENT");
+    expect(await judge([{ source: "a", text: "x" }], missing)).toMatchObject({
+      unavailable: expect.stringContaining("ENOENT"),
+      refused: null,
+    });
     answer = () => ({ status: 413, body: { error: "too large" } });
     const config = readPiiSentinelConfig({ socket });
     if (config === null || typeof config === "string")
@@ -252,11 +255,14 @@ describe("socket checks", () => {
     const config = readPiiSentinelConfig({ socket: path });
     if (config === null || typeof config === "string")
       throw new Error(String(config));
-    const { unavailable } = await judge(
+    const { unavailable, refused } = await judge(
       [{ source: "a", text: MEDICAL }],
       config,
     );
-    expect(unavailable).toContain("can be written by other users");
+    expect(refused).toContain("can be written by other users");
+    // The physical path: on macOS /tmp is a link to /private/tmp.
+    expect(refused).toMatch(/run `chmod go-w \S*\/open-0777`/);
+    expect(unavailable).toBeNull();
     expect(received).toEqual([]);
   });
 
@@ -271,8 +277,9 @@ describe("socket checks", () => {
       await expect(checkSocket(path)).resolves.toBeUndefined();
     } else {
       await expect(checkSocket(path)).rejects.toThrow(
-        "can be written by other users",
+        "can be written by its group",
       );
+      await expect(checkSocket(path)).rejects.toBeInstanceOf(UnsafeSocketError);
     }
   });
 
@@ -294,14 +301,37 @@ describe("socket checks", () => {
     const file = join(dir, "plain.txt");
     writeFileSync(file, "x");
     await expect(checkSocket(file)).rejects.toThrow("is not a socket");
+    await expect(checkSocket(file)).rejects.not.toBeInstanceOf(
+      UnsafeSocketError,
+    );
   });
 
   it("reports a missing socket as ENOENT", async () => {
     await expect(checkSocket(join(dir, "gone.sock"))).rejects.toThrow("ENOENT");
   });
 
+  // Only root can hand a directory to another user, so this runs as root (the
+  // Linux container run) and is skipped elsewhere.
+  it.runIf(process.getuid?.() === 0)(
+    "refuses a directory that belongs to another user",
+    async () => {
+      const d = makeDir("theirs", 0o755);
+      const path = join(d, "x.sock");
+      await serveAt(path);
+      chownSync(d, 65534, 65534);
+      const refusal = checkSocket(path);
+      await expect(refusal).rejects.toThrow(
+        "belongs to another user: move the socket to a directory you own",
+      );
+      await expect(checkSocket(path)).rejects.toBeInstanceOf(UnsafeSocketError);
+    },
+  );
+
   it("refuses an abstract socket name", async () => {
     await expect(checkSocket("\0pii-sentinel")).rejects.toThrow("abstract");
+    await expect(checkSocket("\0pii-sentinel")).rejects.toBeInstanceOf(
+      UnsafeSocketError,
+    );
   });
 });
 
@@ -371,6 +401,32 @@ describe("PreToolUse hook with pii-sentinel", () => {
     expect(allowed.code).toBe(0);
   });
 
+  // The server behind a refused socket may be running, so falling back on the
+  // rules would skip it for as long as the socket stays there.
+  it.each(["block", "allow"])(
+    "blocks on a refused socket with onUnavailable %j",
+    async (onUnavailable) => {
+      const d = makeDir(`refused-hook-${onUnavailable}`, 0o777);
+      const path = join(d, "r.sock");
+      await serveAt(path);
+      const result = await readFile(file, {
+        SENSITIVE_CANARY_CONFIG: writeConfig(`c7-${onUnavailable}.json`, {
+          socket: path,
+          onUnavailable,
+        }),
+      });
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("pii-sentinel socket at");
+      expect(result.stderr).toContain("can be written by other users");
+      expect(result.stderr).toMatch(
+        new RegExp(`chmod go-w \\S*/refused-hook-${onUnavailable}\``),
+      );
+      expect(result.stderr).toContain('"onUnavailable" does not apply');
+      expect(result.stderr).not.toContain("did not answer");
+      expect(received).toEqual([]);
+    },
+  );
+
   it("blocks on an entry it cannot use and names the config file", async () => {
     const config = writeConfig("c6.json", { url: "http://127.0.0.1:1" });
     const result = await readFile(file, { SENSITIVE_CANARY_CONFIG: config });
@@ -404,6 +460,39 @@ describe("UserPromptSubmit hook with pii-sentinel", () => {
     );
     expect(allowed.code).toBe(0);
     expect(received).toHaveLength(1);
+  });
+
+  it("blocks on a refused socket even with onUnavailable allow, and [allow-pii] lifts it", async () => {
+    const d = makeDir("refused-prompt", 0o777);
+    const path = join(d, "r.sock");
+    await serveAt(path);
+    const env = {
+      SENSITIVE_CANARY_CONFIG: writeConfig("p3.json", {
+        socket: path,
+        onUnavailable: "allow",
+      }),
+    };
+    const blocked = await runHook(USER_PROMPT, { prompt: "hello" }, env);
+    expect(blocked.code).toBe(2);
+    expect(blocked.stderr).toContain("pii-sentinel socket was refused");
+    expect(blocked.stderr).toContain("can be written by other users");
+    const allowed = await runHook(
+      USER_PROMPT,
+      { prompt: "[allow-pii] hello" },
+      env,
+    );
+    expect(allowed.code).toBe(0);
+    expect(received).toEqual([]);
+  });
+
+  it("allows a prompt when the server is not there and onUnavailable is allow", async () => {
+    const env = {
+      SENSITIVE_CANARY_CONFIG: writeConfig("p4.json", {
+        socket: join(dir, "missing.sock"),
+        onUnavailable: "allow",
+      }),
+    };
+    expect((await runHook(USER_PROMPT, { prompt: "hello" }, env)).code).toBe(0);
   });
 
   it("blocks on an entry it cannot use and names the config file", async () => {

@@ -5,11 +5,13 @@
 ### Breaking changes
 
 - A group-writable directory on the path to the pii-sentinel socket is accepted only when `/etc/nsswitch.conf` names no source other than `files` and `systemd` for `passwd`, `group` and `initgroups`, and, with `systemd`, only when its static records under `/etc/userdb` and the other directories it reads put no one else in the group. The group was judged from `/etc/group` and `/etc/passwd` alone, but LDAP, sssd, NIS, winbind and nss-systemd can add members those files do not show, and a local group's gid matching a directory group's is an ordinary accident. **This refuses group-writable socket directories where nsswitch.conf lists `sss`, `ldap` or another such source** (Fedora's default lists `sss`); `chmod g-w <directory>` fixes it (#310)
+- A socket the check refuses (a directory or socket another user could have put in place, or an abstract name) blocks even with `"onUnavailable": "allow"`. It was reported like a server that did not answer, so with `"allow"` pii-sentinel was skipped without a word for as long as the socket stayed there, while the server behind it may have been running. The block reason now says why the socket was refused and how to fix it, instead of suggesting to start the server, and a refused group-writable directory names its group (#314)
 
 ### Fixes
 
 - A trailing comment hid what a command does: `env # list` and `printenv # all` were read as running a command, so the environment was not scanned, and `grep -r foo # search` and `rg TODO # x` as naming files, so the working directory was not checked for env files. Every command with a comment is now also read with the comment removed, as the shell runs it (#308)
 - In inline code (`python3 -c`, `node -e`, and a tool's `code` field), a quote in a comment (`# don't`, `/* it's */`) paired with the next quote and shifted every pair after it, so a path read later in the code was not scanned. Every quote is now tried as the opening one (#309)
+- `export`, `export -p`, `set`, `declare`, `typeset` and zsh's `local` print every variable when given no names, but only `env` and `printenv` were treated as printing the environment, so the values went unscanned. They are now, behind `builtin`, `command` and `time` too, and `declare -p NAME`, zsh's `typeset NAME` and the like scan the variables they name; an operand only the shell's expansion resolves (`declare -p "$v"`) counts as a dump (#313)
 
 ## v0.10.0 (2026-10-11)
 

@@ -367,7 +367,8 @@ export interface CommandRefs {
   paths: string[];
   // Environment variables the command names explicitly.
   envVars: string[];
-  // Whether the command dumps the whole environment (bare `env` / `printenv`).
+  // Whether the command dumps the whole environment (bare `env` / `printenv`,
+  // `export -p`, `set`, `declare -p`).
   dumpsEnvironment: boolean;
   // Whether the command searches the working directory because it was given no
   // file to search. `rg PATTERN` is the ordinary way to search a repository and
