@@ -5,12 +5,12 @@
 // turns a command line into the files it may print and the environment it may
 // expose, leaving the parsing to shell.ts.
 
-import path from "node:path";
 import {
   ARGUMENT_ONLY_COMMANDS,
   asksForRecursion,
   type CommandRefs,
   classifyCommand,
+  commandName,
   editsInPlace,
   GIT_GLOBAL_FLAGS_WITH_OPERAND,
   GREP_FAMILY,
@@ -62,13 +62,13 @@ function findCommandIndex(tokens: ShellToken[]): number {
   const lead = leadCommandIndex(tokens);
   if (lead === -1) return 0;
 
-  const leadName = path.basename(tokens[lead]?.value ?? "");
+  const leadName = commandName(tokens[lead]?.value ?? "");
   if (!WRAPPER_COMMANDS.has(leadName)) return lead;
 
   for (let i = lead + 1; i < tokens.length; i++) {
     const tok = tokens[i];
     if (tok === undefined || isNonCommandToken(tok)) continue;
-    const name = path.basename(tok.value);
+    const name = commandName(tok.value);
     if (isWrapperTarget(name) || ARGUMENT_ONLY_COMMANDS.has(name)) return i;
   }
   return lead;
@@ -193,7 +193,7 @@ function inspectEnvironmentCommand(tokens: ShellToken[]): {
   const cmdToken = tokens[start];
   if (cmdToken === undefined) return nothing;
 
-  const name = path.basename(cmdToken.value);
+  const name = commandName(cmdToken.value);
   if (name !== "env" && name !== "printenv") return nothing;
 
   // `printenv` prints the whole environment unless it is given variables to
@@ -273,6 +273,10 @@ function isInlineCodeFlag(cmd: string, token: string): boolean {
     // own, or the `c` is part of something else's value.
     return /^-[abefhilmnpuvxCPT]*c$/.test(token);
   }
+  // Python bundles its switches as the shells do: `python3 -Ic` is `-I -c`.
+  // The letters before the `c` are the switches that take no value.
+  if (cmd === "python" || cmd === "python3")
+    return /^-[bBdEhiIOPqRsSuvVx]*c$/.test(token);
   if (token === "-r") return true; // php -r
   // `node -p` and `bun -p` evaluate the expression and print its value.
   if ((cmd === "node" || cmd === "bun") && /^(?:-p|--print)$/.test(token))
@@ -408,7 +412,7 @@ function stdinPrograms(
 
   for (const { tokens, afterPipe } of segments) {
     const start = findCommandIndex(tokens);
-    const cmd = path.basename(tokens[start]?.value ?? "");
+    const cmd = commandName(tokens[start]?.value ?? "");
     // `source /dev/stdin` and `. /dev/stdin` run what they are piped too.
     const interpreter =
       INLINE_CODE_COMMANDS.has(cmd) || cmd === "source" || cmd === ".";
@@ -527,7 +531,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
   const cmdToken = tokens[start];
   if (cmdToken === undefined) return refs;
 
-  const cmd = path.basename(cmdToken.value);
+  const cmd = commandName(cmdToken.value);
   const operands = tokens.slice(start + 1);
 
   // `< secrets cat` puts the redirection before the command, so its target is
@@ -548,9 +552,20 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     }
   }
 
-  // In-place editing sends the result back to the file, so nothing reaches
-  // stdout and nothing is read into the conversation.
+  // In-place editing sends the result back to the file, so the files are not
+  // read into the conversation. The code that does the editing still runs
+  // with the terminal as its stdout: `perl -pi -e 'BEGIN { print %ENV }' f`
+  // and a `system()` in it print there, so that code is read.
   if (editsInPlace(cmd, operands)) {
+    if (classifyCommand(cmd).takesInlineCode) {
+      for (let k = 0; k < operands.length - 1; k++) {
+        const flag = operands[k];
+        const code = operands[k + 1];
+        if (flag === undefined || code === undefined || flag.redirect) continue;
+        if (!isInlineCodeFlag(cmd, flag.value)) continue;
+        readProgram(refs, cmd, code.value, depth);
+      }
+    }
     return refs;
   }
 
@@ -583,6 +598,12 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
   let skipNext = false;
   let collectNext = false;
   let codeNext = false;
+  let denoEval = false;
+  // The first word after the command that is not a flag: a subcommand such as
+  // deno's `eval`, as opposed to a file of that name further along.
+  const subcommand = operands.find(
+    (t) => !t.redirect && !t.value.startsWith("-"),
+  );
   let inlineCodeSeen = false;
   let patternSkipped = false;
   let gitSubcommandSeen = false;
@@ -638,6 +659,19 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
       isInlineCodeFlag(cmd, tok.value)
     ) {
       codeNext = true;
+      continue;
+    }
+
+    // `deno eval` takes its code as the first operand after its own flags,
+    // some of which take a value (`--ext ts`). Every word after `eval` is read
+    // as code, rather than working out which of those flags take one; a flag
+    // read as code names nothing. deno has no `-e`.
+    if (cmd === "deno" && tok === subcommand && tok.value === "eval") {
+      denoEval = true;
+      continue;
+    }
+    if (denoEval) {
+      readProgram(refs, cmd, tok.value, depth);
       continue;
     }
 

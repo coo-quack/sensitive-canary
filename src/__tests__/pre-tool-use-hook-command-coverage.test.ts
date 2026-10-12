@@ -814,6 +814,8 @@ describe("pre-tool-use-hook — command classification", () => {
       "python3 -c 'import os; print(os.environ[\"TOKEN\"])'",
       "node -p process.env.TOKEN",
       "echo 'p ENV' | ruby",
+      "python3.12 -c 'import os; print(os.environ)'",
+      "python3 -Ic 'import os; print(os.environ)'",
     ])("%j blocks when the environment holds a secret", (command) => {
       const result = runBashHook(command, secretEnv);
       expect(result.exitCode).toBe(2);
