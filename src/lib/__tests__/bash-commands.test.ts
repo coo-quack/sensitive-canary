@@ -783,3 +783,78 @@ describe("comments", () => {
     expect(paths("cat > s.sh <<'EOF'\n# it's\ncat .env\nEOF")).toEqual([]);
   });
 });
+
+// The shell's own listings print the environment as `env` does. Measured with
+// a secret exported into a clean environment: every case in the first table
+// printed it in bash 5, zsh 5 or both, no case in the second printed it in
+// either, and in the third each named variable was printed by at least one
+// shell except where the table names none.
+describe("shell builtins that list variables", () => {
+  it.each([
+    "export",
+    "export -p",
+    "export -n",
+    "set",
+    "set > vars.txt",
+    "set | grep KEY",
+    "declare",
+    "declare -p",
+    "declare -x",
+    "declare -px",
+    "declare -xp",
+    "typeset",
+    "typeset -p",
+    "typeset -x",
+    "local",
+    "builtin declare -p",
+    "command export -p",
+    "if true; then set; fi",
+    "ls && export -p",
+    "echo $(declare -px)",
+    "bash -c 'export -p'",
+    "export -p # all of them",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    "export FOO=bar",
+    "export FOO",
+    "export PATH=$PATH:/opt/bin",
+    "set -o",
+    "set -e",
+    "set -- a b",
+    "set -euo pipefail",
+    "declare -f",
+    "declare -F",
+    "typeset -f",
+    "declare -a list",
+    "declare FOO=1",
+    "command -v set",
+    "builtin",
+    "echo set",
+    "echo export -p",
+    "ls set",
+  ])("%j does not dump the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(false);
+  });
+
+  // Given names, the listing prints only those, so only those are scanned. A
+  // plain `export NAME` exports it and prints nothing.
+  it.each([
+    ["declare -p TOKEN", ["TOKEN"]],
+    ["declare TOKEN", ["TOKEN"]],
+    ["typeset TOKEN", ["TOKEN"]],
+    ["typeset -p TOKEN OTHER", ["TOKEN", "OTHER"]],
+    ["local TOKEN", ["TOKEN"]],
+    ["export -p TOKEN", ["TOKEN"]],
+    ["declare -p TOKEN > out.txt", ["TOKEN"]],
+    ["declare FOO=1 TOKEN", ["TOKEN"]],
+    ["export TOKEN", []],
+    ["export TOKEN=1", []],
+  ])("%j names %j", (command, named) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.dumpsEnvironment).toBe(false);
+    expect(refs.envVars).toEqual(named);
+  });
+});

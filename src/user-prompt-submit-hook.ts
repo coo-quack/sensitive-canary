@@ -84,10 +84,17 @@ async function consultPiiSentinel(
       "",
       "Fix the entry, or remove it to stop asking pii-sentinel.",
     ]);
-  const { verdicts, unavailable } = await judge(
+  const { verdicts, unavailable, refused } = await judge(
     [{ source: "prompt", text: prompt }],
     config,
   );
+  if (refused !== null)
+    blockPrompt([
+      "the pii-sentinel socket was refused, and nothing was sent — blocked",
+      `  ${connectionTarget(config)}: ${refused}`,
+      "",
+      'Make every directory on its path writable only by you (`chmod go-w <directory>`), move the socket to one that is, remove the "piiSentinel" entry, or add [allow-pii] to your prompt. "onUnavailable" does not apply to a refused socket.',
+    ]);
   const verdict = verdicts[0];
   if (verdict && reachesBlockLevel(verdict.level, config)) {
     const findings = verdictFindings(verdict);

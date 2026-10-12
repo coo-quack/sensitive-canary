@@ -56,7 +56,24 @@ import {
 // unclassifiable name the search continues, since that name may be a wrapper
 // flag's value rather than the command.
 function findCommandIndex(tokens: ShellToken[]): number {
-  let lead = -1;
+  const lead = leadCommandIndex(tokens);
+  if (lead === -1) return 0;
+
+  const leadName = path.basename(tokens[lead]?.value ?? "");
+  if (!WRAPPER_COMMANDS.has(leadName)) return lead;
+
+  for (let i = lead + 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok === undefined || isNonCommandToken(tok)) continue;
+    const name = path.basename(tok.value);
+    if (isWrapperTarget(name) || ARGUMENT_ONLY_COMMANDS.has(name)) return i;
+  }
+  return lead;
+}
+
+// Index of the first token that is not a flag, redirection, keyword or
+// `VAR=value` assignment, or -1 when there is none.
+function leadCommandIndex(tokens: ShellToken[]): number {
   // A redirection may come before the command — `< secrets cat` is `cat` reading
   // `secrets`. The operator is skipped as a non-command token, but its target is
   // an ordinary word, so `secrets` was taken for the command name and the real
@@ -75,32 +92,81 @@ function findCommandIndex(tokens: ShellToken[]): number {
       continue;
     }
     if (isNonCommandToken(token)) continue;
-    lead = i;
-    break;
+    return i;
   }
-  if (lead === -1) return 0;
+  return -1;
+}
 
-  const leadName = path.basename(tokens[lead]?.value ?? "");
-  if (!WRAPPER_COMMANDS.has(leadName)) return lead;
+// Shell builtins that print variables with their values. Given no names,
+// `export` (with or without `-p`), `declare`, `typeset` and zsh's `local` list
+// every variable, and so does a bare `set`; the hook sees only its own
+// environment, so a listing is scanned as a dump of that. Given names,
+// `declare -p NAME`, `export -p NAME` in zsh and zsh's `typeset NAME` print
+// those, so the names are scanned, while a bare `export NAME` prints nothing.
+// `-f` and `-F` list functions instead. A builtin cannot run behind `sudo` or
+// `env`, only behind `builtin` or `command`, and `command -v set` only
+// describes it.
+const VARIABLE_LISTING_BUILTINS = new Set([
+  "export",
+  "declare",
+  "typeset",
+  "local",
+  "set",
+]);
 
-  for (let i = lead + 1; i < tokens.length; i++) {
-    const tok = tokens[i];
-    if (tok === undefined || isNonCommandToken(tok)) continue;
-    const name = path.basename(tok.value);
-    if (isWrapperTarget(name) || ARGUMENT_ONLY_COMMANDS.has(name)) return i;
+function inspectVariableBuiltin(
+  tokens: ShellToken[],
+): { dumps: boolean; named: string[] } | null {
+  let start = leadCommandIndex(tokens);
+  let name = tokens[start]?.value;
+  if (name === "builtin" || name === "command") {
+    const next = tokens[start + 1];
+    if (next === undefined || next.redirect || next.value.startsWith("-"))
+      return null;
+    start += 1;
+    name = next.value;
   }
-  return lead;
+  if (name === undefined || !VARIABLE_LISTING_BUILTINS.has(name)) return null;
+
+  const flags: string[] = [];
+  const operands: string[] = [];
+  const rest = tokens.slice(start + 1);
+  for (let j = 0; j < rest.length; j++) {
+    const t = rest[j];
+    if (t === undefined) continue;
+    if (t.redirect) {
+      j++; // its target
+      continue;
+    }
+    if (/^[-+]/.test(t.value)) flags.push(t.value);
+    else operands.push(t.value);
+  }
+  if (name === "set")
+    return { dumps: flags.length === 0 && operands.length === 0, named: [] };
+  if (operands.length === 0)
+    return { dumps: !flags.some((f) => /^-.*[fF]/.test(f)), named: [] };
+  const printsNamed = name !== "export" || flags.some((f) => /^-.*p/.test(f));
+  return {
+    dumps: false,
+    named: printsNamed
+      ? operands.filter((o) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(o))
+      : [],
+  };
 }
 
 // `env` and `printenv` print the environment unless they are being used to run
 // another command. `sudo printenv` counts; `env FOO=1 cat f` does not. The
 // command is located with findCommandIndex, so wrapper flags and operands
-// (`sudo -u root printenv`, `timeout 5 env`) cannot hide it.
+// (`sudo -u root printenv`, `timeout 5 env`) cannot hide it. The shell builtins
+// that list variables are read first.
 function inspectEnvironmentCommand(tokens: ShellToken[]): {
   dumps: boolean;
   named: string[];
 } {
   const nothing = { dumps: false, named: [] };
+
+  const builtin = inspectVariableBuiltin(tokens);
+  if (builtin !== null) return builtin;
 
   const start = findCommandIndex(tokens);
   const cmdToken = tokens[start];
