@@ -16,6 +16,7 @@ import {
   GREP_FAMILY,
   gitLineRangeFile,
   gitSubcommandPrintsFiles,
+  INLINE_CODE_COMMANDS,
   isWrapperTarget,
   MAX_NESTING_DEPTH,
   mergeRefs,
@@ -31,9 +32,10 @@ import {
   extractSubstitutions,
   findComments,
   isNonCommandToken,
+  type ShellSegment,
   type ShellToken,
-  stripHeredocBodies,
-  tokenizeCommand,
+  splitHeredocBodies,
+  tokenizeSegments,
 } from "./shell.ts";
 
 // Index of the token naming the command whose operands matter.
@@ -72,7 +74,9 @@ function findCommandIndex(tokens: ShellToken[]): number {
 }
 
 // Index of the first token that is not a flag, redirection, keyword or
-// `VAR=value` assignment, or -1 when there is none.
+// `VAR=value` assignment, or -1 when there is none. `function NAME` is skipped
+// as a keyword with its name, so `function f { env; }` leads with `env`, as
+// `f() { env; }` does.
 function leadCommandIndex(tokens: ShellToken[]): number {
   // A redirection may come before the command — `< secrets cat` is `cat` reading
   // `secrets`. The operator is skipped as a non-command token, but its target is
@@ -89,6 +93,10 @@ function leadCommandIndex(tokens: ShellToken[]): number {
     }
     if (token.redirect) {
       skipRedirectTarget = true;
+      continue;
+    }
+    if (token.value === "function") {
+      i++; // its name
       continue;
     }
     if (isNonCommandToken(token)) continue;
@@ -310,8 +318,9 @@ function readCommandLine(command: string, depth: number): CommandRefs {
 
   if (depth > MAX_NESTING_DEPTH) return refs;
 
-  // Heredoc bodies are text, not commands; strip them before any other pass.
-  const text = stripHeredocBodies(command);
+  // Heredoc bodies are text, not commands, unless an interpreter reads one as
+  // its program (stdinPrograms); strip them before any other pass.
+  const { text, bodies } = splitHeredocBodies(command);
 
   // `echo $(cat secrets)` reads secrets just as `cat secrets` does.
   for (const inner of extractSubstitutions(text)) {
@@ -324,12 +333,22 @@ function readCommandLine(command: string, depth: number): CommandRefs {
   // what bash does with `2>&1`, `>|` and `&>`. Where the two agree, a
   // segment is identical and is processed once.
   const readings = [
-    tokenizeCommand(text),
-    tokenizeCommand(text, { joinRedirections: true }),
+    tokenizeSegments(text),
+    tokenizeSegments(text, { joinRedirections: true }),
   ];
   const seen = new Set<string>();
+  const programsRead = new Set<string>();
   for (const segments of readings) {
-    for (const tokens of segments) {
+    // `echo env | bash` runs what echo prints, read the way `bash -c` is. The
+    // readings mostly find the same programs, and each is read once.
+    for (const program of stdinPrograms(segments, bodies)) {
+      if (programsRead.has(program)) continue;
+      programsRead.add(program);
+      mergeRefs(refs, extractCommandRefs(program, depth + 1));
+      refs.paths.push(...extractQuotedLiterals(program));
+    }
+
+    for (const { tokens } of segments) {
       const key = JSON.stringify(tokens);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -343,6 +362,126 @@ function readCommandLine(command: string, depth: number): CommandRefs {
   }
 
   return refs;
+}
+
+// The text a command line hands a shell or interpreter on stdin, which it runs
+// as its program: a here-string (`bash <<< env`), the heredoc bodies when one
+// of them feeds an interpreter (`bash <<'EOF'`), and what an earlier command
+// writes into a pipe the interpreter reads, when that text is on the command
+// line: what `echo` and `printf` print, and the here-strings and heredocs
+// handed to anything else (`cat <<'EOF' | bash`). `cat script | bash` runs a
+// file's contents, as `bash script` does, and is left alone.
+//
+// Each of these is over-read rather than matched exactly, so a mistake can only
+// add scanning. The bodies are read for a heredoc on any interpreter in the
+// line, or on any command before one that reads a pipe, since pairing one body
+// with one `<<` would have to agree with the shell's order across both
+// readings. What reaches a pipe is everything those commands wrote earlier on
+// the line, not only in the segment just before it: in `{ echo env; } | bash`
+// that segment is the closing brace. The operands of `echo` and `printf` are
+// read joined by spaces, as `echo` prints them, and for `printf` through its
+// format as well.
+// Text holding a backslash escape is read again with it decoded, which
+// `printf`, `echo -e` and zsh's `echo` do. Text that only exists once the
+// command runs is not read: a variable (`echo $v | bash`), a substitution
+// (`bash <<< $(…)`, `bash < <(echo env)`), or the output of several commands
+// joined into one line (`(echo -n en; echo v) | bash`).
+function stdinPrograms(segments: ShellSegment[], bodies: string[]): string[] {
+  const programs: string[] = [];
+  const written: string[] = [];
+  let heredocWritten = false;
+  let heredocFed = false;
+
+  for (const { tokens, afterPipe } of segments) {
+    const start = findCommandIndex(tokens);
+    const cmd = path.basename(tokens[start]?.value ?? "");
+    // `source /dev/stdin` and `. /dev/stdin` run what they are piped too.
+    const interpreter =
+      INLINE_CODE_COMMANDS.has(cmd) || cmd === "source" || cmd === ".";
+    if (interpreter && afterPipe) {
+      for (const text of written) programs.push(text);
+      if (heredocWritten) heredocFed = true;
+    }
+
+    const hereStrings: string[] = [];
+    let heredoc = false;
+    const words: string[] = [];
+    for (let k = 0; k < tokens.length; k++) {
+      const t = tokens[k];
+      if (t === undefined) continue;
+      if (t.redirect) {
+        const target = tokens[k + 1];
+        if (t.value === "<<<" && target !== undefined && !target.redirect)
+          hereStrings.push(target.value);
+        if (t.value === "<<") heredoc = true;
+        k++; // its target, or a heredoc delimiter
+        continue;
+      }
+      if (k > start) words.push(t.value);
+    }
+
+    if (interpreter) {
+      programs.push(...hereStrings);
+      if (heredoc) heredocFed = true;
+      continue;
+    }
+    for (const text of hereStrings) written.push(text);
+    if (heredoc) heredocWritten = true;
+    if (cmd === "echo" || cmd === "printf") {
+      const texts = [words.join(" ")];
+      if (cmd === "printf" && words.length > 0) texts.push(printfOutput(words));
+      for (const text of texts) {
+        written.push(text);
+        const decoded = decodeEscapes(text);
+        if (decoded !== text) written.push(decoded);
+      }
+    }
+  }
+  if (heredocFed) for (const body of bodies) programs.push(body);
+  return programs;
+}
+
+// What `printf FORMAT ARGS…` prints, as far as the text goes: each conversion
+// takes the next argument, and the format is reused while arguments remain, so
+// `printf 'e%sv' n` prints `env`. Escapes are left to decodeEscapes.
+function printfOutput(words: string[]): string {
+  const [format = "", ...args] = words[0] === "--" ? words.slice(1) : words;
+  const conversion = /%%|%[-+ #0]*\d*(?:\.\d*)?[a-zA-Z]/g;
+  let out = "";
+  let next = 0;
+  do {
+    out += format.replace(conversion, (spec) =>
+      spec === "%%" ? "%" : (args[next++] ?? ""),
+    );
+  } while (next > 0 && next < args.length);
+  return out;
+}
+
+// The backslash escapes `printf`, `echo -e` and zsh's `echo` turn into
+// characters: `\n`, `\t` and the like, an octal byte (`\156`, or `\0156` for
+// echo) and a hex one (`\x65`).
+function decodeEscapes(text: string): string {
+  const named: Record<string, string> = {
+    a: "\x07",
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+    "\\": "\\",
+  };
+  return text.replace(
+    /\\(?:0([0-7]{1,3})|([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|([abfnrtv\\]))/g,
+    (_, echoOctal?: string, octal?: string, hex?: string, letter?: string) => {
+      if (letter !== undefined) return named[letter] ?? letter;
+      const code =
+        hex !== undefined
+          ? Number.parseInt(hex, 16)
+          : Number.parseInt(echoOctal ?? octal ?? "0", 8);
+      return String.fromCharCode(code);
+    },
+  );
 }
 
 // File paths one segment of a command line may print, plus anything found inside
