@@ -896,6 +896,8 @@ describe("programs a command line hands to a shell", () => {
     "printf 'env\\n' | sh",
     "printf '%s' env | sh",
     "printf 'e%sv' n | bash",
+    "printf '%s\\n' ls env | sh",
+    "printf -- '%s' env | sh",
     "printf '%s%s\\n' e nv ls '' | sh",
     "printf 'e\\156v' | bash",
     "printf '\\x65nv' | bash",

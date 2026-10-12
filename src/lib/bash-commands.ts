@@ -379,8 +379,8 @@ function readCommandLine(command: string, depth: number): CommandRefs {
 // readings. What reaches a pipe is everything those commands wrote earlier on
 // the line, not only in the segment just before it: in `{ echo env; } | bash`
 // that segment is the closing brace. The operands of `echo` and `printf` are
-// read joined by spaces, as `echo` prints them, one at a time, as a
-// `printf '%s\n'` format prints them, and for `printf` through its format.
+// read joined by spaces, as `echo` prints them, and for `printf` through its
+// format as well.
 // Text holding a backslash escape is read again with it decoded, which
 // `printf`, `echo -e` and zsh's `echo` do. Text that only exists once the
 // command runs is not read: a variable (`echo $v | bash`), a substitution
@@ -428,7 +428,7 @@ function stdinPrograms(segments: ShellSegment[], bodies: string[]): string[] {
     for (const text of hereStrings) written.push(text);
     if (heredoc) heredocWritten = true;
     if (cmd === "echo" || cmd === "printf") {
-      const texts = [words.join(" "), ...words];
+      const texts = [words.join(" ")];
       if (cmd === "printf" && words.length > 0) texts.push(printfOutput(words));
       for (const text of texts) {
         written.push(text);
@@ -445,7 +445,7 @@ function stdinPrograms(segments: ShellSegment[], bodies: string[]): string[] {
 // takes the next argument, and the format is reused while arguments remain, so
 // `printf 'e%sv' n` prints `env`. Escapes are left to decodeEscapes.
 function printfOutput(words: string[]): string {
-  const [format = "", ...args] = words;
+  const [format = "", ...args] = words[0] === "--" ? words.slice(1) : words;
   const conversion = /%%|%[-+ #0]*\d*(?:\.\d*)?[a-zA-Z]/g;
   let out = "";
   let next = 0;
