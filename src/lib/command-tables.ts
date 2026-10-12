@@ -6,6 +6,7 @@
 // every table has a case per entry in the suite and an equality assertion
 // beside it — a generated case cannot notice a deletion.
 
+import path from "node:path";
 import type { ShellToken } from "./shell.ts";
 
 // Commands that write the contents of every non-flag argument to stdout.
@@ -211,6 +212,18 @@ export const INLINE_CODE_COMMANDS = new Set([
 ]);
 
 export const POSIX_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+
+// The name a command word is looked up by in these tables: its basename, with a
+// version suffix dropped from an interpreter that is installed under one, so
+// `/usr/bin/python3.12` reads as `python`, `python3.13t` (the free-threaded
+// build) as `python`, `perl5.34` as `perl` and `node22` as `node`. A name
+// INLINE_CODE_COMMANDS lists, such as `python3`, is left as it is.
+const VERSIONED_INTERPRETER = /^(python|ruby|perl|php|node)\d+(?:\.\d+)*t?$/;
+export function commandName(word: string): string {
+  const name = path.basename(word);
+  if (INLINE_CODE_COMMANDS.has(name)) return name;
+  return VERSIONED_INTERPRETER.exec(name)?.[1] ?? name;
+}
 
 // git subcommands that can write file contents to stdout. Blob references such
 // as `git show HEAD:.env` name history, not the working tree, and stay

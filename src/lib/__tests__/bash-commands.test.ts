@@ -17,6 +17,7 @@ import { extractCommandRefs } from "../bash-commands.ts";
 import {
   ARGUMENT_ONLY_COMMANDS,
   COUNT_ONLY_COMMANDS,
+  commandName,
   FILE_READ_COMMANDS,
   GIT_GLOBAL_FLAGS_WITH_OPERAND,
   GIT_READ_SUBCOMMANDS,
@@ -1013,5 +1014,109 @@ describe("interpreters reading the environment", () => {
     "python3 -c 'print(1)'",
   ])("%j does not dump the environment", (command) => {
     expect(extractCommandRefs(command).dumpsEnvironment).toBe(false);
+  });
+});
+
+// An interpreter installed under a versioned name, Python's bundled switches,
+// and `deno eval` all run the code that follows, as `python3 -c` does. The
+// Python, Perl and deno spellings were run against a clean environment and
+// printed the value; `deno eval` runs with every permission.
+describe("inline code behind other spellings", () => {
+  it.each([
+    "python3.12 -c \"print(open('secrets').read())\"",
+    "/opt/homebrew/bin/python3.14 -c \"print(open('secrets').read())\"",
+    "sudo python3.12 -c \"print(open('secrets').read())\"",
+    "python3 -Sc \"print(open('secrets').read())\"",
+    "python3 -IuSc \"print(open('secrets').read())\"",
+    // `-E` takes no code, so the `-c` after it was missed.
+    "python3 -E -c \"print(open('secrets').read())\"",
+    "ruby3.3 -e \"puts File.read('secrets')\"",
+    "deno eval \"console.log(Deno.readTextFileSync('secrets'))\"",
+    "deno eval --ext ts \"console.log(Deno.readTextFileSync('secrets'))\"",
+    "echo \"print(open('secrets').read())\" | python3.12",
+  ])("%j reads secrets", (command) => {
+    expect(paths(command)).toContain("secrets");
+  });
+
+  it.each([
+    "python3.12 -c 'import os; print(os.environ)'",
+    "python3 -Ic 'import os; print(os.environ)'",
+    "python3 -Ec 'import os; print(os.environ)'",
+    "perl5.34 -e 'print %ENV'",
+    "node22 -e 'console.log(process.env)'",
+    "php8.3 -r 'print_r(getenv());'",
+    "deno eval 'console.log(Deno.env.toObject())'",
+    "deno eval -p 'Deno.env.toObject()'",
+    "echo 'console.log(Deno.env.toObject())' | deno run -A -",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  // `-E` ignores Python's own variables and takes no code; read as Perl's
+  // `-e`, it made the script name the program.
+  it.each([
+    "python3 -E script.py",
+    "python3 -m http.server",
+    "python3.12 script.py",
+    "deno run main.ts",
+    'deno run -A eval "cat secrets"',
+    // `-W` takes a value, so this `c` is the value and the program is a file.
+    "python3 -Wc \"print(open('secrets').read())\"",
+    "pythonista -c x",
+  ])("%j reads no inline code", (command) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.paths).toEqual([]);
+    expect(refs.dumpsEnvironment).toBe(false);
+  });
+
+  // A wrapper or `printenv` named by its path is the same command.
+  it("reads past a wrapper named by its path", () => {
+    expect(paths("/usr/bin/sudo cat secrets")).toContain("secrets");
+    expect(extractCommandRefs("/usr/bin/printenv").dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    ["python3.12", "python"],
+    ["/usr/bin/python3.12", "python"],
+    ["python3", "python3"],
+    ["python3.13t", "python"],
+    ["python3.", "python3."],
+    ["python3.12-config", "python3.12-config"],
+    ["perl5.34", "perl"],
+    ["ruby3.3", "ruby"],
+    ["php8.3", "php"],
+    ["node22", "node"],
+    ["pythonista", "pythonista"],
+    ["bash5", "bash5"],
+    ["/bin/cat", "cat"],
+  ])("commandName(%j) is %j", (word, name) => {
+    expect(commandName(word)).toBe(name);
+  });
+});
+
+// An in-place edit writes the files back rather than printing them, but the
+// code doing the edit still prints to the terminal: perl run this way printed
+// a variable exported into a clean environment from `BEGIN` and `system()`.
+describe("inline code of an in-place edit", () => {
+  it.each([
+    ["perl -pi -e 'BEGIN { print %ENV }' f.txt", true, []],
+    ["perl -i -pe 'BEGIN { print $ENV{TOKEN} }' f.txt", false, ["TOKEN"]],
+    ["ruby -pi -e 'BEGIN { p ENV }' f.txt", true, []],
+    ["perl -pi -e 's/a/b/' f.txt", false, []],
+    ["sed -i 's/a/b/' f.txt", false, []],
+  ])("%j", (command, dumps, named) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.dumpsEnvironment).toBe(dumps);
+    expect(refs.envVars).toEqual(named);
+    expect(refs.paths).toEqual([]);
+  });
+
+  it("reads the files the code names, not the files it edits", () => {
+    expect(
+      paths("perl -pi -e 'BEGIN { open F, \"secrets\"; print <F> }' f.txt"),
+    ).toContain("secrets");
+    expect(
+      paths("perl -pi -e 'BEGIN { open F, \"secrets\"; print <F> }' f.txt"),
+    ).not.toContain("f.txt");
   });
 });
