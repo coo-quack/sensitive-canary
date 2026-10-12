@@ -103,9 +103,9 @@ function leadCommandIndex(tokens: ShellToken[]): number {
 // environment, so a listing is scanned as a dump of that. Given names,
 // `declare -p NAME`, `export -p NAME` in zsh and zsh's `typeset NAME` print
 // those, so the names are scanned, while a bare `export NAME` prints nothing.
-// `-f` and `-F` list functions instead. zsh's `-m` takes patterns, and an
-// operand that is not a plain name (`"$v"`, `${!AWS_*}`) names what only the
-// shell's expansion decides, so either is scanned as a dump. A builtin cannot
+// `-f` and `-F` list functions instead. An operand that is not a plain name
+// (`"$v"`, `${!AWS_*}`, a zsh `-m` pattern such as `'AWS*'`) names what only
+// the shell decides, so it is scanned as a dump. A builtin cannot
 // run behind `sudo` or `env`, only behind the prefixes below, and
 // `command -v set` only describes it.
 const BUILTIN_PREFIXES = new Set([
@@ -155,9 +155,6 @@ function inspectVariableBuiltin(
     return { dumps: flags.length === 0 && operands.length === 0, named: [] };
   if (operands.length === 0)
     return { dumps: !flags.some((f) => /^-.*[fF]/.test(f)), named: [] };
-  // zsh's `typeset -m 'AWS*'` takes patterns, and a pattern can match any name.
-  if (name !== "export" && flags.some((f) => /^-.*m/.test(f)))
-    return { dumps: true, named: [] };
   const printsNamed = name !== "export" || flags.some((f) => /^-.*p/.test(f));
   if (!printsNamed) return { dumps: false, named: [] };
   const named: string[] = [];

@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import {
   chmodSync,
+  chownSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -308,6 +309,23 @@ describe("socket checks", () => {
   it("reports a missing socket as ENOENT", async () => {
     await expect(checkSocket(join(dir, "gone.sock"))).rejects.toThrow("ENOENT");
   });
+
+  // Only root can hand a directory to another user, so this runs as root (the
+  // Linux container run) and is skipped elsewhere.
+  it.runIf(process.getuid?.() === 0)(
+    "refuses a directory that belongs to another user",
+    async () => {
+      const d = makeDir("theirs", 0o755);
+      const path = join(d, "x.sock");
+      await serveAt(path);
+      chownSync(d, 65534, 65534);
+      const refusal = checkSocket(path);
+      await expect(refusal).rejects.toThrow(
+        "belongs to another user: move the socket to a directory you own",
+      );
+      await expect(checkSocket(path)).rejects.toBeInstanceOf(UnsafeSocketError);
+    },
+  );
 
   it("refuses an abstract socket name", async () => {
     await expect(checkSocket("\0pii-sentinel")).rejects.toThrow("abstract");
