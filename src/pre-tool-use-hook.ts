@@ -19,6 +19,7 @@ import {
 import {
   connectionTarget,
   judge,
+  REFUSED_SOCKET_NOTE,
   reachesBlockLevel,
   readPiiSentinelConfig,
   verdictFindings,
@@ -830,9 +831,9 @@ async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
     block(
       "pii-sentinel",
       [
-        `🚫 Blocked: the pii-sentinel socket at ${forOutput(connectionTarget(config))} was refused, and nothing was sent: ${forOutput(refused)}`,
+        `🚫 Blocked: the pii-sentinel socket at ${forOutput(connectionTarget(config))} was refused: ${forOutput(refused)}`,
         "",
-        'Another user could have put that socket in place. Make every directory on its path writable only by you (`chmod go-w <directory>`), move the socket to one that is, or remove the "piiSentinel" entry. "onUnavailable" does not apply: the server may be running, and falling back on the rules would skip it without a word.',
+        REFUSED_SOCKET_NOTE,
       ],
       hints,
     );

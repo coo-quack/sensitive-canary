@@ -103,9 +103,18 @@ function leadCommandIndex(tokens: ShellToken[]): number {
 // environment, so a listing is scanned as a dump of that. Given names,
 // `declare -p NAME`, `export -p NAME` in zsh and zsh's `typeset NAME` print
 // those, so the names are scanned, while a bare `export NAME` prints nothing.
-// `-f` and `-F` list functions instead. A builtin cannot run behind `sudo` or
-// `env`, only behind `builtin` or `command`, and `command -v set` only
-// describes it.
+// `-f` and `-F` list functions instead. zsh's `-m` takes patterns, and an
+// operand that is not a plain name (`"$v"`, `${!AWS_*}`) names what only the
+// shell's expansion decides, so either is scanned as a dump. A builtin cannot
+// run behind `sudo` or `env`, only behind the prefixes below, and
+// `command -v set` only describes it.
+const BUILTIN_PREFIXES = new Set([
+  "builtin",
+  "command",
+  "time",
+  "noglob",
+  "nocorrect",
+]);
 const VARIABLE_LISTING_BUILTINS = new Set([
   "export",
   "declare",
@@ -118,14 +127,15 @@ function inspectVariableBuiltin(
   tokens: ShellToken[],
 ): { dumps: boolean; named: string[] } | null {
   let start = leadCommandIndex(tokens);
-  let name = tokens[start]?.value;
-  if (name === "builtin" || name === "command") {
-    const next = tokens[start + 1];
-    if (next === undefined || next.redirect || next.value.startsWith("-"))
-      return null;
-    start += 1;
-    name = next.value;
+  while (BUILTIN_PREFIXES.has(tokens[start]?.value ?? "")) {
+    // The prefix's own flags and redirections come before the command.
+    const rest = tokens.slice(start + 1);
+    const next = leadCommandIndex(rest);
+    const own = next === -1 ? rest : rest.slice(0, next);
+    if (own.some((t) => t.value === "-v" || t.value === "-V")) return null;
+    start = next === -1 ? -1 : start + 1 + next;
   }
+  const name = tokens[start]?.value;
   if (name === undefined || !VARIABLE_LISTING_BUILTINS.has(name)) return null;
 
   const flags: string[] = [];
@@ -145,13 +155,18 @@ function inspectVariableBuiltin(
     return { dumps: flags.length === 0 && operands.length === 0, named: [] };
   if (operands.length === 0)
     return { dumps: !flags.some((f) => /^-.*[fF]/.test(f)), named: [] };
+  // zsh's `typeset -m 'AWS*'` takes patterns, and a pattern can match any name.
+  if (name !== "export" && flags.some((f) => /^-.*m/.test(f)))
+    return { dumps: true, named: [] };
   const printsNamed = name !== "export" || flags.some((f) => /^-.*p/.test(f));
-  return {
-    dumps: false,
-    named: printsNamed
-      ? operands.filter((o) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(o))
-      : [],
-  };
+  if (!printsNamed) return { dumps: false, named: [] };
+  const named: string[] = [];
+  for (const o of operands) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(o)) continue; // an assignment
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(o)) return { dumps: true, named: [] };
+    named.push(o);
+  }
+  return { dumps: false, named };
 }
 
 // `env` and `printenv` print the environment unless they are being used to run

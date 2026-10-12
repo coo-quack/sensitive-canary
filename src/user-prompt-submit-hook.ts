@@ -14,6 +14,7 @@ import {
 import {
   connectionTarget,
   judge,
+  REFUSED_SOCKET_NOTE,
   reachesBlockLevel,
   readPiiSentinelConfig,
   verdictFindings,
@@ -90,10 +91,11 @@ async function consultPiiSentinel(
   );
   if (refused !== null)
     blockPrompt([
-      "the pii-sentinel socket was refused, and nothing was sent — blocked",
+      "the pii-sentinel socket was refused — blocked",
       `  ${connectionTarget(config)}: ${refused}`,
       "",
-      'Make every directory on its path writable only by you (`chmod go-w <directory>`), move the socket to one that is, remove the "piiSentinel" entry, or add [allow-pii] to your prompt. "onUnavailable" does not apply to a refused socket.',
+      REFUSED_SOCKET_NOTE,
+      "To send this prompt anyway, add [allow-pii] to it.",
     ]);
   const verdict = verdicts[0];
   if (verdict && reachesBlockLevel(verdict.level, config)) {

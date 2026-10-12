@@ -48,8 +48,13 @@ export interface Judgement {
 }
 
 // A socket another user could have put in place. Kept apart from a server
-// that is not there, which `onUnavailable` covers.
+// that is not there, which `onUnavailable` covers. Each message ends with how
+// to fix that refusal, since the fix differs with the cause.
 export class UnsafeSocketError extends Error {}
+
+// What both hooks say under a refusal, after the reason.
+export const REFUSED_SOCKET_NOTE =
+  'Another user could have put that socket in place, so nothing was sent. Fix the path as the reason says, or remove the "piiSentinel" entry. "onUnavailable" does not apply: the server may be running, and falling back on the rules would skip it without a word.';
 
 const RANK: Record<Level, number> = { none: 0, low: 1, high: 2 };
 // The kernel follows at most this many symbolic links while resolving a path.
@@ -229,20 +234,27 @@ async function directory(
   gid: number,
 ): Promise<Directory> {
   owned(st, path, uid);
-  const writers = await otherWriters(st, gid);
+  const writers = await describeOtherWriters(st, gid);
   if (writers !== null && !(st.mode & 0o1000))
-    throw new UnsafeSocketError(`${path} can be written by ${writers}`);
+    throw new UnsafeSocketError(
+      `${path} can be written by ${writers}: run \`chmod go-w ${path}\` or move the socket to a directory only you can write to`,
+    );
   return { path, st, shared: writers !== null };
 }
 
 function owned(st: Stats, path: string, uid: number): void {
   if (st.uid !== uid && st.uid !== 0)
-    throw new UnsafeSocketError(`${path} belongs to another user`);
+    throw new UnsafeSocketError(
+      `${path} belongs to another user: move the socket to a directory you own`,
+    );
 }
 
-// Who besides us can write to the directory, or null when no one can. Group
-// write counts unless the group is ours alone.
-async function otherWriters(st: Stats, gid: number): Promise<string | null> {
+// Who besides us can write to the directory, in words for the refusal, or null
+// when no one can. Group write counts unless the group is ours alone.
+async function describeOtherWriters(
+  st: Stats,
+  gid: number,
+): Promise<string | null> {
   if (st.mode & 0o002) return "other users";
   if (st.mode & 0o020 && !(await groupIsPrivate(st.gid, gid)))
     return `its group (gid ${st.gid}), which cannot be shown to contain only you`;

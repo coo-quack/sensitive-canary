@@ -259,6 +259,8 @@ describe("socket checks", () => {
       config,
     );
     expect(refused).toContain("can be written by other users");
+    // The physical path: on macOS /tmp is a link to /private/tmp.
+    expect(refused).toMatch(/run `chmod go-w \S*\/open-0777`/);
     expect(unavailable).toBeNull();
     expect(received).toEqual([]);
   });
@@ -398,7 +400,10 @@ describe("PreToolUse hook with pii-sentinel", () => {
       expect(result.code).toBe(2);
       expect(result.stderr).toContain("pii-sentinel socket at");
       expect(result.stderr).toContain("can be written by other users");
-      expect(result.stderr).toContain("chmod go-w");
+      expect(result.stderr).toMatch(
+        new RegExp(`chmod go-w \\S*/refused-hook-${onUnavailable}\``),
+      );
+      expect(result.stderr).toContain('"onUnavailable" does not apply');
       expect(result.stderr).not.toContain("did not answer");
       expect(received).toEqual([]);
     },
