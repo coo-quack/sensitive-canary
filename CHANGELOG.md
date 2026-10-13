@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.11.0 (2026-10-13)
+
+### Breaking changes
+
+- A group-writable directory on the path to the pii-sentinel socket is accepted only when `/etc/nsswitch.conf` names no source other than `files` and `systemd` for `passwd`, `group` and `initgroups`, and, with `systemd`, only when its static records under `/etc/userdb` and the other directories it reads put no one else in the group. The group was judged from `/etc/group` and `/etc/passwd` alone, but LDAP, sssd, NIS, winbind and nss-systemd can add members those files do not show, and a local group's gid matching a directory group's is an ordinary accident. **This refuses group-writable socket directories where nsswitch.conf lists `sss`, `ldap` or another such source** (Fedora's default lists `sss`); `chmod g-w <directory>` fixes it (#310)
+- A socket the check refuses (a directory or socket another user could have put in place, or an abstract name) blocks even with `"onUnavailable": "allow"`. It was reported like a server that did not answer, so with `"allow"` pii-sentinel was skipped without a word for as long as the socket stayed there, while the server behind it may have been running. The block reason now says why the socket was refused and how to fix it, instead of suggesting to start the server, and a refused group-writable directory names its group (#314)
+
+### Fixes
+
+- A trailing comment hid what a command does: `env # list` and `printenv # all` were read as running a command, so the environment was not scanned, and `grep -r foo # search` and `rg TODO # x` as naming files, so the working directory was not checked for env files. Every command with a comment is now also read with the comment removed, as the shell runs it (#308)
+- In inline code (`python3 -c`, `node -e`, and a tool's `code` field), a quote in a comment (`# don't`, `/* it's */`) paired with the next quote and shifted every pair after it, so a path read later in the code was not scanned. Every quote is now tried as the opening one (#309)
+- `export`, `export -p`, `set`, `declare`, `typeset` and zsh's `local` print every variable when given no names, but only `env` and `printenv` were treated as printing the environment, so the values went unscanned. They are now, behind `builtin`, `command` and `time` too, and `declare -p NAME`, zsh's `typeset NAME` and the like scan the variables they name; an operand only the shell's expansion resolves (`declare -p "$v"`) counts as a dump (#313)
+- An environment dump in a function written with the `function` keyword (`function f { env; }`) was not read, because `function` was taken for the command. Neither was a program handed to a shell on stdin: `echo env | bash`, `printf 'e%sv' n | sh`, `cat <<'EOF' | bash`, `bash <<< env`, `echo env | source /dev/stdin`, and a heredoc fed to a local shell or interpreter (`bash <<'EOF'`, `python3 - <<'EOF'`), whose body was skipped as text. Program text written on the command line is now read the way `bash -c` is, for files as well as the environment, with `printf` formats and backslash escapes applied (#316)
+- Inline code that prints the environment in its own language was not read as an environment dump: `python3 -c 'print(os.environ)'`, `node -e 'console.log(process.env)'`, `ruby -e 'p ENV'`, `perl -e 'print %ENV'` and `php -r 'print_r(getenv());'` printed every value unscanned, and `os.environ["TOKEN"]` and the like went unscanned too. Code run with `-c`, `-e` or `-r`, handed over on stdin, or sent in a tool's `code` field is now read for both, and `node -p` / `bun -p` are read as inline code (#317)
+- Inline code was read only behind an interpreter's plain name and an exact flag: `python3.12 -c`, `perl5.34 -e` and the like, Python's bundled switches (`python3 -Ic`, `-Sc`) and `deno eval` ran their code unscanned. Versioned names now read as the interpreter, Python's switches are read the way the shells' are, and every operand after `deno eval` is read as code. `python3 -E script.py` no longer reads the script name as code (#319)
+- An in-place edit by `perl -pi -e` or `ruby -pi -e` was passed over whole, code included, though only the files go back to disk: `perl -pi -e 'BEGIN { print %ENV }' f.txt` printed the environment unscanned. The code is now read; the files it edits are still not
+
 ## v0.10.0 (2026-10-11)
 
 ### Breaking changes

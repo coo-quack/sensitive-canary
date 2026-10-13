@@ -374,6 +374,20 @@ describe("pre-tool-use-hook — shell parsing", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // A heredoc fed to a local shell is the program it runs.
+    it.each(["bash", "sh -s", "python3 -"])(
+      "%s heredoc reading a sensitive file should block",
+      (shell) => {
+        const file = writeFixture("local_shell_heredoc.txt", `key=${AWS_KEY}`);
+        const body = shell.startsWith("python")
+          ? `print(open('${file}').read())`
+          : `cat ${file}`;
+        const result = runBashHook(`${shell} <<'EOF'\n${body}\nEOF`);
+        expect(result.exitCode).toBe(2);
+        expect(result.blocked).toBe(true);
+      },
+    );
+
     it("command after the heredoc still scans", () => {
       const file = writeFixture("after_heredoc.txt", `key=${AWS_KEY}`);
       const result = runBashHook(`cat <<EOF\nhi\nEOF\ncat ${file}`);

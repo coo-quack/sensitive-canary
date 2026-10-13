@@ -17,6 +17,7 @@ import { extractCommandRefs } from "../bash-commands.ts";
 import {
   ARGUMENT_ONLY_COMMANDS,
   COUNT_ONLY_COMMANDS,
+  commandName,
   FILE_READ_COMMANDS,
   GIT_GLOBAL_FLAGS_WITH_OPERAND,
   GIT_READ_SUBCOMMANDS,
@@ -667,11 +668,12 @@ describe("the tables", () => {
   });
 });
 
-// A comment is not a command, and a quote, backquote, substitution, heredoc
+// A comment is not a command. A quote, backquote, substitution, heredoc
 // operator or trailing backslash inside one used to fold the lines after it into
-// a single word. The second reading, which blanks the comment, is what finds the
-// files those lines name.
-describe("comments that carry syntax past their end", () => {
+// a single word, and even a plain one was read as arguments. The second
+// reading, which blanks the comment, is what finds the files those lines name
+// and what the command does without its comment.
+describe("comments", () => {
   it.each([
     "# Check what's configured\ncat .env",
     '# "x\ncat .env',
@@ -716,23 +718,58 @@ describe("comments that carry syntax past their end", () => {
     expect(refs.dumpsEnvironment).toBe(true);
   });
 
-  // Commands whose comments carry none of the syntax read as they always did.
+  // A comment's words are not arguments, so the command reads as it would
+  // without the comment. The first reading's refs stay — the comment's words
+  // among them — because merging only adds; what the second reading adds is
+  // what the comment had hidden.
   it.each([
-    ["env # list", { paths: [], envVars: [], dumpsEnvironment: false }],
-    [
-      "printenv # all",
-      { paths: [], envVars: ["#", "all"], dumpsEnvironment: false },
-    ],
-    [
-      "rg TODO # find todos",
-      { paths: ["#", "find", "todos"], envVars: [], dumpsEnvironment: false },
-    ],
-    [
-      "grep -r foo # search",
-      { paths: ["#", "search"], envVars: [], dumpsEnvironment: false },
-    ],
-  ])("%j reads as it did on develop", (command, expected) => {
+    ["env # list", { envVars: [], dumpsEnvironment: true }],
+    ["env\t# list", { envVars: [], dumpsEnvironment: true }],
+    ["env FOO=1 # set one", { envVars: [], dumpsEnvironment: true }],
+    ["env -u HOME # unset one", { envVars: [], dumpsEnvironment: true }],
+    ["printenv # all", { envVars: ["#", "all"], dumpsEnvironment: true }],
+    ["sudo printenv # as root", { dumpsEnvironment: true }],
+    ["timeout 5 env # bounded", { dumpsEnvironment: true }],
+    ["env # list\nls", { dumpsEnvironment: true }],
+    ["ls # first\nenv # then", { dumpsEnvironment: true }],
+    ["env | sort # sorted", { dumpsEnvironment: true }],
+  ])("%j dumps the environment", (command, expected) => {
     expect(extractCommandRefs(command)).toMatchObject(expected);
+  });
+
+  it.each([
+    "rg TODO # find todos",
+    "grep -r foo # search",
+    "grep -rn foo # numbered",
+    "rg TODO # it's here",
+  ])("%j searches the working directory", (command) => {
+    expect(extractCommandRefs(command).searchesWorkingDirectory).toBe(true);
+  });
+
+  // The other direction: blanking the comment of a command that already says
+  // what it does finds no dump or search, so the cases above are not passing on
+  // every commented command now reading as one. The comment's words stay among
+  // the first reading's refs, as `printenv HOME # one` shows.
+  it.each([
+    ["env FOO=1 ls # run ls", { dumpsEnvironment: false }],
+    ["env -i FOO=1 # empty start", { dumpsEnvironment: false }],
+    ["env -S 'echo hi' # split", { dumpsEnvironment: false }],
+    [
+      "printenv HOME # one",
+      { envVars: ["HOME", "#", "one"], dumpsEnvironment: false },
+    ],
+    ["grep -r foo src # named", { searchesWorkingDirectory: false }],
+    ["rg TODO docs # named", { searchesWorkingDirectory: false }],
+    ["ls # list", { dumpsEnvironment: false, searchesWorkingDirectory: false }],
+    ["echo '# env' # quoted", { dumpsEnvironment: false }],
+    ["echo env#x", { dumpsEnvironment: false }],
+  ])("%j gains no dump or search from its comment", (command, expected) => {
+    expect(extractCommandRefs(command)).toMatchObject(expected);
+  });
+
+  it("does not read a dump that only a comment names", () => {
+    expect(extractCommandRefs("ls # env").dumpsEnvironment).toBe(false);
+    expect(extractCommandRefs("ls # printenv").dumpsEnvironment).toBe(false);
   });
 
   it("does not treat a # inside a substitution's word as a comment", () => {
@@ -745,5 +782,341 @@ describe("comments that carry syntax past their end", () => {
 
   it("does not treat a comment-like line inside a heredoc body as a comment", () => {
     expect(paths("cat > s.sh <<'EOF'\n# it's\ncat .env\nEOF")).toEqual([]);
+  });
+});
+
+// The shell's own listings print the environment as `env` does. Measured with
+// a secret exported into a clean environment: every case in the first table
+// printed it in bash 5, zsh 5 or both, no case in the second printed it in
+// either, and in the third each named variable was printed by at least one
+// shell except where the table names none.
+describe("shell builtins that list variables", () => {
+  it.each([
+    "export",
+    "export -p",
+    "export -n",
+    "set",
+    "set > vars.txt",
+    "set | grep KEY",
+    "declare",
+    "declare -p",
+    "declare -x",
+    "declare -px",
+    "declare -xp",
+    "typeset",
+    "typeset -p",
+    "typeset -x",
+    "local",
+    "builtin declare -p",
+    "command export -p",
+    "if true; then set; fi",
+    "ls && export -p",
+    "echo $(declare -px)",
+    "bash -c 'export -p'",
+    "export -p # all of them",
+    "export --",
+    "typeset -m 'TOK*'",
+    "declare -m 'TOK*'",
+    "time export -p",
+    "time set",
+    "command -p export -p",
+    "command -- set",
+    "builtin -- set",
+    "noglob set",
+    "nocorrect export -p",
+    'v=TOKEN; declare -p "$v"',
+    "typeset -p ${!TOK*}",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    "export FOO=bar",
+    "export FOO",
+    "export PATH=$PATH:/opt/bin",
+    "set -o",
+    "set -e",
+    "set -- a b",
+    "set --",
+    "set -euo pipefail",
+    "declare -f",
+    "declare -F",
+    "typeset -f",
+    "declare -a list",
+    "declare FOO=1",
+    "command -v set",
+    "command -v export",
+    "command -V set",
+    "time ls",
+    "builtin",
+    "echo set",
+    "echo export -p",
+    "ls set",
+  ])("%j does not dump the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(false);
+  });
+
+  // Given names, the listing prints only those, so only those are scanned. A
+  // plain `export NAME` exports it and prints nothing.
+  it.each([
+    ["declare -p TOKEN", ["TOKEN"]],
+    ["declare TOKEN", ["TOKEN"]],
+    ["typeset TOKEN", ["TOKEN"]],
+    ["typeset -p TOKEN OTHER", ["TOKEN", "OTHER"]],
+    ["local TOKEN", ["TOKEN"]],
+    ["export -p TOKEN", ["TOKEN"]],
+    ["declare -p TOKEN > out.txt", ["TOKEN"]],
+    ["declare FOO=1 TOKEN", ["TOKEN"]],
+    ["declare -p -- TOKEN", ["TOKEN"]],
+    ["export TOKEN", []],
+    ["export TOKEN=1", []],
+  ])("%j names %j", (command, named) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.dumpsEnvironment).toBe(false);
+    expect(refs.envVars).toEqual(named);
+  });
+});
+
+// A function body behind the `function` keyword, and a program a shell or
+// interpreter reads on stdin: what an echo or printf pipes into it, a
+// here-string, or a heredoc. Every dump below prints the environment's values
+// in bash 5 or zsh 5, apart from `echo 'env\nls' | bash`, which only zsh's
+// echo turns into two lines; reading it as two can only add scanning.
+describe("programs a command line hands to a shell", () => {
+  it.each([
+    "function f { env; }; f",
+    "function f() { env; }; f",
+    "function f { export -p; }; f",
+    "function f {\n  printenv\n}",
+    "echo env | bash",
+    "echo 'export -p' | sh",
+    "echo env |& bash",
+    "echo env | sudo bash",
+    "echo -n env | zsh",
+    "printf '%s\\n' env | sh",
+    "printf 'env\\n' | sh",
+    "printf '%s' env | sh",
+    "printf 'e%sv' n | bash",
+    "printf '%s\\n' ls env | sh",
+    "printf -- '%s' env | sh",
+    "printf '%s%s\\n' e nv ls '' | sh",
+    "printf 'e\\156v' | bash",
+    "printf '\\x65nv' | bash",
+    "echo -e '\\x65nv' | bash",
+    "echo -e '\\0145nv' | bash",
+    "echo env | source /dev/stdin",
+    "echo env | . /dev/stdin",
+    "echo 'env\\nls' | zsh",
+    "{ echo env; } | bash",
+    "(echo env) | bash",
+    "echo env | (bash)",
+    "echo env | bash -s",
+    "bash <<< env",
+    "<<< env bash",
+    "bash <<< 'set'",
+    "bash <<'EOF'\nenv\nEOF",
+    "bash <<-EOF\n\tprintenv\n\tEOF",
+    "sh <<EOF\nexport -p\nEOF",
+    "bash <<EOF\nenv",
+    "cat > s.sh <<'A'; bash <<'B'\nls\nA\nenv\nB",
+    "cat <<'EOF' | bash\nenv\nEOF",
+    "cat <<< env | sh",
+    "{ cat <<X; } | bash\nprintenv\nX",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    "function f { ls; }",
+    "echo env",
+    "echo env || bash",
+    "echo env; bash",
+    "echo env && sh",
+    "echo env | grep x",
+    "echo env | tee out.txt",
+    "echo hi | bash",
+    "echo hi 2> env | bash",
+    "bash | echo env",
+    "cat x | bash",
+    "echo env > s.sh; bash s.sh",
+    "bash <<< ls",
+    "grep x <<< env",
+    "cat <<< env",
+    "cat <<'EOF' | grep x\nenv\nEOF",
+    "cat > s.sh <<'EOF'\nenv\nEOF",
+    "ssh host <<'EOF'\nenv\nEOF",
+  ])("%j does not dump the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(false);
+  });
+
+  // Inline program text yields every quoted pairing as a candidate, so the
+  // file is looked for among them rather than as the only one.
+  it.each([
+    "echo 'cat secrets' | bash",
+    "printf '%s\\n' 'cat secrets' | sh",
+    "bash <<< 'cat secrets'",
+    "bash <<'EOF'\ncat secrets\nEOF",
+    "echo \"print(open('secrets').read())\" | python3",
+    "python3 <<'EOF'\nprint(open('secrets').read())\nEOF",
+    "node <<< \"require('fs').readFileSync('secrets')\"",
+  ])("%j reads secrets", (command) => {
+    expect(paths(command)).toContain("secrets");
+  });
+
+  it.each([
+    "cat > s.sh <<'EOF'\ncat secrets\nEOF",
+    "echo 'cat secrets'",
+    "echo 'cat secrets' | grep cat",
+  ])("%j reads nothing", (command) => {
+    expect(paths(command)).toEqual([]);
+  });
+});
+
+// The program an interpreter runs is read for what it does with the
+// environment, wherever the command line hands it over.
+describe("interpreters reading the environment", () => {
+  it.each([
+    "python3 -c 'import os; print(os.environ)'",
+    "node -e 'console.log(process.env)'",
+    "node -p process.env",
+    "node --print 'process.env'",
+    "bun -p 'process.env'",
+    "ruby -e 'p ENV'",
+    "perl -e 'print %ENV'",
+    "php -r 'print_r(getenv());'",
+    "sudo python3 -c 'import os; print(os.environ)'",
+    "echo 'print(__import__(\"os\").environ)' | python3",
+    "echo 'p ENV' | ruby",
+    "python3 - <<'EOF'\nimport os\nprint(os.environ)\nEOF",
+    "node <<< 'console.log(process.env)'",
+    "bash -c \"python3 -c 'import os; print(os.environ)'\"",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    ["python3 -c 'import os; print(os.environ[\"TOKEN\"])'", ["TOKEN"]],
+    ["node -p process.env.TOKEN", ["TOKEN"]],
+    ["echo 'puts ENV[\"TOKEN\"]' | ruby", ["TOKEN"]],
+    ["perl -e 'print $ENV{TOKEN}'", ["TOKEN"]],
+  ])("%j reads %j", (command, named) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.dumpsEnvironment).toBe(false);
+    expect(refs.envVars).toEqual(named);
+  });
+
+  it.each([
+    "grep -r process.env src",
+    "python3 script.py",
+    "bash -c 'echo p ENV'",
+    "echo 'print(os.environ)'",
+    "echo 'print(os.environ)' > show.py",
+    "python3 -c 'print(1)'",
+  ])("%j does not dump the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(false);
+  });
+});
+
+// An interpreter installed under a versioned name, Python's bundled switches,
+// and `deno eval` all run the code that follows, as `python3 -c` does. The
+// Python, Perl and deno spellings were run against a clean environment and
+// printed the value; `deno eval` runs with every permission.
+describe("inline code behind other spellings", () => {
+  it.each([
+    "python3.12 -c \"print(open('secrets').read())\"",
+    "/opt/homebrew/bin/python3.14 -c \"print(open('secrets').read())\"",
+    "sudo python3.12 -c \"print(open('secrets').read())\"",
+    "python3 -Sc \"print(open('secrets').read())\"",
+    "python3 -IuSc \"print(open('secrets').read())\"",
+    // `-E` takes no code, so the `-c` after it was missed.
+    "python3 -E -c \"print(open('secrets').read())\"",
+    "ruby3.3 -e \"puts File.read('secrets')\"",
+    "deno eval \"console.log(Deno.readTextFileSync('secrets'))\"",
+    "deno eval --ext ts \"console.log(Deno.readTextFileSync('secrets'))\"",
+    "echo \"print(open('secrets').read())\" | python3.12",
+  ])("%j reads secrets", (command) => {
+    expect(paths(command)).toContain("secrets");
+  });
+
+  it.each([
+    "python3.12 -c 'import os; print(os.environ)'",
+    "python3 -Ic 'import os; print(os.environ)'",
+    "python3 -Ec 'import os; print(os.environ)'",
+    "perl5.34 -e 'print %ENV'",
+    "node22 -e 'console.log(process.env)'",
+    "php8.3 -r 'print_r(getenv());'",
+    "deno eval 'console.log(Deno.env.toObject())'",
+    "deno eval -p 'Deno.env.toObject()'",
+    "echo 'console.log(Deno.env.toObject())' | deno run -A -",
+  ])("%j dumps the environment", (command) => {
+    expect(extractCommandRefs(command).dumpsEnvironment).toBe(true);
+  });
+
+  // `-E` ignores Python's own variables and takes no code; read as Perl's
+  // `-e`, it made the script name the program.
+  it.each([
+    "python3 -E script.py",
+    "python3 -m http.server",
+    "python3.12 script.py",
+    "deno run main.ts",
+    'deno run -A eval "cat secrets"',
+    // `-W` takes a value, so this `c` is the value and the program is a file.
+    "python3 -Wc \"print(open('secrets').read())\"",
+    "pythonista -c x",
+  ])("%j reads no inline code", (command) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.paths).toEqual([]);
+    expect(refs.dumpsEnvironment).toBe(false);
+  });
+
+  // A wrapper or `printenv` named by its path is the same command.
+  it("reads past a wrapper named by its path", () => {
+    expect(paths("/usr/bin/sudo cat secrets")).toContain("secrets");
+    expect(extractCommandRefs("/usr/bin/printenv").dumpsEnvironment).toBe(true);
+  });
+
+  it.each([
+    ["python3.12", "python"],
+    ["/usr/bin/python3.12", "python"],
+    ["python3", "python3"],
+    ["python3.13t", "python"],
+    ["python3.", "python3."],
+    ["python3.12-config", "python3.12-config"],
+    ["perl5.34", "perl"],
+    ["ruby3.3", "ruby"],
+    ["php8.3", "php"],
+    ["node22", "node"],
+    ["pythonista", "pythonista"],
+    ["bash5", "bash5"],
+    ["/bin/cat", "cat"],
+  ])("commandName(%j) is %j", (word, name) => {
+    expect(commandName(word)).toBe(name);
+  });
+});
+
+// An in-place edit writes the files back rather than printing them, but the
+// code doing the edit still prints to the terminal: perl run this way printed
+// a variable exported into a clean environment from `BEGIN` and `system()`.
+describe("inline code of an in-place edit", () => {
+  it.each([
+    ["perl -pi -e 'BEGIN { print %ENV }' f.txt", true, []],
+    ["perl -i -pe 'BEGIN { print $ENV{TOKEN} }' f.txt", false, ["TOKEN"]],
+    ["ruby -pi -e 'BEGIN { p ENV }' f.txt", true, []],
+    ["perl -pi -e 's/a/b/' f.txt", false, []],
+    ["sed -i 's/a/b/' f.txt", false, []],
+  ])("%j", (command, dumps, named) => {
+    const refs = extractCommandRefs(command);
+    expect(refs.dumpsEnvironment).toBe(dumps);
+    expect(refs.envVars).toEqual(named);
+    expect(refs.paths).toEqual([]);
+  });
+
+  it("reads the files the code names, not the files it edits", () => {
+    expect(
+      paths("perl -pi -e 'BEGIN { open F, \"secrets\"; print <F> }' f.txt"),
+    ).toContain("secrets");
+    expect(
+      paths("perl -pi -e 'BEGIN { open F, \"secrets\"; print <F> }' f.txt"),
+    ).not.toContain("f.txt");
   });
 });

@@ -31,7 +31,7 @@ expanded there (replace `/Users/you` with your home directory):
 | `blockOn` | `"high"` | Block at this level or above (`"high"` or `"low"`). |
 | `timeoutMs` | `3000` | How long one hook call waits for the server, in total. |
 | `maxChars` | `20000` | How much of each file or prompt is sent; the model judges the beginning. |
-| `onUnavailable` | `"block"` | What to do when the server does not answer: `"block"`, or `"allow"` to rely on the rules alone. |
+| `onUnavailable` | `"block"` | What to do when the server does not answer: `"block"`, or `"allow"` to rely on the rules alone. A refused socket blocks either way. |
 
 - It is asked only when the entry is present and the `pii` category is enabled. Without the entry nothing changes.
 - `[allow-pii]` and `[allow-all]` lift its blocks, as they lift the PII rules.
@@ -39,8 +39,9 @@ expanded there (replace `/Users/you` with your home directory):
   would be a pass. Start the server before Claude Code, or set `"onUnavailable": "allow"`.
 - Before sending any text, the hook checks the socket. Every directory on its path must belong to you or root, and a
   directory that other users can write to is refused unless it has the sticky bit, as `/tmp` does. Group write counts
-  as writable by others unless the group contains only you, so fix a refusal with `chmod go-w <directory>`. Group membership is read from `/etc/group` and `/etc/passwd` only; directory services such as LDAP, sssd or macOS Directory Services are not consulted, so on macOS a group-writable directory is always refused. On Windows these checks are skipped. The socket
-  itself must be a socket file owned by you or root.
+  as writable by others unless the group contains only you, so fix a refusal with `chmod go-w <directory>`. Group membership is read from `/etc/group` and `/etc/passwd`, plus the static records of `nss-systemd` under `/etc/userdb` and the other directories it reads, and is trusted only when `/etc/nsswitch.conf` names no source other than `files` and `systemd` for `passwd`, `group` and `initgroups`. Any other source, such as `sss`, `ldap`, `nis`, `compat` or `winbind`, can add members none of those files show, so with one of them (Fedora's default lists `sss`), and on macOS, which has no `nsswitch.conf`, a group-writable directory is always refused. Memberships that systemd services hand out over Varlink, such as systemd-homed's, are not read. On Windows these checks are skipped. The socket
+  itself must be a socket file owned by you or root. A refused socket blocks even with `"onUnavailable": "allow"`:
+  the server behind it may be running, and falling back on the rules would skip it without a word.
 - `url` was removed in v0.10.0. The hook cannot tell whether the program on a TCP port is your server, so a config
   with `url` blocks with the reason. Replace it with `socket`.
 - An entry that cannot be used (a typo) blocks too, with the reason.

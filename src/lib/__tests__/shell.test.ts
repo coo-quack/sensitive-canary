@@ -29,9 +29,15 @@ import {
   MAX_QUOTED_LITERAL_LENGTH,
   SHELL_KEYWORD_TOKENS,
   type ShellToken,
-  stripHeredocBodies,
+  splitHeredocBodies,
   tokenizeCommand,
+  tokenizeSegments,
 } from "../shell.ts";
+
+// A command line with its heredoc bodies removed.
+function withoutBodies(command: string): string {
+  return splitHeredocBodies(command).text;
+}
 
 // The words of one segment, dropping the redirection operators, which is what
 // most cases below are asking about.
@@ -311,15 +317,67 @@ describe("tokenizeCommand, joinRedirections", () => {
   });
 });
 
-describe("stripHeredocBodies", () => {
+describe("tokenizeSegments", () => {
+  it.each([
+    ["echo env | bash", [false, true]],
+    ["echo env |& bash", [false, true]],
+    ["echo env |\n  bash", [false, true]],
+    ["echo env || bash", [false, false]],
+    ["echo env; bash", [false, false]],
+    ["echo env && bash", [false, false]],
+    ["echo env & bash", [false, false]],
+    ["(echo env) | bash", [false, true]],
+    ["echo env | (bash)", [false, true]],
+    ["{ echo env; } | bash", [false, false, true]],
+    ["a | b | c; d", [false, true, true, false]],
+    ['echo "a | b"', [false]],
+  ])("%j marks the segments a pipe feeds as %j", (command, piped) => {
+    expect(tokenizeSegments(command).map((s) => s.afterPipe)).toEqual(piped);
+  });
+
+  it("splits the tokens as tokenizeCommand does", () => {
+    const command = "cat a 2>&1 | (grep b) && echo 'c | d'";
+    for (const joinRedirections of [false, true]) {
+      expect(
+        tokenizeSegments(command, { joinRedirections }).map((s) => s.tokens),
+      ).toEqual(tokenizeCommand(command, { joinRedirections }));
+    }
+  });
+});
+
+describe("splitHeredocBodies", () => {
+  it("returns each body without its delimiter lines, in order", () => {
+    expect(splitHeredocBodies("cmd <<A <<-B\na1\na2\nA\nb1\n\tB\nls")).toEqual({
+      text: "cmd <<A <<-B\nls",
+      bodies: ["a1\na2", "b1"],
+    });
+  });
+
+  // The shell reads a body that is never closed to the end of the input.
+  it("returns a body the input ends inside of", () => {
+    expect(splitHeredocBodies("bash <<EOF\nenv")).toEqual({
+      text: "bash <<EOF",
+      bodies: ["env"],
+    });
+  });
+
+  it("returns no bodies for a command with no heredoc", () => {
+    expect(splitHeredocBodies("grep x <<< env")).toEqual({
+      text: "grep x <<< env",
+      bodies: [],
+    });
+  });
+});
+
+describe("splitHeredocBodies, the text it leaves", () => {
   it("removes the body and keeps the command line", () => {
-    const stripped = stripHeredocBodies("cat > s.sh <<EOF\ncat /secret\nEOF");
+    const stripped = withoutBodies("cat > s.sh <<EOF\ncat /secret\nEOF");
     expect(stripped).toBe("cat > s.sh <<EOF");
   });
 
   it("honours a quoted delimiter and the <<- form", () => {
-    expect(stripHeredocBodies("cat <<'EOF'\nx\nEOF")).toBe("cat <<'EOF'");
-    expect(stripHeredocBodies("cat <<-EOF\nx\n\tEOF")).toBe("cat <<-EOF");
+    expect(withoutBodies("cat <<'EOF'\nx\nEOF")).toBe("cat <<'EOF'");
+    expect(withoutBodies("cat <<-EOF\nx\n\tEOF")).toBe("cat <<-EOF");
   });
 
   // A herestring is not a heredoc: it carries its text on the same line and
@@ -328,7 +386,7 @@ describe("stripHeredocBodies", () => {
   // left the read unscanned.
   it("does not treat a herestring as opening a body", () => {
     const command = 'grep x <<< "y"\ncat secrets';
-    expect(stripHeredocBodies(command)).toBe(command);
+    expect(withoutBodies(command)).toBe(command);
   });
 
   // Two heredocs on one line close in the order they were opened. Taking the
@@ -336,11 +394,11 @@ describe("stripHeredocBodies", () => {
   // text follows the second delimiter is kept as though it were a command.
   it("closes several heredocs in the order they were opened", () => {
     const command = "cmd <<A <<B\nbody a\nA\nbody b\nB\ncat secrets";
-    expect(stripHeredocBodies(command)).toBe("cmd <<A <<B\ncat secrets");
+    expect(withoutBodies(command)).toBe("cmd <<A <<B\ncat secrets");
   });
 
   it("leaves a command with no heredoc alone", () => {
-    expect(stripHeredocBodies("cat a\ncat b")).toBe("cat a\ncat b");
+    expect(withoutBodies("cat a\ncat b")).toBe("cat a\ncat b");
   });
 });
 
@@ -491,6 +549,56 @@ describe("extractQuotedLiterals", () => {
   it("returns nothing for unquoted code", () => {
     expect(extractQuotedLiterals("print(open(path))")).toEqual([]);
   });
+
+  // A quote in a comment paired with the next quote along, and every pair after
+  // it shifted so the path fell between two literals. The comment syntax
+  // differs per language, so each spelling gets a case.
+  it.each([
+    [
+      "a # comment on an earlier line",
+      "x = 1  # don't\nprint(open('.env').read())",
+    ],
+    ["a // comment on an earlier line", "// it's\nfs.readFileSync('.env')"],
+    ["a -- comment on an earlier line", "-- it's\nSELECT pg_read_file('.env')"],
+    ["a /* */ comment on the same line", "/* it's */ fs.readFileSync('.env')"],
+    ["a double quote in a comment", '# say "hi\nprint(open(".env").read())'],
+    ["a quote in a docstring", "'''it's'''\nopen('.env')"],
+    ["two stray quotes before it", "# it's\n# don't\nopen('.env')"],
+  ])("finds the path after %s", (_label, code) => {
+    expect(extractQuotedLiterals(code)).toContain(".env");
+  });
+
+  // Every pairing is kept, so the gaps between literals come back too. They are
+  // path candidates like any other literal, checked only for existing files.
+  it("keeps the literals and the gaps between them, in the order they close", () => {
+    expect(extractQuotedLiterals("'a' + 'b'")).toEqual(["a", " + ", "b"]);
+  });
+
+  it("reads a quote of the other kind as part of the literal", () => {
+    expect(extractQuotedLiterals(`say "it's"`)).toEqual(["it's"]);
+    expect(extractQuotedLiterals(`say 'a "b" c'`)).toEqual(["b", 'a "b" c']);
+  });
+
+  it("returns each literal once", () => {
+    expect(extractQuotedLiterals("open('.env'); open('.env')")).toEqual([
+      ".env",
+      "); open(",
+    ]);
+  });
+
+  it.each([
+    ["an unmatched quote", "a'b"],
+    ["only empty literals", "''''''"],
+    ["a run of quotes", "'".repeat(100_000)],
+  ])("returns nothing for %s", (_label, code) => {
+    expect(extractQuotedLiterals(code)).toEqual([]);
+  });
+
+  // The cap applies to every pairing, not just to the ones a regex would make.
+  it("drops a gap past the cap and keeps the literals on either side", () => {
+    const gap = "x".repeat(MAX_QUOTED_LITERAL_LENGTH + 1);
+    expect(extractQuotedLiterals(`'a'${gap}'b'`)).toEqual(["a", "b"]);
+  });
 });
 
 // A `#` that starts a comment, and the command line once the comment is gone.
@@ -584,7 +692,7 @@ describe("comments", () => {
 
   it("lets heredoc stripping see the command without its comment", () => {
     expect(
-      stripHeredocBodies(blankComments("# usage: cat <<EOF\ncat secrets.txt")),
+      withoutBodies(blankComments("# usage: cat <<EOF\ncat secrets.txt")),
     ).toBe("\ncat secrets.txt");
   });
 

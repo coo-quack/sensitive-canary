@@ -19,10 +19,12 @@ import {
 import {
   connectionTarget,
   judge,
+  REFUSED_SOCKET_NOTE,
   reachesBlockLevel,
   readPiiSentinelConfig,
   verdictFindings,
 } from "./lib/pii-sentinel.ts";
+import { addProgramEnvironment } from "./lib/program-environment.ts";
 import {
   beginScanBudget,
   enabledCategoriesFromEnv,
@@ -805,6 +807,8 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
 // the PII category is on, and `[allow-pii]` lifts it as it lifts the PII rules.
 // A server that does not answer blocks unless the entry says otherwise: the user
 // asked for the check, and a check that silently did not run is a pass.
+// A socket another user could have put in place blocks whatever the entry
+// says, since the server behind it may well be running.
 async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
   if (modelTexts.length === 0 || !ENABLED_CATEGORIES.has("pii")) return;
   if (allowTags.has("pii") || allowTags.has("all")) return;
@@ -823,7 +827,18 @@ async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
       hints,
     );
   }
-  const { verdicts, unavailable } = await judge(modelTexts, config);
+  const { verdicts, unavailable, refused } = await judge(modelTexts, config);
+  if (refused !== null) {
+    block(
+      "pii-sentinel",
+      [
+        `🚫 Blocked: the pii-sentinel socket at ${forOutput(connectionTarget(config))} was refused: ${forOutput(refused)}`,
+        "",
+        REFUSED_SOCKET_NOTE,
+      ],
+      hints,
+    );
+  }
   for (const verdict of verdicts) {
     if (!reachesBlockLevel(verdict.level, config)) continue;
     const findings = verdictFindings(verdict);
@@ -1001,7 +1016,7 @@ async function main(): Promise<void> {
     // so `mcp__desktop-commander__start_process` with `{"command":"cat .env"}`
     // was looked at as a path, found not to be a file, and let through — with
     // the default matcher sending every `mcp__*` tool here.
-    for (const value of collectCommandFields(input)) {
+    for (const { value, field } of collectCommandFields(input)) {
       // What the command says, as well as what it opens. A key in an argument
       // list is a key whichever tool runs the shell.
       scanTextAndBlock(
@@ -1018,6 +1033,10 @@ async function main(): Promise<void> {
       // same shape inline `-c` text is read for.
       refs.paths.push(...extractQuotedLiterals(value));
       scanPathsLiteralsFirst(refs.paths, allowTags, { onlyExisting: true });
+
+      // Code reaches the environment in its own language:
+      // `print(os.environ)` prints every value as `env` does.
+      if (field === "code") addProgramEnvironment(refs, null, value);
 
       // A command names an environment as readily as a file. The Bash branch
       // has always scanned the variables a command would print; a tool that

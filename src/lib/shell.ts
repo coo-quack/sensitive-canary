@@ -99,6 +99,15 @@ export interface TokenizeOptions {
   joinRedirections?: boolean;
 }
 
+// One segment of a command line. `afterPipe` marks a segment whose stdin is the
+// output of what comes before it, through `|` or `|&`. A paren between the two
+// does not change that: in `(echo env) | bash` and `echo env | (bash)` the shell
+// still reads what echo prints.
+export interface ShellSegment {
+  tokens: ShellToken[];
+  afterPipe: boolean;
+}
+
 // Split a command line into segments (at |, ;, &, &&, || and newlines) and each
 // segment into tokens with quotes removed. Redirection operators become tokens of
 // their own so that `wc -l <f` and `wc -l < f` tokenize alike. Substitutions are
@@ -107,9 +116,18 @@ export function tokenizeCommand(
   command: string,
   options: TokenizeOptions = {},
 ): ShellToken[][] {
+  return tokenizeSegments(command, options).map((segment) => segment.tokens);
+}
+
+// tokenizeCommand, with each segment's `afterPipe`.
+export function tokenizeSegments(
+  command: string,
+  options: TokenizeOptions = {},
+): ShellSegment[] {
   const joined = options.joinRedirections === true;
-  const segments: ShellToken[][] = [];
+  const segments: ShellSegment[] = [];
   let tokens: ShellToken[] = [];
+  let afterPipe = false;
   let current = "";
   let hasCurrent = false;
   let i = 0;
@@ -121,9 +139,14 @@ export function tokenizeCommand(
       hasCurrent = false;
     }
   };
+  // A paren ends a segment that may be empty. The pipe before an empty one
+  // carries on to the next segment that has tokens.
   const endSegment = (): void => {
     endToken();
-    if (tokens.length > 0) segments.push(tokens);
+    if (tokens.length > 0) {
+      segments.push({ tokens, afterPipe });
+      afterPipe = false;
+    }
     tokens = [];
   };
 
@@ -192,7 +215,10 @@ export function tokenizeCommand(
 
     if (ch === "|" || ch === ";" || ch === "&" || ch === "\n") {
       endSegment();
+      const from = i;
       while (i < command.length && /[|;&\n\s]/.test(command[i] as string)) i++;
+      const separator = command.slice(from, i).replace(/\s/g, "");
+      afterPipe = separator === "|" || separator === "|&";
       continue;
     }
 
@@ -376,7 +402,7 @@ interface HeredocDelimiter {
 // body at the line `EOF`. The word ends at whitespace or a shell metacharacter.
 //
 // A narrower character class (`[A-Za-z0-9_.]`) cuts the word short, and a
-// truncated delimiter never matches the real closing line: stripHeredocBodies
+// truncated delimiter never matches the real closing line: splitHeredocBodies
 // then swallows the rest of the command, so `cat > f <<EOF-1 … EOF-1` followed
 // by `cat .env` hides the read entirely.
 function readHeredocDelimiter(
@@ -459,24 +485,41 @@ function findHeredocDelimiters(line: string): HeredocDelimiter[] {
 // nothing, and scanning the body as shell blocks exactly that everyday case.
 // The trade-off: a heredoc that *feeds* commands to a remote shell
 // (`ssh host <<EOF\ncat /secret\nEOF`) is not caught. Written up as a
-// known limitation under "② PreToolUse hook" in the README.
-export function stripHeredocBodies(command: string): string {
+// known limitation under "② PreToolUse hook" in the README. One fed to a
+// local shell or interpreter is a program, and extractCommandRefs reads it.
+//
+// The bodies are returned too, in order and without their closing delimiter
+// lines.
+export function splitHeredocBodies(command: string): {
+  text: string;
+  bodies: string[];
+} {
   const lines = command.split("\n");
   const kept: string[] = [];
+  const bodies: string[] = [];
   const pending: HeredocDelimiter[] = [];
+  let body: string[] = [];
 
   for (const line of lines) {
     if (pending.length > 0) {
       const first = pending[0] as HeredocDelimiter;
       const cmp = first.allowTabs ? line.replace(/^\t+/, "") : line;
-      if (cmp === first.delim) pending.shift();
+      if (cmp === first.delim) {
+        pending.shift();
+        bodies.push(body.join("\n"));
+        body = [];
+      } else {
+        body.push(line);
+      }
       continue;
     }
     pending.push(...findHeredocDelimiters(line));
     kept.push(line);
   }
+  // A body the input ends inside of, as the shell reads it to end of input.
+  if (pending.length > 0) bodies.push(body.join("\n"));
 
-  return kept.join("\n");
+  return { text: kept.join("\n"), bodies };
 }
 
 // A comment in a command line, as the shell reads it. `start` is the `#` and
@@ -951,17 +994,28 @@ export const MAX_QUOTED_LITERAL_LENGTH = 4096;
 // `python3 -c "print(open('.env').read())"`. Literals containing line breaks or
 // tabs are skipped: those are messages and patterns, not paths. Spaces are kept,
 // so a path like `open('my secret.txt')` is still found.
+//
+// Every quote is taken as an opening one, running to the next quote of the
+// same kind. Pairing them off from the start, as a regex does, let a quote in a
+// comment (`# don't`, `/* it's */`) pair with the next quote along and shift
+// every pair after it, so the paths fell in the gaps between literals. Which
+// syntax is a comment depends on the language, so instead of looking for
+// comments, every pairing is kept: the literals a correct pairing finds are
+// among them, and the extra ones are the gaps between literals.
 export function extractQuotedLiterals(code: string): string[] {
-  const literals: string[] = [];
-  for (const match of code.matchAll(/'([^']*)'|"([^"]*)"/g)) {
-    const value = match[1] ?? match[2];
-    if (
-      value &&
-      value.length <= MAX_QUOTED_LITERAL_LENGTH &&
-      !/[\t\r\n]/.test(value)
-    ) {
-      literals.push(value);
-    }
+  const literals = new Set<string>();
+  // Where the last quote of each kind was seen, so each quote closes the
+  // literal the previous one of its kind opened.
+  const opened: Record<string, number> = {};
+  for (let i = 0; i < code.length; i++) {
+    const ch = code.charAt(i);
+    if (ch !== "'" && ch !== '"') continue;
+    const open = opened[ch];
+    opened[ch] = i;
+    if (open === undefined || i - open - 1 > MAX_QUOTED_LITERAL_LENGTH)
+      continue;
+    const value = code.slice(open + 1, i);
+    if (value && !/[\t\r\n]/.test(value)) literals.add(value);
   }
-  return literals;
+  return [...literals];
 }

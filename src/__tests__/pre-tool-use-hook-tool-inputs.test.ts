@@ -496,6 +496,36 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.exitCode).toBe(2);
     });
 
+    // Code reaches the environment in its own language.
+    it.each([
+      "import os\nprint(os.environ)",
+      'import os\nprint(os.environ["LEAKED"])',
+      "console.log(process.env)",
+    ])("a code field %j is scanned for the environment it reads", (code) => {
+      const result = runToolHook(
+        "mcp__ide__executeCode",
+        { code },
+        {
+          env: { PATH: process.env["PATH"] ?? "", LEAKED: AWS_KEY },
+          replaceEnv: true,
+        },
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    // A command field is a command line, where `process.env` is only a word.
+    it("a command field is not read as code", () => {
+      const result = runToolHook(
+        "mcp__shell__run",
+        { command: "grep -r process.env src" },
+        {
+          env: { PATH: process.env["PATH"] ?? "", LEAKED: AWS_KEY },
+          replaceEnv: true,
+        },
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
     // The write-verb exemption covers a tool's output, not what it runs.
     it("a write-verb name does not exempt the command it is given", () => {
       const file = writeFixture("createproc.txt", `key=${AWS_KEY}`);
@@ -556,6 +586,14 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(
         runToolHook("mcp__shell__run", { [key]: `cat ${file}` }).exitCode,
       ).toBe(2);
+    });
+
+    // Code in a tool field is read for quoted paths, and a quote in one of its
+    // comments shifted the pairs so the path after it was missed.
+    it("finds the path in code after a quote in a comment", () => {
+      const file = writeFixture("code-comment.txt", `key=${AWS_KEY}`);
+      const code = `# don't\nprint(open('${file}').read())`;
+      expect(runToolHook("mcp__ide__run", { code }).exitCode).toBe(2);
     });
 
     // Every other tool name reached the shared collector and blocked; the Read

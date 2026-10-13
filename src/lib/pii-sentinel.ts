@@ -12,9 +12,10 @@
 // matches a rule. It is told to skip its own copy of the rules, which run here.
 
 import type { Stats } from "node:fs";
-import { lstat, readFile, readlink } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink } from "node:fs/promises";
 import http from "node:http";
 import { userInfo } from "node:os";
+import { join } from "node:path";
 import type { Finding } from "./rules.ts";
 import { userConfigFromCache } from "./rules.ts";
 
@@ -39,7 +40,21 @@ export interface Judgement {
   verdicts: Verdict[];
   // Why the server could not answer, when it could not.
   unavailable: string | null;
+  // Why the socket was refused, when another user could have put it in place.
+  // No text was sent, and `onUnavailable` does not apply: the server may be
+  // running, so a fallback to the rules would skip the check for as long as
+  // the socket stays where it is, with nothing said.
+  refused: string | null;
 }
+
+// A socket another user could have put in place. Kept apart from a server
+// that is not there, which `onUnavailable` covers. Each message ends with how
+// to fix that refusal, since the fix differs with the cause.
+export class UnsafeSocketError extends Error {}
+
+// What both hooks say under a refusal, after the reason.
+export const REFUSED_SOCKET_NOTE =
+  'Another user could have put that socket in place, so nothing was sent. Fix the path as the reason says, or remove the "piiSentinel" entry. "onUnavailable" does not apply: the server may be running, and falling back on the rules would skip it without a word.';
 
 const RANK: Record<Level, number> = { none: 0, low: 1, high: 2 };
 // The kernel follows at most this many symbolic links while resolving a path.
@@ -160,7 +175,7 @@ interface Directory {
 export async function checkSocket(path: string): Promise<void> {
   // An abstract name has no file to check; it is refused on every platform.
   if (path.startsWith("\0"))
-    throw new Error(
+    throw new UnsafeSocketError(
       "an abstract socket name is refused: use a socket file in a directory only you can write to",
     );
   // Windows has no owners or modes to compare.
@@ -219,36 +234,61 @@ async function directory(
   gid: number,
 ): Promise<Directory> {
   owned(st, path, uid);
-  const shared = await writableByOthers(st, gid);
-  if (shared && !(st.mode & 0o1000))
-    throw new Error(`${path} can be written by other users`);
-  return { path, st, shared };
+  const writers = await describeOtherWriters(st, gid);
+  if (writers !== null && !(st.mode & 0o1000))
+    throw new UnsafeSocketError(
+      `${path} can be written by ${writers}: run \`chmod go-w ${path}\` or move the socket to a directory only you can write to`,
+    );
+  return { path, st, shared: writers !== null };
 }
 
 function owned(st: Stats, path: string, uid: number): void {
   if (st.uid !== uid && st.uid !== 0)
-    throw new Error(`${path} belongs to another user`);
+    throw new UnsafeSocketError(
+      `${path} belongs to another user: move the socket to a directory you own`,
+    );
 }
 
-// Group write counts as "others can write" unless the group is ours alone.
-async function writableByOthers(st: Stats, gid: number): Promise<boolean> {
-  if (st.mode & 0o002) return true;
-  if (st.mode & 0o020) return !(await groupIsPrivate(st.gid, gid));
-  return false;
+// Who besides us can write to the directory, in words for the refusal, or null
+// when no one can. Group write counts unless the group is ours alone.
+async function describeOtherWriters(
+  st: Stats,
+  gid: number,
+): Promise<string | null> {
+  if (st.mode & 0o002) return "other users";
+  if (st.mode & 0o020 && !(await groupIsPrivate(st.gid, gid)))
+    return `its group (gid ${st.gid}), which cannot be shown to contain only you`;
+  return null;
 }
 
 // True only when the group is provably ours: its gid is ours, the /etc/group
 // entries for it are named after us and list no one else, and no other account
 // has it as its primary group. Anything that cannot be read counts as shared.
+//
+// Those files are the whole answer only when /etc/nsswitch.conf takes accounts
+// and groups from them alone, or from them and nss-systemd. LDAP, sssd, NIS and
+// winbind add members /etc/group does not show, and a local group's gid
+// colliding with a directory group's is an ordinary accident there, so any of
+// them makes the group unprovable. nss-systemd adds what its static JSON
+// records say, and those are read here too. Where there is no
+// /etc/nsswitch.conf, macOS among them, the group is never provably ours.
+//
+// `root` is where the system's files are looked up, so tests can lay out a
+// system of their own.
 export async function groupIsPrivate(
   group: number,
   own: number,
+  root = "/",
 ): Promise<boolean> {
   if (group !== own) return false;
   try {
+    const sources = trustedNssSources(
+      await readFile(join(root, "etc/nsswitch.conf"), "utf8"),
+    );
+    if (sources === null) return false;
     const me = userInfo().username;
     const gid = String(group);
-    const entries = (await readFile("/etc/group", "utf8"))
+    const entries = (await readFile(join(root, "etc/group"), "utf8"))
       .split("\n")
       .map((line) => line.split(":"))
       .filter((fields) => fields[2] === gid);
@@ -262,13 +302,134 @@ export async function groupIsPrivate(
             .every((member) => member === "" || member === me),
       );
     if (!ours) return false;
-    const accounts = (await readFile("/etc/passwd", "utf8"))
+    const accounts = (await readFile(join(root, "etc/passwd"), "utf8"))
       .split("\n")
       .map((line) => line.split(":"));
-    return accounts.every((fields) => fields[3] !== gid || fields[0] === me);
+    if (!accounts.every((fields) => fields[3] !== gid || fields[0] === me))
+      return false;
+    return !sources.has("systemd") || (await userdbIsPrivate(root, group, me));
   } catch {
     return false;
   }
+}
+
+// The sources /etc/nsswitch.conf names for accounts and groups, or null when
+// any of them is one whose members cannot be read here, or when `passwd` or
+// `group` has no line: a missing line falls back to a default that differs
+// between C libraries. `initgroups`, which glibc consults for another account's
+// supplementary groups, falls back to `group` when it has no line of its own.
+// Actions such as `[NOTFOUND=return]` are not sources. Names are matched in any
+// case and with space before the colon, so a line spelled differently is
+// checked rather than missed.
+export function trustedNssSources(nsswitch: string): Set<string> | null {
+  const found = new Set<string>();
+  for (const database of ["passwd", "group", "initgroups"]) {
+    const head = new RegExp(`^${database}\\s*:`, "i");
+    const lines = nsswitch
+      .split("\n")
+      .map((line) => line.replace(/#.*/, "").trim())
+      .filter((line) => head.test(line));
+    if (lines.length === 0) {
+      if (database === "initgroups") continue;
+      return null;
+    }
+    for (const line of lines) {
+      const sources = line
+        .slice(line.indexOf(":") + 1)
+        .replace(/\[[^\]]*\]/g, " ")
+        .split(/\s+/)
+        .filter((source) => source !== "");
+      if (sources.length === 0) return null;
+      for (const source of sources) {
+        if (source !== "files" && source !== "systemd") return null;
+        found.add(source);
+      }
+    }
+  }
+  return found;
+}
+
+// Where nss-systemd reads static JSON user and group records (nss-systemd(8)).
+const USERDB_DIRECTORIES = [
+  "etc/userdb",
+  "run/userdb",
+  "run/host/userdb",
+  "usr/lib/userdb",
+];
+
+// False when nss-systemd's static records put anyone else in our group: a
+// `user:group.membership` file, which counts by existing; a group record with
+// our gid under another name or with other members; or a user record whose
+// primary group is ours or that lists our group in `memberOf`. A user record's
+// fields can also sit under `binding` and `perMachine`, so those are read as
+// well. Records that services hand out over Varlink, systemd-homed's among
+// them, are not files and are not read.
+async function userdbIsPrivate(
+  root: string,
+  gid: number,
+  me: string,
+): Promise<boolean> {
+  for (const directory of USERDB_DIRECTORIES) {
+    let names: string[];
+    try {
+      names = await readdir(join(root, directory));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      return false;
+    }
+    for (const name of names) {
+      if (name.endsWith(".membership")) {
+        const [user, group] = name.slice(0, -".membership".length).split(":");
+        if (group === me && user !== me) return false;
+        continue;
+      }
+      const kind = name.endsWith(".user")
+        ? "user"
+        : name.endsWith(".group")
+          ? "group"
+          : null;
+      if (kind === null) continue;
+      const record: unknown = JSON.parse(
+        await readFile(join(root, directory, name), "utf8"),
+      );
+      if (typeof record !== "object" || record === null) return false;
+      const r = record as Record<string, unknown>;
+      const views = [
+        r,
+        ...Object.values(
+          typeof r["binding"] === "object" && r["binding"] !== null
+            ? (r["binding"] as Record<string, unknown>)
+            : {},
+        ),
+        ...(Array.isArray(r["perMachine"]) ? r["perMachine"] : []),
+      ].filter(
+        (view): view is Record<string, unknown> =>
+          typeof view === "object" && view !== null,
+      );
+      if (kind === "group") {
+        const named = r["groupName"] === me;
+        for (const view of views) {
+          if (view["gid"] === gid && !named) return false;
+          const members = view["members"];
+          if (
+            named &&
+            Array.isArray(members) &&
+            members.some((member) => member !== me)
+          )
+            return false;
+        }
+      } else {
+        if (r["userName"] === me) continue;
+        for (const view of views) {
+          if ((view["gid"] ?? view["uid"]) === gid) return false;
+          const memberOf = view["memberOf"];
+          if (Array.isArray(memberOf) && memberOf.includes(me)) return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 function toVerdict(source: string, report: unknown): Verdict {
@@ -308,15 +469,15 @@ export async function judge(
 ): Promise<Judgement> {
   const deadline = Date.now() + config.timeoutMs;
   const verdicts: Verdict[] = [];
-  // Checked once, inside the deadline and before any text leaves: a socket
-  // that fails the check is reported like a server that did not answer.
+  // Checked once, inside the deadline and before any text leaves. A socket
+  // that is not there is reported like a server that did not answer.
   try {
     await checkSocket(config.socket);
   } catch (e) {
-    return {
-      verdicts,
-      unavailable: e instanceof Error ? e.message : String(e),
-    };
+    const reason = e instanceof Error ? e.message : String(e);
+    return e instanceof UnsafeSocketError
+      ? { verdicts, unavailable: null, refused: reason }
+      : { verdicts, unavailable: reason, refused: null };
   }
   for (const { source, text } of texts) {
     if (text.trim() === "") continue;
@@ -325,6 +486,7 @@ export async function judge(
       return {
         verdicts,
         unavailable: `no answer within ${config.timeoutMs} ms`,
+        refused: null,
       };
     try {
       verdicts.push(
@@ -337,10 +499,11 @@ export async function judge(
       return {
         verdicts,
         unavailable: e instanceof Error ? e.message : String(e),
+        refused: null,
       };
     }
   }
-  return { verdicts, unavailable: null };
+  return { verdicts, unavailable: null, refused: null };
 }
 
 export function reachesBlockLevel(

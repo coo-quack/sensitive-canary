@@ -14,6 +14,7 @@ import {
 import {
   connectionTarget,
   judge,
+  REFUSED_SOCKET_NOTE,
   reachesBlockLevel,
   readPiiSentinelConfig,
   verdictFindings,
@@ -84,10 +85,18 @@ async function consultPiiSentinel(
       "",
       "Fix the entry, or remove it to stop asking pii-sentinel.",
     ]);
-  const { verdicts, unavailable } = await judge(
+  const { verdicts, unavailable, refused } = await judge(
     [{ source: "prompt", text: prompt }],
     config,
   );
+  if (refused !== null)
+    blockPrompt([
+      "the pii-sentinel socket was refused — blocked",
+      `  ${connectionTarget(config)}: ${refused}`,
+      "",
+      REFUSED_SOCKET_NOTE,
+      "To send this prompt anyway, add [allow-pii] to it.",
+    ]);
   const verdict = verdicts[0];
   if (verdict && reachesBlockLevel(verdict.level, config)) {
     const findings = verdictFindings(verdict);
