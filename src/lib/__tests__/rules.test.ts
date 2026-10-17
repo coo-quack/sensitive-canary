@@ -11,7 +11,13 @@ import {
   ScanBudgetExceeded,
   scan,
 } from "../rules.ts";
-import { AWS_KEY, DEFAULT_RULES, ruleIds } from "./rule-fixtures.ts";
+import {
+  AWS_KEY,
+  DEFAULT_RULES,
+  hex,
+  mixed,
+  ruleIds,
+} from "./rule-fixtures.ts";
 
 // ── redact ────────────────────────────────────────────────────────────────────
 
@@ -44,7 +50,7 @@ describe("redact", () => {
 
   it("never returns more than a quarter of the value", () => {
     for (let length = 1; length <= 200; length++) {
-      const value = "a".repeat(length);
+      const value = mixed(length);
       const kept = redact(value).replace(/\*/g, "").length;
       expect(kept / length, `${length} characters`).toBeLessThanOrEqual(0.25);
     }
@@ -82,7 +88,7 @@ describe("scan — secrets", () => {
   });
 
   it("detects a GCP API key", () => {
-    const findings = scan(`key=AIzaSyC${"A".repeat(32)}`);
+    const findings = scan(`key=AIzaSyC${mixed(32)}`);
     expect(findings.some((f) => f.ruleId === "gcp-api-key")).toBe(true);
   });
 
@@ -92,7 +98,7 @@ describe("scan — secrets", () => {
   });
 
   it("detects an npm access token", () => {
-    const findings = scan(`npm_${"A".repeat(36)}`);
+    const findings = scan(`npm_${mixed(36)}`);
     expect(findings.some((f) => f.ruleId === "npm-token")).toBe(true);
   });
 
@@ -112,17 +118,17 @@ describe("scan — secrets", () => {
   });
 
   it("detects a GitHub PAT", () => {
-    const findings = scan(`token=ghp_${"A".repeat(36)}`);
+    const findings = scan(`token=ghp_${mixed(36)}`);
     expect(findings.some((f) => f.ruleId === "github-pat")).toBe(true);
   });
 
   it("detects a GitHub fine-grained token", () => {
-    const findings = scan(`github_pat_${"A".repeat(82)}`);
+    const findings = scan(`github_pat_${mixed(82)}`);
     expect(findings.some((f) => f.ruleId === "github-fine-grained")).toBe(true);
   });
 
   it("detects a GitLab PAT", () => {
-    const findings = scan(`token=glpat-${"A".repeat(20)}`);
+    const findings = scan(`token=glpat-${mixed(20)}`);
     expect(findings.some((f) => f.ruleId === "gitlab-pat")).toBe(true);
   });
 
@@ -133,57 +139,57 @@ describe("scan — secrets", () => {
 
   it("detects a Slack webhook URL", () => {
     const findings = scan(
-      `https://hooks.slack.com/services/TABCDEFGH/BABCDEFGHIJ/${"A".repeat(24)}`,
+      `https://hooks.slack.com/services/TABCDEFGH/BABCDEFGHIJ/${mixed(24)}`,
     );
     expect(findings.some((f) => f.ruleId === "slack-webhook")).toBe(true);
   });
 
   it("detects a Discord webhook URL", () => {
     const findings = scan(
-      `https://discord.com/api/webhooks/123456789012345678/${"A".repeat(68)}`,
+      `https://discord.com/api/webhooks/123456789012345678/${mixed(68)}`,
     );
     expect(findings.some((f) => f.ruleId === "discord-webhook")).toBe(true);
   });
 
   it("detects a Telegram bot token", () => {
-    const findings = scan(`12345678:AA${"A".repeat(33)}`);
+    const findings = scan(`12345678:AA${mixed(33)}`);
     expect(findings.some((f) => f.ruleId === "telegram-bot-token")).toBe(true);
   });
 
   it("detects a Twilio Account SID", () => {
-    const findings = scan(`AC${"a".repeat(32)}`);
+    const findings = scan(`AC${hex(32)}`);
     expect(findings.some((f) => f.ruleId === "twilio-sid")).toBe(true);
   });
 
   it("detects a SendGrid API key", () => {
-    const findings = scan(`SG.${"A".repeat(22)}.${"B".repeat(43)}`);
+    const findings = scan(`SG.${mixed(22)}.${mixed(43)}`);
     expect(findings.some((f) => f.ruleId === "sendgrid-key")).toBe(true);
   });
 
   it("detects a Mailgun API key", () => {
-    const findings = scan(`key-${"a".repeat(32)}`);
+    const findings = scan(`key-${mixed(32)}`);
     expect(findings.some((f) => f.ruleId === "mailgun-key")).toBe(true);
   });
 
   it("detects a Mailchimp API key", () => {
-    const findings = scan(`${"a".repeat(32)}-us1`);
+    const findings = scan(`${hex(32)}-us1`);
     expect(findings.some((f) => f.ruleId === "mailchimp-key")).toBe(true);
   });
 
   it("detects a Stripe secret key", () => {
-    const findings = scan(`sk_live_${"A".repeat(24)}`);
+    const findings = scan(`sk_live_${mixed(24)}`);
     expect(findings.some((f) => f.ruleId === "stripe-secret-key")).toBe(true);
   });
 
   it("detects a Stripe restricted key", () => {
-    const findings = scan(`rk_test_${"A".repeat(24)}`);
+    const findings = scan(`rk_test_${mixed(24)}`);
     expect(findings.some((f) => f.ruleId === "stripe-restricted-key")).toBe(
       true,
     );
   });
 
   it("detects an OpenAI legacy API key", () => {
-    const findings = scan(`sk-${"A".repeat(48)}`);
+    const findings = scan(`sk-${mixed(48)}`);
     expect(findings.some((f) => f.ruleId === "openai-key")).toBe(true);
   });
 
@@ -193,7 +199,7 @@ describe("scan — secrets", () => {
   });
 
   it("does not flag sk-ant-* as openai-key (legacy)", () => {
-    const findings = scan(`sk-ant-${"A".repeat(95)}`);
+    const findings = scan(`sk-ant-${mixed(95)}`);
     expect(findings.some((f) => f.ruleId === "openai-key")).toBe(false);
   });
 
@@ -203,7 +209,7 @@ describe("scan — secrets", () => {
   });
 
   it("detects an Anthropic API key", () => {
-    const findings = scan(`sk-ant-${"A".repeat(95)}`);
+    const findings = scan(`sk-ant-${mixed(95)}`);
     expect(findings.some((f) => f.ruleId === "anthropic-key")).toBe(true);
   });
 
@@ -255,67 +261,67 @@ describe("scan — secrets", () => {
 
 describe("scan — expanded secrets (AI, cloud, SaaS)", () => {
   it("detects a Replicate token", () => {
-    const findings = scan(`r8_${"A".repeat(37)}`);
+    const findings = scan(`r8_${mixed(37)}`);
     expect(findings.some((f) => f.ruleId === "replicate-token")).toBe(true);
   });
 
   it("detects a Hugging Face token", () => {
-    const findings = scan(`hf_${"a".repeat(34)}`);
+    const findings = scan(`hf_${mixed(34)}`);
     expect(findings.some((f) => f.ruleId === "huggingface-token")).toBe(true);
   });
 
   it("detects a Groq API key", () => {
-    const findings = scan(`gsk_${"A".repeat(52)}`);
+    const findings = scan(`gsk_${mixed(52)}`);
     expect(findings.some((f) => f.ruleId === "groq-key")).toBe(true);
   });
 
   it("detects an OpenRouter API key", () => {
-    const findings = scan(`sk-or-v1-${"a".repeat(64)}`);
+    const findings = scan(`sk-or-v1-${hex(64)}`);
     expect(findings.some((f) => f.ruleId === "openrouter-key")).toBe(true);
   });
 
   it("detects an xAI (Grok) API key", () => {
-    const findings = scan(`xai-${"A".repeat(80)}`);
+    const findings = scan(`xai-${mixed(80)}`);
     expect(findings.some((f) => f.ruleId === "xai-key")).toBe(true);
   });
 
   it("detects a Perplexity API key", () => {
-    const findings = scan(`pplx-${"a".repeat(48)}`);
+    const findings = scan(`pplx-${mixed(48)}`);
     expect(findings.some((f) => f.ruleId === "perplexity-key")).toBe(true);
   });
 
   it("detects a DigitalOcean PAT", () => {
-    const findings = scan(`dop_v1_${"a".repeat(64)}`);
+    const findings = scan(`dop_v1_${hex(64)}`);
     expect(findings.some((f) => f.ruleId === "digitalocean-pat")).toBe(true);
   });
 
   it("detects a Square access token", () => {
-    const findings = scan(`EAAA${"A".repeat(60)}`);
+    const findings = scan(`EAAA${mixed(60)}`);
     expect(findings.some((f) => f.ruleId === "square-access-token")).toBe(true);
   });
 
   it("detects a Sentry user auth token", () => {
-    const findings = scan(`sntryu_${"a".repeat(64)}`);
+    const findings = scan(`sntryu_${hex(64)}`);
     expect(findings.some((f) => f.ruleId === "sentry-user-token")).toBe(true);
   });
 
   it("detects an Atlassian API token", () => {
-    const findings = scan(`ATATT3${"A".repeat(180)}`);
+    const findings = scan(`ATATT3${mixed(180)}`);
     expect(findings.some((f) => f.ruleId === "atlassian-token")).toBe(true);
   });
 
   it("detects a Linear API key", () => {
-    const findings = scan(`lin_api_${"a".repeat(40)}`);
+    const findings = scan(`lin_api_${mixed(40)}`);
     expect(findings.some((f) => f.ruleId === "linear-key")).toBe(true);
   });
 
   it("detects a Postman API key", () => {
-    const findings = scan(`PMAK-${"a".repeat(24)}-${"b".repeat(34)}`);
+    const findings = scan(`PMAK-${hex(24)}-${hex(34)}`);
     expect(findings.some((f) => f.ruleId === "postman-key")).toBe(true);
   });
 
   it("detects a Supabase PAT", () => {
-    const findings = scan(`sbp_${"a".repeat(40)}`);
+    const findings = scan(`sbp_${hex(40)}`);
     expect(findings.some((f) => f.ruleId === "supabase-key")).toBe(true);
   });
 });
@@ -384,7 +390,7 @@ describe("scan — PII", () => {
   });
 
   it("detects a US phone number", () => {
-    const findings = scan("call: (555) 123-4567");
+    const findings = scan("call: (415) 867-5309");
     expect(findings.some((f) => f.ruleId === "pii-phone-us")).toBe(true);
   });
 
@@ -700,7 +706,7 @@ describe("scan — adversarial inputs", () => {
       // then wants an `@`. Each run here is as long as those bounds allow and
       // the `@` never comes, so every start position pays the full retreat.
       "https urls that never reach an @":
-        `https://${"a".repeat(64)}:${"b".repeat(256)}`.repeat(778),
+        `https://${mixed(64)}:${mixed(256)}`.repeat(778),
     };
 
     // Every rule is linear or better on these. The slowest pair measured is
@@ -777,7 +783,7 @@ describe("ordinary work is not a finding", () => {
   // An ssh public key is base64, and `EAAA` appears in one often enough that the
   // Square rule matched a slice of it.
   it("an ssh public key is not a Square token", () => {
-    const key = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDEAAAJ1${"a".repeat(60)}`;
+    const key = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDEAAAJ1${mixed(60)}`;
     expect(flags(key)).toEqual([]);
   });
 });
@@ -819,8 +825,8 @@ describe("detections that quieting the rules had removed", () => {
   // A boundary that counted `_` and `=` as base64 erased the token after `key_`
   // and in a query string.
   it.each([
-    `key_EAAAEaZ7${"b".repeat(56)}`,
-    `https://x.io/a?token=EAAAEaZ7${"b".repeat(56)}`,
+    `key_EAAAEaZ7${mixed(56)}`,
+    `https://x.io/a?token=EAAAEaZ7${mixed(56)}`,
   ])("%s is still a Square token", (text) => {
     expect(hits(text)).toContain("square-access-token");
   });
@@ -839,7 +845,7 @@ describe("detections that quieting the rules had removed", () => {
   });
 
   it("a three-hundred-character password is still a password", () => {
-    const url = `postgres://admin:${"a".repeat(300)}@db.corp.internal/app`;
+    const url = `postgres://admin:${mixed(300)}@db.corp.internal/app`;
     expect(hits(url)).toContain("connection-string");
   });
 });
@@ -867,25 +873,19 @@ describe("a scan cannot be made to hang", () => {
     ["a repeated JWT header", "eyJ".repeat(MEGABYTE / 3)],
     [
       "repeated Square prefixes",
-      `${(`-EAAA${"a".repeat(20)}`).repeat(MEGABYTE / 25)}/`,
+      `${(`-EAAA${mixed(20)}`).repeat(MEGABYTE / 25)}/`,
     ],
-    [
-      "repeated Mapbox prefixes",
-      `pk.eyJ${"a".repeat(12)}`.repeat(MEGABYTE / 18),
-    ],
-    [
-      "repeated Sentry prefixes",
-      `sntrys_${"a".repeat(12)}`.repeat(MEGABYTE / 19),
-    ],
-    ["one long run", "a".repeat(MEGABYTE)],
+    ["repeated Mapbox prefixes", `pk.eyJ${mixed(12)}`.repeat(MEGABYTE / 18)],
+    ["repeated Sentry prefixes", `sntrys_${mixed(12)}`.repeat(MEGABYTE / 19)],
+    ["one long run", mixed(MEGABYTE)],
     ["digits", "1234567890".repeat(MEGABYTE / 10)],
     // `env-assignment` was the rule the first pass at this guard missed: its
     // value capture was open-ended and backtracked, and a megabyte took six
     // minutes.
-    ["repeated assignments", `${"TOKEN=".repeat(48000)}${"v".repeat(711999)}<`],
+    ["repeated assignments", `${"TOKEN=".repeat(48000)}${mixed(711999)}<`],
     [
       "assignments and a long value",
-      `${"TOKEN=".repeat(87000)}${"v".repeat(524288)}<`,
+      `${"TOKEN=".repeat(87000)}${mixed(524288)}<`,
     ],
   ])("a megabyte of %s costs no more than ordinary text", (_label, text) => {
     expect(timeScan(text)).toBeLessThan(baseline() * 30 + 500);
@@ -897,8 +897,8 @@ describe("a scan cannot be made to hang", () => {
       Buffer.from(JSON.stringify(value)).toString("base64url");
     const token = [
       segment({ alg: "HS256", typ: "JWT" }),
-      segment({ sub: "1", scope: "a".repeat(3000) }),
-      "s".repeat(43),
+      segment({ sub: "1", scope: mixed(3000) }),
+      mixed(43),
     ].join(".");
     expect(ruleIds(token)).toContain("jwt");
   });

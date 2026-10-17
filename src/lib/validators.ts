@@ -25,6 +25,13 @@ const TEST_CARD_NUMBERS = new Set([
   "6011000990139424",
   "3056930009020004",
   "3566002020360505",
+  // Stripe's published test cards that the list above did not carry. The
+  // Mastercard 2-series number is one of them, so a test that expects it to be
+  // found is wrong, not this list.
+  "4000000000000002",
+  "2223003122003222",
+  "36227206271667",
+  "6200000000000005",
 ]);
 
 // A card number that is not published test data and passes the checksum. This
@@ -407,7 +414,227 @@ export function validateJapanesePhone(input: string): boolean {
   return true;
 }
 
+// A value written after `password` or `--password` that is a password and not
+// a word about one. `password is required` and `the password was reset` are
+// prose, and the rules that read a password off a label would otherwise block
+// them. A password has a letter, and a digit or a symbol beside it; the length
+// bounds keep single characters and pasted paragraphs out.
+//
+// The leading characters are the ones a value is written as a reference in,
+// not as a value: `$VAR`, `%VAR%`, `<token>`, `{{ token }}`, `-` as a flag,
+// `/path`, `~/file`. A value of only asterisks is a mask that a tool printed.
+const ASCII_SYMBOL = /[!-/:-@[-`{-~]/;
+export function isPasswordLike(input: string): boolean {
+  // The rules that take a quoted value hand over the quotes with it. They are
+  // not part of the password, and the checks below read the value alone.
+  const str = input.replace(/^(["'])(.*)\1$/s, "$2");
+  if (str.length < 6 || str.length > 128) return false;
+  if (/\s/.test(str)) return false;
+  if (/^[$%<{\-/~]/.test(str)) return false;
+  if (/^\*+$/.test(str)) return false;
+  if (!/[A-Za-z]/.test(str)) return false;
+  return /[0-9]/.test(str) || ASCII_SYMBOL.test(str);
+}
+
+// An HTTP Basic credential: the base64 of `user:password`. The value has to
+// decode to printable UTF-8 with a colon that has a user before it and a
+// password after it. The round trip rejects base64 that a lenient decoder
+// would accept anyway (wrong padding, stray characters), so a value only
+// counts when it is exactly what the header would carry.
+export function isBasicCredentials(str: string): boolean {
+  if (str.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(str)) return false;
+  const bytes = Buffer.from(str, "base64");
+  if (bytes.toString("base64") !== str) return false;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return false;
+  }
+  if (/\p{Cc}/u.test(text)) return false;
+  const colon = text.indexOf(":");
+  if (colon <= 0 || colon === text.length - 1) return false;
+  // The credentials every tutorial, test fixture and default install uses.
+  // A pair made only of these is a documented example, not a credential, and
+  // both halves have to be on the list: `admin:Xk9mP2qR7v` is still one.
+  const user = text.slice(0, colon).toLowerCase();
+  const password = text.slice(colon + 1).toLowerCase();
+  return !(
+    DOCUMENTED_BASIC_WORDS.has(user) && DOCUMENTED_BASIC_WORDS.has(password)
+  );
+}
+
+const DOCUMENTED_BASIC_WORDS: ReadonlySet<string> = new Set([
+  "user",
+  "username",
+  "admin",
+  "root",
+  "test",
+  "foo",
+  "bar",
+  "guest",
+  "demo",
+  "pass",
+  "password",
+  "passwd",
+  "secret",
+  "changeme",
+]);
+
+// Lengths for the countries whose IBANs have a fixed length, from the SWIFT
+// IBAN registry. A country not listed here is only held to the general range
+// and the check digits, so a new country is not refused on a table that is
+// out of date.
+const IBAN_LENGTHS: Readonly<Record<string, number>> = {
+  AT: 20,
+  BE: 16,
+  CH: 21,
+  DE: 22,
+  DK: 18,
+  ES: 24,
+  FI: 18,
+  FR: 27,
+  GB: 22,
+  IE: 22,
+  IT: 27,
+  LU: 20,
+  NL: 18,
+  NO: 15,
+  PL: 28,
+  PT: 25,
+  SE: 24,
+};
+
+// ISO 13616 mod-97 check: move the first four characters to the end, turn each
+// letter into two digits (A=10 … Z=35), and the number must leave a remainder
+// of 1. The remainder is kept as it goes so the number never leaves safe
+// integer range.
+export function isIban(str: string): boolean {
+  const iban = str.replace(/ /g, "");
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(iban)) return false;
+  const expected = IBAN_LENGTHS[iban.slice(0, 2)];
+  if (expected !== undefined) {
+    if (iban.length !== expected) return false;
+  } else if (iban.length < 15 || iban.length > 34) {
+    return false;
+  }
+  let remainder = 0;
+  for (const ch of iban.slice(4) + iban.slice(0, 4)) {
+    const code = ch.charCodeAt(0);
+    if (code >= 65) {
+      remainder = (remainder * 100 + (code - 55)) % 97;
+    } else {
+      remainder = (remainder * 10 + (code - 48)) % 97;
+    }
+  }
+  return remainder === 1;
+}
+
+// An international telephone number, judged by its digits alone. Nine digits is
+// the shortest a subscriber number with a country code runs, and fifteen is the
+// E.164 limit. A run of one digit repeated is a placeholder, not a number.
+export function isIntlPhone(str: string): boolean {
+  const digits = str.replace(/\D/g, "");
+  if (digits.length < 9 || digits.length > 15) return false;
+  return !/^(\d)\1*$/.test(digits);
+}
+
+// The UK National Insurance number format: two letters the HMRC does not issue
+// in the first and second position, the prefixes it reserves, and a suffix of
+// A to D (the regex enforces the suffix). Spaces are the printed form and are
+// dropped before the check.
+const NINO_FORBIDDEN_FIRST = "DFIQUV";
+const NINO_FORBIDDEN_SECOND = "DFIOQUV";
+const NINO_FORBIDDEN_PREFIXES: ReadonlySet<string> = new Set([
+  "BG",
+  "GB",
+  "KN",
+  "NK",
+  "NT",
+  "TN",
+  "ZZ",
+]);
+export function isNinoUk(str: string): boolean {
+  const nino = str.replace(/ /g, "");
+  if (!/^[A-Z]{2}[0-9]{6}[A-D]$/.test(nino)) return false;
+  if (NINO_FORBIDDEN_FIRST.includes(nino.charAt(0))) return false;
+  if (NINO_FORBIDDEN_SECOND.includes(nino.charAt(1))) return false;
+  return !NINO_FORBIDDEN_PREFIXES.has(nino.slice(0, 2));
+}
+
+// A US number judged by its last ten digits, so the country code before it does
+// not matter. The numbers these checks refuse are the ones documentation and
+// fixtures use: area code 555 is not allocated, the 555 exchange with lines
+// 0100–0199 is reserved for fiction, 555-1212 is the directory-assistance
+// number, and the toll-free area codes are businesses that print their number
+// to be dialled.
+const US_TOLL_FREE_AREAS: ReadonlySet<string> = new Set([
+  "800",
+  "888",
+  "877",
+  "866",
+  "855",
+  "844",
+  "833",
+]);
+export function isUsPhone(str: string): boolean {
+  const digits = str.replace(/\D/g, "");
+  if (digits.length < 10) return false;
+  const last10 = digits.slice(-10);
+  const area = last10.slice(0, 3);
+  const exchange = last10.slice(3, 6);
+  const line = last10.slice(6);
+  if (area === "555") return false;
+  if (exchange === "555" && (line === "1212" || /^01[0-9]{2}$/.test(line)))
+    return false;
+  return !US_TOLL_FREE_AREAS.has(area);
+}
+
+// Local parts that name a function rather than a person. The list is the one a
+// mailbox policy would name; a local part is compared whole, so `john.support`
+// and `support2` are still a person's address and still found.
+const ROLE_MAILBOX_LOCAL_PARTS: ReadonlySet<string> = new Set([
+  "noreply",
+  "no-reply",
+  "donotreply",
+  "do-not-reply",
+  "support",
+  "sales",
+  "info",
+  "help",
+  "contact",
+  "press",
+  "abuse",
+  "postmaster",
+  "webmaster",
+  "hostmaster",
+]);
+
+// Takes a whole address, as the email rule matches it, and reports whether its
+// local part is a person's. The `%40` form is the `@` in a URL query, and it is
+// split on as well so `support%40x.com` is read the same way.
+export function isPersonalMailbox(address: string): boolean {
+  const local = address.split(/@|%40/i, 1)[0] ?? "";
+  return !ROLE_MAILBOX_LOCAL_PARTS.has(local.toLowerCase());
+}
+
+// AWS secret access keys are base64 over a mixed alphabet. A 40-character run
+// that is all lower case, or all hex, is a git commit id or a digest that happens
+// to sit beside an access key ID, and the rule that reads a secret beside a key
+// ID cannot tell those apart by their position alone.
+export function hasAwsSecretShape(str: string): boolean {
+  return /[A-Z]/.test(str) && /[a-z]/.test(str) && /[0-9]/.test(str);
+}
+
 const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
+  "password-like": isPasswordLike,
+  "basic-credentials": isBasicCredentials,
+  iban: isIban,
+  "phone-intl": isIntlPhone,
+  "nino-uk": isNinoUk,
+  "phone-us": isUsPhone,
+  "personal-mailbox": isPersonalMailbox,
+  "aws-secret-shape": hasAwsSecretShape,
   luhn: isRealCardNumber,
   "aws-key": isRealAwsKey,
   "mynumber-jp": validateMyNumber,
