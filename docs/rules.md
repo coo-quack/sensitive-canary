@@ -9,6 +9,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | Rule ID | Description |
 |---------|-------------|
 | `aws-access-key` | AWS Access Key ID (`AKIA`, `ASIA`, `AGPA`, `AIDA`, `AROA`, … + 16 uppercase alphanumeric chars) |
+| `aws-secret-near-key-id` | AWS Secret Access Key on the same line as its Access Key ID, or on the next one, within 80 characters. Forty base64 characters that mix upper case, lower case and digits. A key ID ending in `EXAMPLE` is documentation and is not matched |
 | `gcp-api-key` | Google Cloud API Key (`AIza` + 35 alphanumeric/dash/underscore chars) |
 | `digitalocean-pat` | DigitalOcean Personal Access Token (`dop_v1_` prefix) |
 | `supabase-key` | Supabase Personal Access Token (`sbp_` prefix) |
@@ -75,7 +76,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `private-key` | PEM Private Key header (`-----BEGIN … PRIVATE KEY-----`) |
 | `private-key-base64` | PEM private key that has been base64-encoded — how one appears in a kubeconfig, a Kubernetes Secret or a Terraform state, where the `-----BEGIN` header never shows in the text |
 | `url-basic-auth` | Credentials in the userinfo field of an http(s) URL — a git remote, a `.netrc`, a private registry, a `curl` invocation. RFC 3986 deprecates the form for this reason |
-| `connection-string` | Database connection string with embedded credentials; each half of the credentials is bounded at 1024 characters — see the note below the tables |
+| `connection-string` | Database connection string with embedded credentials; each half of the credentials is bounded at 1024 characters, and the user name may be empty (`redis://:password@host`) — see the note below the tables |
 
 ### SaaS / Developer Tools
 
@@ -87,6 +88,7 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 | `atlassian-token` | Atlassian (Jira/Confluence) API Token (`ATATT3` prefix) |
 | `linear-key` | Linear API Key (`lin_api_` prefix) |
 | `postman-key` | Postman API Key (`PMAK-` prefix) |
+| `docker-hub-pat` | Docker Hub Personal Access Token (`dckr_pat_` prefix, then 27 or more letters, digits, `_` or `-`) |
 
 ### Platforms and Infrastructure
 
@@ -113,6 +115,27 @@ Sensitive Canary scans text against the following rules. Patterns are sourced fr
 
 The entropy threshold filters out low-entropy values that are unlikely to be real secrets — `API_KEY=aaaaaaaa` scores 0 and is dropped. It is a weak filter, not a classifier: `placeholder` scores 3.096 and clears the 3.0 threshold, so entropy alone would report `API_KEY=placeholder`. What drops that one is the placeholder test, not the threshold. Entropy is the Shannon entropy of the value.
 
+### Passwords and Authorization headers
+
+These rules read a value off the word beside it, not off its shape, so each one
+runs the `password-like` check on the value before it reports a match. A
+Basic header is checked by `basic-credentials` instead.
+
+| Rule ID | Description | Notes |
+|---------|-------------|-------|
+| `password-cli-flag` | `--password`, `--passwd` or `--pass` followed by `=` or a space; `mysql -p'…'` and `-p"…"` | The value may be quoted. `--password-stdin` and `--password prod` are not matched, since `prod` is not a password |
+| `password-netrc` | A line that begins `password` or `passwd`, indentation allowed | Matches a `.netrc` file and a `vault kv get` listing |
+| `password-prose` | `password`, `passwd`, `passcode`, `pwd` or `pw` followed by `is`, `was`, `:` or `=`; `パスワードは`, `パスワード：` | The value stops at a space, a comma, a full stop or `で`. After `:` or `=`, an unquoted name is code and is not matched: an identifier or dotted name (`new_password`, `form.password2`), a call (`hash_password(raw)`), a Ruby symbol, a GraphQL type (`String!`). `password: hunter2` is therefore not matched; quote it, or add a symbol |
+| `password-json-key` | A JSON string whose key ends in `pass`, `passwd`, `password` or `pwd` | The last word of the key has to start at a `.`, `_`, `-` or a capital letter, so `bypass` is not one. `dbpassword` in lower case is not matched |
+| `redis-auth` | `AUTH` in capitals at the start of a line or after a space or `>`, `"AUTH"` in a MONITOR line, and `redis-cli … -a` | |
+| `http-basic-auth` | `Authorization: Basic …` | The value must decode to printable UTF-8 with a non-empty user name before the colon and a non-empty password after it. A pair made only of `user`, `username`, `admin`, `root`, `test`, `foo`, `bar`, `guest`, `demo`, `pass`, `password`, `passwd`, `secret` or `changeme` is a documented example and is not matched |
+| `http-bearer-token` | `Authorization: Bearer …` | Twenty or more characters from `[A-Za-z0-9._~+/-]` with entropy of at least 3.5. `$TOKEN`, `<token>` and `${API_KEY}` are not matched |
+
+`password-like` accepts a value of six to 128 characters with no whitespace, at
+least one letter, and a digit or a symbol. It refuses a value that starts with
+`$`, `%`, `<`, `{`, `-`, `/` or `~`, and a value made only of asterisks, which
+is a mask a tool printed. A quoted value is checked without its quotes.
+
 ### Why `private-key-base64` carries three prefixes
 
 Base64 encodes three bytes at a time, so what `-----BEGIN ` looks like once
@@ -130,7 +153,7 @@ itself.
 
 | Rule ID | Description | Notes |
 |---------|-------------|-------|
-| `pii-email` | Email Address | Local part up to 64 characters per unbroken run (RFC 5321's limit); domain matched as dot-separated labels, so a domain with no dot (`user@localhost`) is not one. Both bounds are there to keep the pattern from backtracking — see the note below the table |
+| `pii-email` | Email Address | Local part up to 64 characters per unbroken run (RFC 5321's limit); domain matched as dot-separated labels, so a domain with no dot (`user@localhost`) is not one. Both bounds are there to keep the pattern from backtracking — see the note below the table. A `%40` in place of the `@` is found too. A role address such as `support@` or `noreply@` is not, and a full stop after the domain does not end the match |
 | `pii-credit-card` | Credit Card Number | Visa, Mastercard, Amex, Discover; validated with Luhn algorithm |
 | `pii-ssn` | US Social Security Number | Excludes invalid area (000, 666, 9xx), group (00), and serial (0000) numbers |
 | `pii-mynumber-jp` | Japanese Individual Number (My Number) | 12 digits, validated with weighted checksum (mod 11) |
@@ -138,8 +161,11 @@ itself.
 | `pii-codice-fiscale-it` | Italian Codice Fiscale | 16 alphanumeric chars, validated with control character (mod 26) |
 | `pii-steuer-id-de` | German Steuer-Identifikationsnummer | 11 digits, validated with MOD 11,10 (ISO/IEC 7064) |
 | `pii-dni-nie-es` | Spanish DNI / NIE | 8 digits + letter (DNI) or X/Y/Z + 7 digits + letter (NIE); validated with mod 23 |
-| `pii-phone-us` | US Phone Number | With or without country code |
+| `pii-iban` | IBAN | Country length from the SWIFT registry for the common countries, and the mod-97 check digits. Spaces in groups of four are allowed |
+| `pii-nino-uk` | UK National Insurance Number | The spaced form `AB 12 34 56 C` only. The first and second letters and the reserved prefixes are excluded |
+| `pii-phone-us` | US Phone Number | With or without country code. Numbers in the 555 exchange, the fiction range 0100 to 0199 and toll-free area codes are not matched |
 | `pii-phone-jp` | Japanese Phone Number | Area code + subscriber number format |
+| `pii-phone-intl` | International Phone Number | `+` and a country code, then digits with spaces, hyphens, dots or brackets between them. Nine to fifteen digits, not all the same |
 | `pii-phone-fr` | French Phone Number | Context-gated (requires nearby phone label) |
 | `pii-phone-it` | Italian Phone Number | Context-gated |
 | `pii-phone-de` | German Phone Number | Context-gated |
@@ -296,6 +322,13 @@ are the settings that produce one, and none of them warns:
   `contextWords`, so a single `buffer` anywhere in a large file can suppress
   every postal-code match in it.
 
+- **A value that is filler or a documented example.** A run of one character
+  after a short prefix (`ghp_xxxxxxxx…`, `AC000…`) is a placeholder, and so is
+  one of the three values vendors print in their own documentation: AWS's
+  secret access key, Stripe's test secret key and the jwt.io token. The
+  documented values are matched whole, so a real value that begins with one is
+  still a finding.
+
 After writing or overriding a rule, check it against a file you expect it to
 catch. An override that fails to compile leaves the built-in in place and says so
 on stderr; one that compiles and matches nothing replaces the built-in silently.
@@ -342,6 +375,14 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | `resident-id-cn` | Chinese Resident Identity Card |
 | `public-ipv4` | Rejects reserved IPv4 ranges |
 | `public-ipv6` | Rejects reserved IPv6 ranges |
+| `password-like` | Six to 128 characters, no whitespace, a letter, and a digit or a symbol; not a `$VAR`, `%VAR%`, slot, flag, path, or an all-asterisk mask |
+| `basic-credentials` | Base64 that decodes to printable UTF-8 `user:password`, with a non-empty user name and password |
+| `iban` | ISO 13616 mod-97 check; the length for the countries in the registry table, and fifteen to thirty-four characters for the rest |
+| `phone-intl` | Nine to fifteen digits, not all the same digit |
+| `nino-uk` | The first letter is not D, F, I, Q, U or V; the second is not D, F, I, O, Q, U or V; the prefix is not BG, GB, KN, NK, NT, TN or ZZ |
+| `phone-us` | Not area code 555; not the 555 exchange with line 0100 to 0199 or 1212; not a toll-free area code (800, 888, 877, 866, 855, 844, 833) |
+| `personal-mailbox` | The local part is not a role name (`noreply`, `no-reply`, `donotreply`, `do-not-reply`, `support`, `sales`, `info`, `help`, `contact`, `press`, `abuse`, `postmaster`, `webmaster`, `hostmaster`), compared whole and case-insensitively |
+| `aws-secret-shape` | Contains an upper case letter, a lower case letter and a digit |
 
 ### Global context window
 

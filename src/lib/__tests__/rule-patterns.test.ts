@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { scan } from "../rules.ts";
-import { AWS_KEY, DEFAULT_RULES, ruleIds } from "./rule-fixtures.ts";
+import {
+  AWS_KEY,
+  DEFAULT_RULES,
+  DOCKER_PAT,
+  hex,
+  mixed,
+  ruleIds,
+} from "./rule-fixtures.ts";
 
 // What the shipped patterns match, at the edges of what they claim to. Every
 // rule has one example and the suite runs it; an example sits in the middle of
@@ -47,7 +54,7 @@ describe("credential formats", () => {
     ["6011000991300009", "Discover 6011"],
     ["6450000000000002", "Discover 644-658"],
     ["3530111333300000", "JCB 3528-3589"],
-    ["2223003122003222", "Mastercard 2-series"],
+    ["2221000000000009", "Mastercard 2-series"],
     ["6221260000000000", "UnionPay 62"],
     ["8171990000000008", "UnionPay 81"],
   ])("%s is a card (%s)", (number) => {
@@ -65,7 +72,7 @@ describe("credential formats", () => {
   it.each(["xoxb", "xoxp", "xoxe", "xapp", "xwfp"])(
     "a Slack %s- token is found",
     (prefix) => {
-      expect(ruleIds(`${prefix}-1-${"a".repeat(40)}`)).toContain("slack-token");
+      expect(ruleIds(`${prefix}-1-${mixed(40)}`)).toContain("slack-token");
     },
   );
 
@@ -79,21 +86,19 @@ describe("credential formats", () => {
     "glimt",
     "glagent",
   ])("a GitLab %s- token is found", (prefix) => {
-    expect(ruleIds(`${prefix}-${"a".repeat(20)}`)).toContain("gitlab-pat");
+    expect(ruleIds(`${prefix}-${mixed(20)}`)).toContain("gitlab-pat");
   });
 
   // A restricted key has a rule of its own; widening the secret-key rule to
   // cover `rk_` too left that rule unable to fire.
   it("a restricted key is the restricted-key rule, not the secret-key one", () => {
-    expect(ruleIds(`rk_live_${"a".repeat(24)}`)).toEqual([
-      "stripe-restricted-key",
-    ]);
+    expect(ruleIds(`rk_live_${mixed(24)}`)).toEqual(["stripe-restricted-key"]);
   });
 
   it.each([
-    [`sk_live_${"a".repeat(24)}`, "a secret key"],
-    [`sk_org_${"a".repeat(24)}`, "an organization key"],
-    [`whsec_${"a".repeat(32)}`, "a webhook signing secret"],
+    [`sk_live_${mixed(24)}`, "a secret key"],
+    [`sk_org_${mixed(24)}`, "an organization key"],
+    [`whsec_${mixed(32)}`, "a webhook signing secret"],
   ])("%s is a Stripe secret (%s)", (token) => {
     expect(ruleIds(token)).toContain("stripe-secret-key");
   });
@@ -102,7 +107,7 @@ describe("credential formats", () => {
   // the literal pk, sk or tk — two dots, not three. Requiring three matched
   // nothing Mapbox issues.
   it.each(["pk", "sk", "tk"])("a Mapbox %s. token is found", (prefix) => {
-    expect(ruleIds(`${prefix}.eyJ1IjoiYWJjIn0.${"a".repeat(22)}`)).toContain(
+    expect(ruleIds(`${prefix}.eyJ1IjoiYWJjIn0.${mixed(22)}`)).toContain(
       "mapbox-token",
     );
   });
@@ -110,7 +115,7 @@ describe("credential formats", () => {
   // sentry-cli splits the token on underscores and requires exactly three
   // parts. The rule was written for dots.
   it("a Sentry org token is underscore-separated", () => {
-    expect(ruleIds(`sntrys_eyJpYXQiOjEuMH0=_${"c".repeat(43)}`)).toContain(
+    expect(ruleIds(`sntrys_eyJpYXQiOjEuMH0=_${mixed(43)}`)).toContain(
       "sentry-org-token",
     );
   });
@@ -181,7 +186,7 @@ describe("keywords and boundaries are read as words, not substrings", () => {
   });
 
   it("an address further from the command is still a person", () => {
-    const text = `ssh into the box, then write to ${"x".repeat(45)} ada@analytical-engines.org`;
+    const text = `ssh into the box, then write to ${mixed(45)} ada@analytical-engines.org`;
     expect(flags(text)).toContain("pii-email");
   });
 
@@ -189,25 +194,23 @@ describe("keywords and boundaries are read as words, not substrings", () => {
   // sixty seen in the wild is a token, not a false positive. Pinning the length
   // at exactly sixty let every longer one through.
   it.each([64, 128, 512])("a %i-character Square token is one", (length) => {
-    expect(flags(`EAAA${"b".repeat(length - 4)}`)).toContain(
-      "square-access-token",
-    );
+    expect(flags(`EAAA${mixed(length - 4)}`)).toContain("square-access-token");
   });
 
   // The boundary still has work to do: a longer standard-base64 blob that opens
   // with these four characters is not a token.
   it("a standard-base64 blob beginning EAAA is not one", () => {
-    expect(flags(`data:${`EAAA${"b".repeat(60)}`}/x+y=`)).not.toContain(
+    expect(flags(`data:${`EAAA${mixed(60)}`}/x+y=`)).not.toContain(
       "square-access-token",
     );
   });
 
-  it.each([
-    `key_EAAA${"b".repeat(60)}`,
-    `https://x.io/a?token=EAAA${"b".repeat(60)}`,
-  ])("%s is one", (text) => {
-    expect(flags(text)).toContain("square-access-token");
-  });
+  it.each([`key_EAAA${mixed(60)}`, `https://x.io/a?token=EAAA${mixed(60)}`])(
+    "%s is one",
+    (text) => {
+      expect(flags(text)).toContain("square-access-token");
+    },
+  );
 });
 
 // Every rule needs a value it must catch, or the id list proves only that a name
@@ -217,56 +220,56 @@ describe("keywords and boundaries are read as words, not substrings", () => {
 describe("every rule catches something", () => {
   const EXAMPLES: Record<string, string> = {
     "aws-access-key": `${AWS_KEY}`,
-    "gcp-api-key": `AIzaSyC${"A".repeat(32)}`,
-    "github-pat": `ghp_${"A".repeat(36)}`,
-    "github-fine-grained": `github_pat_${"A".repeat(82)}`,
-    "gitlab-pat": `glpat-${"A".repeat(20)}`,
-    "npm-token": `npm_${"A".repeat(36)}`,
-    "openai-key": `sk-${"A".repeat(48)}`,
+    "gcp-api-key": `AIzaSyC${mixed(32)}`,
+    "github-pat": `ghp_${mixed(36)}`,
+    "github-fine-grained": `github_pat_${mixed(82)}`,
+    "gitlab-pat": `glpat-${mixed(20)}`,
+    "npm-token": `npm_${mixed(36)}`,
+    "openai-key": `sk-${mixed(48)}`,
     "openai-project-key": "sk-proj-Xk9mP2qR7vL4nW1sYj3cBz8dEf5gHiKoNpQuTxMn",
-    "openai-service-key": `sk-svcacct-${"A".repeat(40)}`,
-    "anthropic-key": `sk-ant-${"A".repeat(95)}`,
-    "replicate-token": `r8_${"A".repeat(37)}`,
-    "huggingface-token": `hf_${"A".repeat(34)}`,
-    "groq-key": `gsk_${"A".repeat(52)}`,
-    "openrouter-key": `sk-or-v1-${"a".repeat(64)}`,
-    "xai-key": `xai-${"A".repeat(80)}`,
-    "perplexity-key": `pplx-${"A".repeat(48)}`,
-    "digitalocean-pat": `dop_v1_${"a".repeat(64)}`,
-    "supabase-key": `sbp_${"a".repeat(40)}`,
+    "openai-service-key": `sk-svcacct-${mixed(40)}`,
+    "anthropic-key": `sk-ant-${mixed(95)}`,
+    "replicate-token": `r8_${mixed(37)}`,
+    "huggingface-token": `hf_${mixed(34)}`,
+    "groq-key": `gsk_${mixed(52)}`,
+    "openrouter-key": `sk-or-v1-${hex(64)}`,
+    "xai-key": `xai-${mixed(80)}`,
+    "perplexity-key": `pplx-${mixed(48)}`,
+    "digitalocean-pat": `dop_v1_${hex(64)}`,
+    "supabase-key": `sbp_${hex(40)}`,
     "slack-token": "xoxb-123456789012-ABCDEFGHIJ",
-    "slack-webhook": `https://hooks.slack.com/services/TABCDEFGH/BABCDEFGHIJ/${"A".repeat(24)}`,
-    "discord-webhook": `https://discord.com/api/webhooks/123456789012345678/${"A".repeat(68)}`,
-    "telegram-bot-token": `12345678:AA${"A".repeat(33)}`,
-    "twilio-sid": `AC${"a".repeat(32)}`,
-    "stripe-secret-key": `sk_live_${"A".repeat(24)}`,
-    "stripe-restricted-key": `rk_test_${"A".repeat(24)}`,
-    "square-access-token": `EAAA${"a".repeat(60)}`,
-    "sendgrid-key": `SG.${"A".repeat(22)}.${"B".repeat(43)}`,
-    "mailgun-key": `key-${"a".repeat(32)}`,
-    "mailchimp-key": `${"a".repeat(32)}-us1`,
+    "slack-webhook": `https://hooks.slack.com/services/TABCDEFGH/BABCDEFGHIJ/${mixed(24)}`,
+    "discord-webhook": `https://discord.com/api/webhooks/123456789012345678/${mixed(68)}`,
+    "telegram-bot-token": `12345678:AA${mixed(33)}`,
+    "twilio-sid": `AC${hex(32)}`,
+    "stripe-secret-key": `sk_live_${mixed(24)}`,
+    "stripe-restricted-key": `rk_test_${mixed(24)}`,
+    "square-access-token": `EAAA${mixed(60)}`,
+    "sendgrid-key": `SG.${mixed(22)}.${mixed(43)}`,
+    "mailgun-key": `key-${mixed(32)}`,
+    "mailchimp-key": `${hex(32)}-us1`,
     jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
     "private-key": "-----BEGIN RSA PRIVATE KEY-----",
     "connection-string": "postgres://admin:hunter2xyz@db.internal/app",
-    "mapbox-token": `pk.eyJ${"a".repeat(20)}.${"b".repeat(20)}.${"c".repeat(20)}`,
-    "sentry-user-token": `sntryu_${"a".repeat(64)}`,
-    "sentry-org-token": `sntrys_eyJpYXQiOjEuMH0=_${"c".repeat(43)}`,
-    "atlassian-token": `ATATT3${"a".repeat(180)}`,
-    "linear-key": `lin_api_${"a".repeat(40)}`,
-    "postman-key": `PMAK-${"a".repeat(24)}-${"b".repeat(34)}`,
-    "azure-storage-key": `AccountKey=${"a".repeat(86)}==`,
+    "mapbox-token": `pk.eyJ${mixed(20)}.${mixed(20)}.${mixed(20)}`,
+    "sentry-user-token": `sntryu_${hex(64)}`,
+    "sentry-org-token": `sntrys_eyJpYXQiOjEuMH0=_${mixed(43)}`,
+    "atlassian-token": `ATATT3${mixed(180)}`,
+    "linear-key": `lin_api_${mixed(40)}`,
+    "postman-key": `PMAK-${hex(24)}-${hex(34)}`,
+    "azure-storage-key": `AccountKey=${mixed(86)}==`,
     "private-key-base64": `LS0tLS1CRUdJTi${"QUJDRA".repeat(9)}`,
     "url-basic-auth":
       "https://admin:s3cr3tP4ssw0rdX9@internal.corp.example.com",
-    "azure-sas-key": `SharedAccessKey=${"a".repeat(43)}=`,
+    "azure-sas-key": `SharedAccessKey=${mixed(43)}=`,
     "google-oauth-secret": "GOCSPX-aBcD1234eFgH5678iJkL",
-    "flyio-token": `FlyV1 fm2_${"a".repeat(50)}`,
+    "flyio-token": `FlyV1 fm2_${mixed(50)}`,
     "databricks-token": `dapi${"0123456789abcdef".repeat(2)}`,
-    "vault-token": `hvs.${"A".repeat(30)}`,
+    "vault-token": `hvs.${mixed(30)}`,
     "shopify-token": `shpat_${"0123456789abcdef".repeat(2)}`,
-    "doppler-token": `dp.pt.${"A".repeat(44)}`,
-    "grafana-token": `glsa_${"A".repeat(40)}`,
-    "notion-token": `ntn_${"A".repeat(44)}`,
+    "doppler-token": `dp.pt.${mixed(44)}`,
+    "grafana-token": `glsa_${mixed(40)}`,
+    "notion-token": `ntn_${mixed(44)}`,
     "generic-secret": "api_key = Xk9mP2qR7vL4nW1sYj3cBz8d",
     "env-assignment": "DB_PASSWORD=Xk9mP2qR7vL4nW1sYj3cBz8d",
     "pii-email": "contact alice@analytical-engines.org",
@@ -282,7 +285,7 @@ describe("every rule catches something", () => {
     "pii-rrn-kr": "주민등록번호 900101-1234568",
     "pii-brn-kr": "사업자등록번호 220-81-62517",
     "pii-resident-id-cn": "身份证 11010519491231002X",
-    "pii-phone-us": "call 415-555-0132",
+    "pii-phone-us": "call 415-867-5309",
     "pii-phone-jp": "03-1234-5678",
     "pii-phone-fr": "tél: 01 23 45 67 89",
     "pii-phone-it": "telefono: 0212345678",
@@ -293,6 +296,23 @@ describe("every rule catches something", () => {
     "pii-postal-jp": "〒100-0001",
     "pii-postal-code": "ZIP 94107",
     "pii-postal-cn": "postal code 100000",
+    "aws-secret-near-key-id": `AKIA32M9QY4UEBOPC69U\nrIXf+Y0WDSn5Ctrn2zsvegYvJGWJWRXzhwOLfPg6`,
+    "docker-hub-pat": `docker login -u chatalab -p ${DOCKER_PAT}`,
+    "http-basic-auth":
+      "Authorization: Basic c3ZjX2JpbGxpbmc6Nk16WDluRVcrVCtMTGM=",
+    "http-bearer-token":
+      "Authorization: Bearer sk-live-OqDqQa5ZD5sRIkeC8wLtO9BS",
+    "password-cli-flag":
+      "mysql -h 10.2.0.14 -u report -p'V1m*23zdFGB' analytics",
+    "password-netrc":
+      "machine git.example-corp.net\n  login deploy\n  password V9N7z2!pjcRs",
+    "password-prose": "my password is CKj3Jg%V8Yr if you want",
+    "password-json-key":
+      '"db.user": "malvarez", "db.pass": "i!kyBV7DyKVcqNoixmQ"',
+    "redis-auth": "127.0.0.1:6379> AUTH hMDvD-xED3A",
+    "pii-iban": "DE89 3704 0044 0532 0130 00",
+    "pii-phone-intl": "+49 151 85280948",
+    "pii-nino-uk": "NI: RE 62 91 56 A",
   };
 
   it("has an example for every shipped rule", () => {
@@ -346,6 +366,14 @@ describe("every rule catches something", () => {
     "pii-postal-code": "five digits",
     "pii-postal-cn": "six digits",
     "pii-ipv4-public": "four octets",
+    "aws-secret-near-key-id":
+      "the secret is exactly forty characters, and the rule takes exactly forty",
+    "http-basic-auth":
+      "a base64 credential is whole four-character groups, so a longer one is not a credential",
+    "pii-iban": "the country length and the check digits fix the value",
+    "pii-phone-intl":
+      "a dialling plan fixes the number of digits, and the rule's range is nine to fifteen",
+    "pii-nino-uk": "two letters, six digits and a suffix",
   };
 
   // The list above is a list, so it is held to the rules that exist: an id left
@@ -504,10 +532,7 @@ describe("pii-email after bounding the local part", () => {
       "every character of the local part",
     ],
     ["see<ada@analytical-engines.org>now", "embedded in surrounding text"],
-    [
-      `${"a".repeat(64)}@analytical-engines.org`,
-      "a local part at RFC 5321's limit",
-    ],
+    [`${mixed(64)}@analytical-engines.org`, "a local part at RFC 5321's limit"],
   ])("%s is detected (%s)", (text) => {
     expect(email(text)).toBe(true);
   });
@@ -516,14 +541,14 @@ describe("pii-email after bounding the local part", () => {
   // dot to restart the boundary is not a deliverable address, and it is also a
   // way to write one this rule will not see.
   it("a local part past the limit is not detected", () => {
-    expect(email(`${"a".repeat(65)}@analytical-engines.org`)).toBe(false);
+    expect(email(`${mixed(65)}@analytical-engines.org`)).toBe(false);
   });
 
   // A dot restarts the word boundary, so a long address with dots in it is
   // still found — the limit applies to one unbroken run, not to the whole
   // local part.
   it("a long local part broken by dots is still detected", () => {
-    const local = Array.from({ length: 10 }, () => "a".repeat(20)).join(".");
+    const local = Array.from({ length: 10 }, () => mixed(20)).join(".");
     expect(email(`${local}@analytical-engines.org`)).toBe(true);
   });
 
@@ -632,7 +657,7 @@ describe("the credential shapes the rules used to miss", () => {
     // to that boundary decides what it looks like once encoded. Matching one
     // alignment would find one key in three.
     it.each([0, 1, 2])("%i bytes ahead of the header", (offset) => {
-      const encoded = Buffer.from("x".repeat(offset) + pem, "utf8").toString(
+      const encoded = Buffer.from(mixed(offset) + pem, "utf8").toString(
         "base64",
       );
       expect(hits(`client-key-data: ${encoded}`, "private-key-base64")).toBe(
@@ -840,8 +865,8 @@ describe("connection-string after bounding the credentials", () => {
   // password that long is not what a connection string carries, and the
   // alternative is the quantifier running to the end of the file.
   it("credentials longer than the bound are not detected", () => {
-    expect(conn(`mongodb://user:${"p".repeat(1025)}@host`)).toBe(false);
-    expect(conn(`mongodb://user:${"p".repeat(1024)}@host`)).toBe(true);
+    expect(conn(`mongodb://user:${mixed(1025)}@host`)).toBe(false);
+    expect(conn(`mongodb://user:${mixed(1024)}@host`)).toBe(true);
   });
 });
 
@@ -871,7 +896,792 @@ describe("env-assignment after bounding the name", () => {
   // longer than that is not an environment variable anyone writes, and saying
   // so here is what stops the bound being loosened to "fix" a case nobody has.
   it("a name with more than 64 capitals before the keyword is not detected", () => {
-    expect(assigned(`${"A".repeat(65)}SECRET=abcdefgh12345`)).toBe(false);
-    expect(assigned(`${"A".repeat(64)}SECRET=abcdefgh12345`)).toBe(true);
+    expect(assigned(`${mixed(65)}SECRET=abcdefgh12345`)).toBe(false);
+    expect(assigned(`${mixed(64)}SECRET=abcdefgh12345`)).toBe(true);
+  });
+});
+
+// ── the address shapes a document prints ──────────────────────────────────────
+
+const ruleHit = (text: string, id: string): boolean =>
+  scan(text).some((f) => f.ruleId === id);
+
+// A sentence ends in a full stop, and the address before it is still an
+// address. The rule used to refuse any domain that a dot followed, so the stop
+// hid it. A dot that is followed by a label is still a longer domain, and the
+// whole domain is taken either way.
+describe("an address followed by a full stop", () => {
+  it.each([
+    ["contact dmitri.ferreira@fernhill.co.", "dmitri.ferreira@fernhill.co"],
+    ["write to ada@analytical-engines.org.", "ada@analytical-engines.org"],
+    ["the mailbox is a@b.co.uk.", "a@b.co.uk"],
+    ["see (ada@analytical-engines.org).", "ada@analytical-engines.org"],
+  ])("%s is found as %s", (text, address) => {
+    const found = scan(text).find((f) => f.ruleId === "pii-email");
+    expect(found?.secretValue).toBe(address);
+  });
+
+  // The whole domain, not the first label: a rule that stopped at `co` would
+  // leave `.uk` outside the match and report a different address.
+  it("a multi-label domain is taken whole", () => {
+    const found = scan("a@b.co.uk").find((f) => f.ruleId === "pii-email");
+    expect(found?.secretValue).toBe("a@b.co.uk");
+  });
+
+  // A dot followed by a letter run is part of the name, not a stop.
+  it("a domain followed by a dot and a word is not cut at the dot", () => {
+    const found = scan("a@b.co.uk.example").find(
+      (f) => f.ruleId === "pii-email",
+    );
+    expect(found).toBeUndefined();
+  });
+});
+
+// The `@` in a URL query is written `%40`. The local part is the same kind of
+// text as before the `@`, so the same rule finds it.
+describe("an address with its @ percent-encoded", () => {
+  it.each([
+    [
+      "GET /api/users?email=tomas.reyes%40quillfield.com&expand=orders",
+      "tomas.reyes%40quillfield.com",
+    ],
+    ["?to=ada%40analytical-engines.org", "ada%40analytical-engines.org"],
+    ["mailto:ada%40analytical-engines.org", "ada%40analytical-engines.org"],
+  ])("%s is found", (text, value) => {
+    const found = scan(text).find((f) => f.ruleId === "pii-email");
+    expect(found?.secretValue).toBe(value);
+  });
+
+  // The negative lookahead for `git@` names the `@` form of an address that is
+  // a repository, not a person. Its `%40` form is the same thing.
+  it("git%40 is still a repository address, not a person", () => {
+    expect(ruleHit("clone git%40github.com:org/repo.git", "pii-email")).toBe(
+      false,
+    );
+  });
+});
+
+// The local parts a mailbox policy names as functions. A role address reaches a
+// shared inbox, and a block on it stops a developer quoting their team's
+// published contact. Compared whole and case-insensitively.
+describe("a role address is not a person's", () => {
+  it.each([
+    "noreply@acmecorp.io",
+    "no-reply@acmecorp.io",
+    "donotreply@acmecorp.io",
+    "do-not-reply@acmecorp.io",
+    "support@acmecorp.io",
+    "sales@acmecorp.io",
+    "info@acmecorp.io",
+    "help@acmecorp.io",
+    "contact@acmecorp.io",
+    "press@acmecorp.io",
+    "abuse@acmecorp.io",
+    "postmaster@acmecorp.io",
+    "webmaster@acmecorp.io",
+    "hostmaster@acmecorp.io",
+    "Support@acmecorp.io",
+    "NOREPLY@acmecorp.io",
+    "No-Reply@acmecorp.io",
+  ])("%s is not found", (address) => {
+    expect(ruleHit(`write to ${address}`, "pii-email")).toBe(false);
+  });
+
+  // The near misses: a name that contains a role word, or a role word with a
+  // digit or a different suffix, is a person or a team's own mailbox, and it
+  // stays a finding.
+  it.each([
+    "john.support@acmecorp.io",
+    "support2@acmecorp.io",
+    "supportteam@acmecorp.io",
+    "info.jane@acmecorp.io",
+    "sales-team@acmecorp.io",
+    "x.noreply@acmecorp.io",
+  ])("%s is still found", (address) => {
+    expect(ruleHit(`write to ${address}`, "pii-email")).toBe(true);
+  });
+
+  it("a role address in a URL query is also not a person's", () => {
+    expect(ruleHit("?to=support%40acmecorp.io", "pii-email")).toBe(false);
+  });
+});
+
+// ── passwords on a command line, in a netrc file, in a sentence, in JSON ────
+
+describe("a password passed on the command line", () => {
+  it.each([
+    [
+      "mysql -h 10.2.0.14 -u report -p'V1m*23zdFGB' analytics",
+      "mysql -p with single quotes",
+    ],
+    [
+      'mysql -h 10.2.0.14 -u report -p"V1m*23zdFGB" analytics',
+      "mysql -p with double quotes",
+    ],
+    [
+      "pg_dump --host db1 --username app --password 'S4Kv&DEu0GBmb' prod",
+      "--password with a space and a quoted value",
+    ],
+    [
+      'sync.exe --password "jQMhIKJNlyJl@u#Ulf" --user fwagner',
+      "--password with double quotes",
+    ],
+    ["tool --password=S4Kv&DEu0GBmb", "--password= with no quotes"],
+    ["tool --passwd hunter2!x", "--passwd, unquoted"],
+    ["tool --pass=Xk9mP2qR7v", "--pass="],
+    ["(mysql -p'V1m*23zdFGB')", "inside parentheses"],
+    ['"cmd": "mysql -p\'V1m*23zdFGB\' db"', "inside a JSON string"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "password-cli-flag")).toBe(true);
+  });
+
+  it.each([
+    ["pg_dump --password prod", "a word that is not a password"],
+    ["tool --password-stdin", "a flag that names the source, not the value"],
+    ["tool --password=abc1!", "five characters, one under the minimum"],
+    ["ssh -p 22 host", "-p with a port, not a password"],
+    ["mysql -p analytics", "-p without quotes is not the mysql form"],
+    ["tool --password", "a flag with no value"],
+    ["tool --password 'my pass1'", "a value with a space in it"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "password-cli-flag")).toBe(false);
+  });
+
+  // A value that ends in a full stop or a closing parenthesis is a sentence
+  // around it. The stop is not part of the password.
+  it("the value stops before a trailing full stop", () => {
+    const found = scan("run tool --password Xk9mP2qR7v.").find(
+      (f) => f.ruleId === "password-cli-flag",
+    );
+    expect(found?.secretValue).toBe("Xk9mP2qR7v");
+  });
+});
+
+describe("a password line in a .netrc file or a vault listing", () => {
+  it.each([
+    [
+      "machine git.example-corp.net\n  login deploy\n  password V9N7z2!pjcRs",
+      "an indented netrc line",
+    ],
+    ["password V9N7z2!pjcRs", "at the start of the text"],
+    [
+      "username       meilin.zhou\npassword       Salt_lVi9UMB45",
+      "a vault key listing",
+    ],
+    ["\tpasswd\tSalt_lVi9UMB45", "a tab-indented passwd line"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "password-netrc")).toBe(true);
+  });
+
+  it.each([
+    ["the password V9N7z2!pjcRs is old", "the word is in the middle of a line"],
+    ["password required", "a value with no digit or symbol"],
+    ["password_hint V9N7z2!pjcRs", "a name that is not the word"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "password-netrc")).toBe(false);
+  });
+});
+
+describe("a password written in a sentence", () => {
+  it.each([
+    ["my password is CKj3Jg%V8Yr if you want", "password is"],
+    [
+      "Temporary password is Kessler?dlbRswI01j24 -- change it",
+      "password is, capitalised",
+    ],
+    ["pw: hunter2!x", "pw:"],
+    ['password = "Xk9mP2qR7v"', "password = with quotes"],
+    ["PASSWORD: Xk9mP2qR7v!", "upper case keyword"],
+    ["パスワードは Xk9mP2qR7v です", "Japanese, は and です"],
+    ["パスワード：Xk9mP2qR7v", "Japanese, full-width colon"],
+    ["パスワード: Xk9mP2qR7v", "Japanese, colon"],
+    ["パスワードは Xk9mP2qR7v で届きます", "Japanese, stops before で"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "password-prose")).toBe(true);
+  });
+
+  it.each([
+    ["password is required", "required has no digit or symbol"],
+    ["password is incorrect.", "incorrect has no digit or symbol"],
+    ["the password was reset", "reset has no digit or symbol"],
+    ["passwords are stored elsewhere", "a longer word"],
+    ["password: 123456", "digits only"],
+    ["password = None", "None has no digit or symbol"],
+    ["パスワードは設定済みです", "Japanese with no Latin letters"],
+    ["パスワードを忘れました", "no separator after the word"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "password-prose")).toBe(false);
+  });
+
+  // The value is the password and not the code around it: an identifier path
+  // like `os.environ[` is refused by the value class, so the rule does not read
+  // a read from the environment as a password.
+  it("code that reads the password is not one", () => {
+    expect(
+      ruleHit('password = os.environ["DB_PASSWORD"]', "password-prose"),
+    ).toBe(false);
+  });
+});
+
+describe("a password under a key that ends in pass, passwd, password or pwd", () => {
+  it.each([
+    ['"db.user": "malvarez", "db.pass": "i!kyBV7DyKVcqNoixmQ"', "db.pass"],
+    ['{"user_password": "Xk9mP2qR7vL4"}', "user_password"],
+    ['{"userPassword": "Xk9mP2qR7vL4"}', "camel case"],
+    ['{"PASSWORD": "Xk9mP2qR7vL4"}', "upper case"],
+    ['{"dbPass": "Xk9mP2qR7vL4"}', "camel case pass"],
+    ['{"passwd": "Xk9mP2qR7vL4"}', "passwd"],
+    ['{"pwd": "Xk9mP2qR7vL4"}', "pwd"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "password-json-key")).toBe(true);
+  });
+
+  // `bypass` ends in the letters `pass` but the word is `by`: the key is judged
+  // by where its last word starts, and a boundary has to come before it.
+  it.each([
+    ['{"bypass": "Xk9mP2qR7vL4"}', "bypass ends in pass but is one word"],
+    ['{"password_hint": "Xk9mP2qR7vL4"}', "the key ends in hint"],
+    ['{"passwordless": "Xk9mP2qR7vL4"}', "the key ends in less"],
+    ['{"db.pass": "12345"}', "a value with no letter"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "password-json-key")).toBe(false);
+  });
+});
+
+describe("the Redis AUTH command and redis-cli -a", () => {
+  it.each([
+    ["127.0.0.1:6379> AUTH hMDvD-xED3A", "a MONITOR prompt"],
+    ['"AUTH" "Ember%0eWzV6g4lU59"', "a quoted MONITOR line"],
+    ["AUTH hMDvD-xED3A", "at the start of the text"],
+    ["redis-cli -h 10.0.0.5 -a hMDvD-xED3A ping", "redis-cli -a"],
+    ['AUTH "hMDvD-xED3A"', "a quoted value"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "redis-auth")).toBe(true);
+  });
+
+  it.each([
+    ["auth hMDvD-xED3A", "lower case is not the command"],
+    ["AUTH required", "a word that is not a password"],
+    ["redis-cli -h 10.0.0.5 ping", "no -a"],
+    ["AUTHORIZED hMDvD-xED3A", "a longer word"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "redis-auth")).toBe(false);
+  });
+});
+
+// ── the Authorization header ──────────────────────────────────────────────────
+
+describe("an HTTP Basic credential", () => {
+  it.each([
+    ["Authorization: Basic c3ZjX2JpbGxpbmc6Nk16WDluRVcrVCtMTGM=", "the header"],
+    ["authorization: basic c3ZjX2JpbGxpbmc6Nk16WDluRVcrVCtMTGM=", "lower case"],
+    ['"Authorization": "Basic c3ZjX2JpbGxpbmc6Nk16WDluRVcrVCtMTGM="', "JSON"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "http-basic-auth")).toBe(true);
+  });
+
+  // Each is base64 that is well formed and decodes, and is still not a
+  // `user:password` pair: no colon, an empty user, an empty password, a bad
+  // length, bytes that are not UTF-8, and a control character.
+  it.each([
+    ["Authorization: Basic dXNlcg==", "decodes to a user name with no colon"],
+    ["Authorization: Basic OnBhc3M=", "an empty user name"],
+    ["Authorization: Basic dXNlcjo=", "an empty password"],
+    [
+      "Authorization: Basic c3ZjX2JpbGxpbmc6Nk16WDluRVcrVCtMTGM",
+      "missing padding",
+    ],
+    ["Authorization: Basic /w==", "bytes that are not UTF-8"],
+    ["Authorization: Basic dQE6cA==", "a control character"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "http-basic-auth")).toBe(false);
+  });
+});
+
+describe("an HTTP Bearer token", () => {
+  it.each([
+    ["Authorization: Bearer sk-live-OqDqQa5ZD5sRIkeC8wLtO9BS", "the header"],
+    ["authorization: bearer sk-live-OqDqQa5ZD5sRIkeC8wLtO9BS", "lower case"],
+    ['"Authorization": "Bearer sk-live-OqDqQa5ZD5sRIkeC8wLtO9BS"', "JSON"],
+    [`Authorization: Bearer ${mixed(20)}`, "the minimum length of twenty"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "http-bearer-token")).toBe(true);
+  });
+
+  it.each([
+    ["Authorization: Bearer $TOKEN", "a shell reference"],
+    ["Authorization: Bearer <token>", "a slot"],
+    ["Authorization: Bearer ${API_KEY}", "a template reference"],
+    ["Authorization: Bearer abcdefghijklmnopqrs", "nineteen characters"],
+    ["Authorization: Bearer abababababababababababab", "no entropy"],
+    [
+      "Authorization: Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "a run of one character",
+    ],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "http-bearer-token")).toBe(false);
+  });
+});
+
+// ── the AWS secret access key, written beside its key ID ─────────────────────
+
+describe("an AWS secret access key beside its Access Key ID", () => {
+  const SECRET = "wJ4rXUt0nFEM9K7MDENG2bPxRfiCYqZ8nMLVAa3D";
+  const KEY_ID = "AKIA32M9QY4UEBOPC69U";
+
+  it.each([
+    [`${KEY_ID}\nrIXf+Y0WDSn5Ctrn2zsvegYvJGWJWRXzhwOLfPg6`, "on the next line"],
+    [
+      `svc-report-1,${KEY_ID},/yvGmsLPhuxamXfuIt4mxDZncVBbdM4d4bs6SuZc`,
+      "a CSV row",
+    ],
+    [`access key ${KEY_ID} secret ${SECRET}`, "on the same line"],
+    [`アクセスキーは ${KEY_ID}、シークレットは ${SECRET}`, "Japanese labels"],
+    [`${KEY_ID}, ${SECRET}`, "a comma and a space"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "aws-secret-near-key-id")).toBe(true);
+  });
+
+  // Only the forty characters are the value: the key ID and the label beside
+  // it are not part of the finding.
+  it("the finding is the forty characters and nothing else", () => {
+    const found = scan(`${KEY_ID},${SECRET}`).find(
+      (f) => f.ruleId === "aws-secret-near-key-id",
+    );
+    expect(found?.secretValue).toBe(SECRET);
+  });
+
+  // The gap between the key ID and the secret is bounded at eighty characters.
+  // Eighty is the limit, and eighty-one on the same line is not a secret beside
+  // the key.
+  it("a gap of eighty characters on the same line is found, eighty-one is not", () => {
+    expect(
+      ruleHit(`${KEY_ID}${" ".repeat(80)}${SECRET}`, "aws-secret-near-key-id"),
+    ).toBe(true);
+    expect(
+      ruleHit(`${KEY_ID}${" ".repeat(81)}${SECRET}`, "aws-secret-near-key-id"),
+    ).toBe(false);
+  });
+
+  it("the same bound applies to the next line", () => {
+    expect(
+      ruleHit(
+        `${KEY_ID}\n${" ".repeat(80)}${SECRET}`,
+        "aws-secret-near-key-id",
+      ),
+    ).toBe(true);
+    expect(
+      ruleHit(
+        `${KEY_ID}\n${" ".repeat(81)}${SECRET}`,
+        "aws-secret-near-key-id",
+      ),
+    ).toBe(false);
+  });
+
+  // The secret is exactly forty characters: a forty-first base64 character on
+  // the end is part of a longer run, not a secret.
+  it("a run of forty-one base64 characters is not a secret", () => {
+    expect(ruleHit(`${KEY_ID},${SECRET}Q`, "aws-secret-near-key-id")).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    [
+      `${KEY_ID},${"0123456789abcdef".repeat(2)}abcdef01`,
+      "a git commit id, lower case hex",
+    ],
+    [
+      `${KEY_ID},${"wJ4rXUt0nFEM9K7MDENG2bPxRfiCYqZ8nMLVAa3"}`,
+      "thirty-nine characters",
+    ],
+    [
+      `${KEY_ID},${"wJ4rXUt0nFEM9K7MDENG2bPxRfiCYqZ8nMLVA"}`,
+      "a secret without a digit in it",
+    ],
+    [
+      `${KEY_ID},${"WJ4RXUT0NFEM9K7MDENG2BPXRFICYQZ8NMLVAA3"}`,
+      "a secret without a lower case letter",
+    ],
+    [
+      `${KEY_ID}${" ".repeat(3)}${"x".repeat(40)}`,
+      "forty characters of one letter",
+    ],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "aws-secret-near-key-id")).toBe(false);
+  });
+
+  // AWS's documentation key ends with EXAMPLE, and its secret is documentation
+  // too. The rule reads the key ID's tail, as the key rule does.
+  it("a documented Access Key ID that ends in EXAMPLE is not a finding", () => {
+    expect(
+      ruleHit(`AKIA${"IOSFODNN7"}EXAMPLE\n${SECRET}`, "aws-secret-near-key-id"),
+    ).toBe(false);
+  });
+
+  it("a key ID without a secret beside it is not a finding", () => {
+    expect(ruleHit(`${KEY_ID} is the key`, "aws-secret-near-key-id")).toBe(
+      false,
+    );
+  });
+});
+
+// ── Docker Hub personal access token ──────────────────────────────────────────
+
+describe("a Docker Hub personal access token", () => {
+  it.each([
+    [`docker login -u chatalab -p ${DOCKER_PAT}`, "a docker login"],
+    [
+      `dckr_pat_${mixed(27)}`,
+      "exactly twenty-seven characters after the prefix",
+    ],
+    [`dckr_pat_${mixed(40)}`, "a longer token"],
+    [`"token": "dckr_pat_${mixed(27)}_x"`, "in JSON, with an underscore"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "docker-hub-pat")).toBe(true);
+  });
+
+  it.each([
+    [`dckr_pat_${mixed(26)}`, "one character under the length"],
+    ["dckr_pat_", "the prefix alone"],
+    [`mydckr_pat_${mixed(27)}`, "the prefix is not at a word boundary"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "docker-hub-pat")).toBe(false);
+  });
+});
+
+// ── Telegram bot token in a URL ──────────────────────────────────────────────
+
+describe("a Telegram bot token written after bot in a URL", () => {
+  const TOKEN = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw";
+
+  it.each([
+    [`https://api.telegram.org/bot${TOKEN}/getMe`, "a getMe URL"],
+    [`https://api.telegram.org/bot${TOKEN}`, "a URL ending at the token"],
+    [TOKEN, "the token on its own"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "telegram-bot-token")).toBe(true);
+  });
+
+  // The `:AA` requirement is the shape Telegram issues, and it still holds
+  // after bot: a number written after bot without it is not a token.
+  it.each([
+    [
+      "https://api.telegram.org/bot123456789:BBHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/getMe",
+      "not AA",
+    ],
+    ["robot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", "robot is not bot"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "telegram-bot-token")).toBe(false);
+  });
+});
+
+// ── connection strings with no user name ─────────────────────────────────────
+
+describe("a connection string with an empty user name", () => {
+  it.each([
+    [
+      "redis://:4yBnLzQgJuCkCCJsJ7@cache-03.northgate-data.io:6379/0",
+      "redis with no user",
+    ],
+    ["mongodb://:Xk2p9QmR7t@cluster0.example.net/db", "mongodb with no user"],
+    ["postgres://:Xk2p9QmR7t@db.internal/app", "postgres with no user"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "connection-string")).toBe(true);
+  });
+
+  it.each([
+    ["redis://:@cache-03.northgate-data.io:6379/0", "no user and no password"],
+    ["redis://cache-03.northgate-data.io:6379/0", "no credentials at all"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "connection-string")).toBe(false);
+  });
+});
+
+// ── an AWS account ID in an ARN is not a My Number ───────────────────────────
+
+describe("a twelve-digit AWS account ID in an ARN", () => {
+  it.each([
+    ["arn:aws:iam::835997400938:role/ci-deployer", "an IAM role"],
+    ["arn:aws:sns:us-east-1:835997400938:topic", "an SNS topic"],
+    ["arn:aws-cn:s3:cn-north-1:835997400938:bucket", "a partition with a dash"],
+  ])("%s is not a My Number (%s)", (text) => {
+    expect(ruleHit(text, "pii-mynumber-jp")).toBe(false);
+  });
+
+  // The same digits outside an ARN are still a number, so the exemption is for
+  // the account's place in an ARN and not for the digits.
+  it("the same twelve digits outside an ARN are still found", () => {
+    expect(ruleHit("account 835997400938 is ours", "pii-mynumber-jp")).toBe(
+      true,
+    );
+  });
+});
+
+// ── IBAN, international phone numbers, UK National Insurance numbers ──────────
+
+describe("an IBAN", () => {
+  it.each([
+    ["DE89 3704 0044 0532 0130 00", "German, grouped in fours"],
+    ["GB82WEST12345698765432", "British, unspaced"],
+    ["DE89370400440532013000", "German, unspaced"],
+    ["IBAN: GB82 WEST 1234 5698 7654 32.", "after a label, before a full stop"],
+    ["(DE89 3704 0044 0532 0130 00)", "inside parentheses"],
+    ['{"iban": "DE89370400440532013000"}', "inside JSON"],
+    ["IL17 0108 0000 0001 2612 345", "a country not in the length table"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "pii-iban")).toBe(true);
+  });
+
+  // The check digits are 89 for the German number. Changing the first of them
+  // to 88 leaves the mod-97 remainder at other than one.
+  it.each([
+    ["DE88 3704 0044 0532 0130 00", "one check digit changed"],
+    ["DE89 3704 0044 0532 0130 0", "one character short for Germany"],
+    ["DE89 3704 0044 0532 0130 001", "one character long for Germany"],
+    ["AA12 3456 7890 1234 5678", "a country with no check that passes"],
+    ["XX82WEST12345698765432", "a two-letter prefix that is not a country"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "pii-iban")).toBe(false);
+  });
+});
+
+describe("an international phone number", () => {
+  it.each([
+    ["+49 151 85280948", "German"],
+    ["+33 6 22 81 96 59", "French"],
+    ["+55 11 98206-4442", "Brazilian, hyphen"],
+    ["+91 90848 57208", "Indian"],
+    ["+61 477 715 965", "Australian"],
+    ["+81 90-9384-1967", "Japanese, hyphens"],
+    ["+44 7801 997035", "British"],
+    ["+52 55 4268 5070", "Mexican"],
+    ["+4915112345678", "unspaced"],
+    ["call +49 151 85280948 now", "inside a sentence"],
+    ["(+49 151 85280948)", "inside parentheses"],
+    ['"phone": "+49.151.85280948"', "dotted, inside JSON"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "pii-phone-intl")).toBe(true);
+  });
+
+  it.each([
+    ["+0000", "a time zone"],
+    ["+2026-10-09", "a date: eight digits, one under the minimum"],
+    ["+12.5%", "a number with a leading one, which is the US rule's"],
+    ["version +3.2.1", "a version: three digits"],
+    ["a+44 7801 997035", "a letter directly before the plus"],
+    ["1+44 7801 997035", "a digit directly before the plus"],
+    ["diff: + 123", "a plus with a space after it"],
+    ["+11 111 111 111", "every digit the same, which is a placeholder"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "pii-phone-intl")).toBe(false);
+  });
+
+  // The digit count is nine to fifteen. Eight is under the bottom edge and
+  // sixteen is over the top one.
+  it.each([
+    ["+4 1234567", false, "eight digits, counted with the country code"],
+    ["+4 12345678", true, "nine digits"],
+    ["+49 123456789012", true, "fourteen digits"],
+    ["+49 1234567890123", true, "fifteen digits"],
+    ["+49 12345678901234", false, "sixteen digits"],
+  ])("the boundary %s is found: %s (%s)", (text, expected, label) => {
+    expect(ruleHit(text, "pii-phone-intl"), label).toBe(expected);
+  });
+});
+
+describe("a UK National Insurance number", () => {
+  it.each([
+    ["NI: RE 62 91 56 A", "RE, suffix A"],
+    ["CS 45 74 46 B", "CS, suffix B"],
+    ["AB 12 34 56 C", "AB, suffix C"],
+    ["(CE 12 34 56 D)", "suffix D inside parentheses"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "pii-nino-uk")).toBe(true);
+  });
+
+  // The first letter cannot be D, F, I, Q, U or V; the second cannot be D, F,
+  // I, O, Q, U or V; the prefix cannot be one of the reserved pairs; and the
+  // suffix is A to D.
+  it.each([
+    ["DA 12 34 56 A", "first letter D"],
+    ["FA 12 34 56 A", "first letter F"],
+    ["IA 12 34 56 A", "first letter I"],
+    ["QA 12 34 56 A", "first letter Q"],
+    ["UA 12 34 56 A", "first letter U"],
+    ["VA 12 34 56 A", "first letter V"],
+    ["RD 12 34 56 A", "second letter D"],
+    ["RO 12 34 56 A", "second letter O"],
+    ["BG 12 34 56 A", "prefix BG"],
+    ["GB 12 34 56 A", "prefix GB"],
+    ["KN 12 34 56 A", "prefix KN"],
+    ["NK 12 34 56 A", "prefix NK"],
+    ["NT 12 34 56 A", "prefix NT"],
+    ["TN 12 34 56 A", "prefix TN"],
+    ["ZZ 12 34 56 A", "prefix ZZ"],
+    ["RE 62 91 56 E", "suffix E"],
+    ["RE 62 91 56", "no suffix"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "pii-nino-uk")).toBe(false);
+  });
+
+  // The rule covers the spaced form only: without the spaces the same letters
+  // and digits are too common in identifiers to read as a number.
+  it("the unspaced form is not found", () => {
+    expect(ruleHit("RE629156A", "pii-nino-uk")).toBe(false);
+  });
+});
+
+describe("a US phone number judged by its area code and exchange", () => {
+  it.each([
+    ["call (415) 867-5309", "a real-looking area code"],
+    ["(212) 555-0300", "a 555 exchange on a line outside 0100 to 0199"],
+    ["(415) 867-5309", "ordinary"],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "pii-phone-us")).toBe(true);
+  });
+
+  it.each([
+    ["(555) 867-5309", "area code 555 is not allocated"],
+    ["(212) 555-0100", "555 exchange, line 0100"],
+    ["(212) 555-0199", "555 exchange, line 0199, the top of the range"],
+    ["(212) 555-1212", "directory assistance"],
+    ["1-800-555-1212", "a toll-free area code"],
+    ["(800) 123-4567", "toll-free 800"],
+    ["(888) 123-4567", "toll-free 888"],
+    ["(833) 123-4567", "toll-free 833"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "pii-phone-us")).toBe(false);
+  });
+
+  it("line 0200 is outside the fiction range", () => {
+    expect(ruleHit("(212) 555-0200", "pii-phone-us")).toBe(true);
+  });
+});
+
+// The test card numbers Stripe publishes. A developer pasting one of them is
+// not leaking anything, and each one passes Luhn, so the list is what keeps
+// them quiet.
+describe("published test card numbers", () => {
+  it.each([
+    "4242424242424242",
+    "4000000000000002",
+    "4000056655665556",
+    "5555555555554444",
+    "2223003122003222",
+    "5200828282828210",
+    "5105105105105100",
+    "378282246310005",
+    "371449635398431",
+    "6011111111111117",
+    "36227206271667",
+    "6200000000000005",
+    "4111111111111111",
+    "4012888888881881",
+  ])("%s is not found as a card", (number) => {
+    expect(ruleHit(`card ${number}`, "pii-credit-card")).toBe(false);
+  });
+
+  // A card that passes Luhn and is not on the list is still a card, so the
+  // list is not a way to get any number past the rule.
+  it("a Luhn-valid number that is not published test data is found", () => {
+    expect(ruleHit("card 2221000000000009", "pii-credit-card")).toBe(true);
+  });
+});
+
+// Source code names a password without holding one. A call, an attribute read
+// or a bare identifier after `password =` or `password:` is the code, and the
+// rules that read a label off a value must not block it. Quoted values and the
+// `is` and Japanese forms keep being found: their value is written out.
+describe("code that names a password is not a password", () => {
+  it.each([
+    ["password = hash_password(raw)", "a call"],
+    ['password = getpass("Enter password: ")', "a call with a prompt"],
+    ['password=os.environ.get("DB_PASSWORD")', "an attribute call"],
+    ["pwd = os.getcwd()", "pwd assigned from a call"],
+    ["password: z.string().min(8),", "a schema call"],
+    ["pw = self.pw_hash(salt+raw)", "a method call"],
+    ["password = new_password", "a bare identifier"],
+    ["password: form.password2", "a dotted identifier"],
+    ["password: string | null;", "a type annotation"],
+    ["if password == confirm_password:", "a comparison"],
+  ])("%s is not a password (%s)", (text) => {
+    expect(ruleHit(text, "password-prose")).toBe(false);
+  });
+
+  it.each([
+    ['password = "Summer2024!"', "quoted, after ="],
+    ['password = "hunter2"', "quoted identifier-shaped value"],
+    ['password = "Summer(2024)"', "quoted, with parentheses in it"],
+    ["my password is Summer2024", "is form, identifier-shaped"],
+    ["password: hunter2!x", "a symbol makes it a value, not an identifier"],
+    ["パスワードは Abc123!x です", "Japanese form"],
+  ])("%s is a password (%s)", (text) => {
+    expect(ruleHit(text, "password-prose")).toBe(true);
+  });
+
+  // The cost of the identifier check, written out: an unquoted identifier after
+  // a colon or an equals sign is refused, so `password: hunter2` is not found.
+  // A value with a symbol or in quotes is the way to write one that is.
+  it("an unquoted identifier after a colon is not found", () => {
+    expect(ruleHit("password: hunter2", "password-prose")).toBe(false);
+  });
+
+  it.each([
+    ['--password=os.environ.get("DB_PASSWORD")', "a call on the value"],
+    ["--password getpass()", "a call with no argument"],
+  ])("%s is not a password on a command line (%s)", (text) => {
+    expect(ruleHit(text, "password-cli-flag")).toBe(false);
+  });
+
+  // The shapes of code and of prose that a value can take after the word: a
+  // Ruby symbol or instance variable, a method chain that starts with a word,
+  // a GraphQL type, and a value written in backticks in a comment.
+  it.each([
+    ["password: :ContentChecker::MAX_LENGTH", "a Ruby symbol"],
+    ["password = @user_data", "a Ruby instance variable"],
+    ["passwd = same_pair.group(2).lower()", "a method call on a name"],
+    ["password = 4.times.map", "a method chain that starts with a number"],
+    ["password: String!", "a GraphQL non-null type"],
+    ["the `password is required` check", "a backticked phrase, not a value"],
+  ])("%s is not a password (%s)", (text) => {
+    expect(ruleHit(text, "password-prose")).toBe(false);
+  });
+
+  // A password with a digit and a bang is still a password. A type name is
+  // letters only, so the GraphQL refusal does not reach it.
+  it("a password with a digit before its bang is found", () => {
+    expect(ruleHit("password: Summer2024!", "password-prose")).toBe(true);
+  });
+
+  it("a netrc password line that is a call is not a password", () => {
+    expect(
+      ruleHit('  password os.environ.get("DB_PASSWORD")', "password-netrc"),
+    ).toBe(false);
+  });
+});
+
+// The HTTP Basic documentation examples: the pairs every tutorial uses. Both
+// halves on the list makes the pair an example. A real pair with one half off
+// the list is still a credential.
+describe("an HTTP Basic example that tutorials use", () => {
+  it.each([
+    ["Authorization: Basic dXNlcjpwYXNz", "user:pass"],
+    ["Authorization: Basic YWRtaW46cGFzc3dvcmQ=", "admin:password"],
+  ])("%s is not found (%s)", (text) => {
+    expect(ruleHit(text, "http-basic-auth")).toBe(false);
+  });
+
+  it.each([
+    [
+      "Authorization: Basic YWRtaW46WGs5bVAycVI3dg==",
+      "admin:Xk9mP2qR7v, a real password",
+    ],
+    [
+      "Authorization: Basic cm9vdDpYazltUDJxUjd2",
+      "root:Xk9mP2qR7v, a real password",
+    ],
+  ])("%s is found (%s)", (text) => {
+    expect(ruleHit(text, "http-basic-auth")).toBe(true);
   });
 });
