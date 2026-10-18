@@ -392,6 +392,8 @@ User rules support the same fields as built-in rules:
 | `contextWords` | string[] | Words that satisfy the context requirement |
 | `excludeContext` | string[] | Words that, found nearby, say the match is not what the rule is after — the mirror of `contextWords` |
 | `contextWindow` | number | Override the global context window (default: 3 tokens) |
+| `columnLabels` | string[] | Header names of a column: a CSV, TSV or Markdown table header, or the column list of a SQL `INSERT`. The cells under a matching header are read as values. Needs `cellRegex` |
+| `cellRegex` | string | The value, matched against the whole trimmed cell with the rule's flags minus `g` and `y`, and the rule's `validate` too. Needs `columnLabels` |
 | `entropyThreshold` | number | Skip matches below this Shannon entropy |
 | `secretGroup` | number | Capture group holding the secret. Omit for the whole match — writing `0` is not the same as omitting it, see [Detection Rules](https://coo-quack.github.io/sensitive-canary/rules.html) |
 | `validate` | string | Name of a built-in checksum validator (see below) |

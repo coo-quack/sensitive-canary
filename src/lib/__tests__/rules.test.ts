@@ -693,7 +693,19 @@ describe("scan — adversarial inputs", () => {
   describe("no rule is quadratic", () => {
     // Runs with no match in them, each built so a quantifier that can also
     // match its own separator has somewhere to backtrack.
+    // The column pass is code, not a regex, so each of these is timed through
+    // scan() below as well. Each walks every line or every tuple of the text.
+    const COLUMN_SHAPES = {
+      // A column list that never closes: the bounded list is walked from every start.
+      "insert into x (": "insert into x (".repeat(13_334),
+      // Every line is a row, and no cell is a label, so every line is read once.
+      "a,b,c\n": "a,b,c\n".repeat(35_000),
+      // Every line is a header, and every line after it is a row to read.
+      "| dob |\n": "| dob |\n".repeat(26_000),
+    };
+
     const SHAPES = {
+      ...COLUMN_SHAPES,
       "digits and dots": "1.".repeat(128_000),
       "digits and hyphens": "123-".repeat(64_000),
       "capitals and underscores": "SECRET_".repeat(36_571),
@@ -721,6 +733,22 @@ describe("scan — adversarial inputs", () => {
       // pii-customer-number: the separator class after each label is walked, then the value fails
       "customer labels with no number": "customer id ".repeat(20_000),
     };
+
+    // The column pass runs once per call, after the regex loop, so it is timed
+    // through scan(). Its budget is the same as a regex's.
+    it.each(Object.entries(COLUMN_SHAPES))(
+      "the column pass on %s",
+      (shape, input) => {
+        const start = performance.now();
+        scan(input);
+        const elapsed = performance.now() - start;
+        expect(
+          elapsed,
+          `column pass took ${elapsed.toFixed(0)}ms on ${(input.length / 1024).toFixed(0)}KB of ${shape}`,
+        ).toBeLessThan(BUDGET_MS);
+      },
+      30_000,
+    );
 
     // Every rule is linear or better on these. The slowest pair measured is
     // `pii-email` on digits and dots: 56ms warm, a little over 200ms on a cold

@@ -691,6 +691,50 @@ function calendarKeys(...dates: [number, number, number][]): string[] {
   });
 }
 
+// The kanji digits, read one at a time. 十 is handled by kanjiNumber.
+const KANJI_DIGITS: Readonly<Record<string, number>> = {
+  〇: 0,
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+};
+
+// A number written in kanji or in ASCII digits. Without 十 the digits are read
+// one at a time, so 一九八八 is 1988. With 十 the number is positional and runs
+// from 1 to 99: 十 is 10, 五十 is 50 and 二十一 is 21. Any other shape, such as
+// 十十, gives undefined.
+function kanjiNumber(str: string): number | undefined {
+  if (!str.includes("十")) {
+    if (str.length === 0) return undefined;
+    let value = 0;
+    for (const ch of str) {
+      const digit = /^[0-9]$/.test(ch) ? Number(ch) : KANJI_DIGITS[ch];
+      if (digit === undefined) return undefined;
+      value = value * 10 + digit;
+    }
+    return value;
+  }
+  const m = /^([一二三四五六七八九]?)十([一二三四五六七八九]?)$/.exec(str);
+  if (!m) return undefined;
+  const tens = m[1] ? (KANJI_DIGITS[m[1]] ?? 0) : 1;
+  const ones = m[2] ? (KANJI_DIGITS[m[2]] ?? 0) : 0;
+  return tens * 10 + ones;
+}
+
+// A year, month or day group as a date form captured it. A group that is not a
+// number gives NaN, which calendarKey refuses.
+function dateNumber(text: string | undefined): number {
+  if (text === undefined) return Number.NaN;
+  if (/^[0-9]+$/.test(text)) return Number(text);
+  return kanjiNumber(text) ?? Number.NaN;
+}
+
 // 元 is the first year of an era. An era year of 0 is not a year.
 function eraCalendarKeys(
   era: string,
@@ -699,25 +743,25 @@ function eraCalendarKeys(
   day: number,
 ): string[] {
   const base = ERA_BASE_YEARS[era];
-  const year = eraYear === "元" ? 1 : Number(eraYear);
+  const year = eraYear === "元" ? 1 : dateNumber(eraYear);
   if (base === undefined || !(year >= 1)) return [];
   return calendarKeys([base + year, month, day]);
 }
 
-// A date of birth as the birth-date rule captures it. Returns the calendar dates
-// the text can mean, each as "YYYY-M-D": a numeric form in day-first and
-// month-first order gives both, and one that does not parse gives none.
 function birthDateKeys(str: string): string[] {
   const iso = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(str);
   if (iso)
     return calendarKeys([Number(iso[1]), Number(iso[2]), Number(iso[3])]);
 
-  const kanjiWestern = /^(\d{4})年\s?(\d{1,2})月\s?(\d{1,2})日$/.exec(str);
+  const kanjiWestern =
+    /^([0-9〇一二三四五六七八九]{4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})日$/.exec(
+      str,
+    );
   if (kanjiWestern)
     return calendarKeys([
-      Number(kanjiWestern[1]),
-      Number(kanjiWestern[2]),
-      Number(kanjiWestern[3]),
+      dateNumber(kanjiWestern[1]),
+      dateNumber(kanjiWestern[2]),
+      dateNumber(kanjiWestern[3]),
     ]);
 
   const numericEnd = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(str);
@@ -751,15 +795,15 @@ function birthDateKeys(str: string): string[] {
     ]);
 
   const kanjiEra =
-    /^(明治|大正|昭和|平成|令和)\s?(元|\d{1,2})年\s?(\d{1,2})月\s?(\d{1,2})日$/.exec(
+    /^(明治|大正|昭和|平成|令和)\s?(元|[0-9〇一二三四五六七八九十]{1,4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})日$/.exec(
       str,
     );
   if (kanjiEra)
     return eraCalendarKeys(
       kanjiEra[1] ?? "",
       kanjiEra[2] ?? "",
-      Number(kanjiEra[3]),
-      Number(kanjiEra[4]),
+      dateNumber(kanjiEra[3]),
+      dateNumber(kanjiEra[4]),
     );
 
   const letterEra = /^([MTSHR])(\d{1,2})\.(\d{1,2})\.(\d{1,2})$/i.exec(str);

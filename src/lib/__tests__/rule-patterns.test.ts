@@ -63,6 +63,8 @@ describe("a date of birth after a label", () => {
     ["生年月日 1988/07/21", "生年月日 with a slash date"],
     ["DOB S63.7.21", "one-letter era form"],
     ["DOB: 1990-05-06T00:00:00", "a timestamp after the date does not hide it"],
+    ["生年月日 一九八八年七月二十一日", "a western year written in kanji"],
+    ["生年月日：昭和五十年十二月三日", "kanji numerals in an era date"],
     ["date_of_birth: 2 Apr 1978", "snake_case label"],
     ["birth-date: 1984-09-30", "kebab-case label"],
     ['"date_of_birth": "1994-02-17"', "JSON key in snake_case"],
@@ -115,12 +117,16 @@ describe("a member, customer or account number after a label", () => {
     ["account no: 1234567890", "account no"],
     ['{member_id: "0000000070172001"}', "a brace before the label"],
     ["user.customer_id = 100042", "a dot before the label"],
+    ["会員番号MBR-3PW8D6YT", "a Japanese label with no boundary after it"],
+    ["会員番号：１２３４５６７８", "full-width digits"],
+    ["口座番号 1234567", "口座番号 is a label"],
   ])("%s is found (%s)", (line) => {
     expect(ruleIds(line)).toContain("pii-customer-number");
   });
 
   it.each([
     ["order number 12345678", "order number is not a label the rule knows"],
+    ["customerIdx 12345", "an English label needs a boundary after it"],
     ["customer_id = 1000", "four characters is below the minimum of five"],
     ["customer_id IN (10001, 10002)", "a SQL list, not a value"],
     ["customer_id: integer", "a type, with no digits"],
@@ -208,6 +214,137 @@ describe("a Japanese postal address", () => {
       (f) => f.ruleId === "pii-address-jp",
     );
     expect(found?.secretValue).toBe("東京都千代田区二番");
+  });
+});
+
+// A label in a table header reaches the cells under it, which a regex cannot
+// do. The header is CSV, TSV, a Markdown table or a SQL INSERT column list, and
+// the rows read are the ones directly under the header.
+describe("a value under a labelled column", () => {
+  const count = (text: string, ruleId: string): number =>
+    scan(text).filter((f) => f.ruleId === ruleId).length;
+  const values = (text: string, ruleId: string): string[] =>
+    scan(text)
+      .filter((f) => f.ruleId === ruleId)
+      .map((f) => f.secretValue);
+
+  it.each([
+    [
+      "name,dob,region\nLena Vogt,18.07.1961,DE-BW\nMarco Bellini,27/03/1973,IT-MI",
+      "CSV, two rows",
+      "pii-date-of-birth",
+      2,
+    ],
+    [
+      "name,date of birth\nAmara Okafor,1994-02-17\nYuto Hayashi,2001-11-20",
+      "CSV, a label of three words",
+      "pii-date-of-birth",
+      2,
+    ],
+    [
+      "| 氏名 | 生年月日 |\n|---|---|\n| 中村 れい | 1996年12月8日 |",
+      "Markdown table, kanji date",
+      "pii-date-of-birth",
+      1,
+    ],
+    [
+      "INSERT INTO users (id, display_name, birth_date) VALUES (1042, 'Sara Lindqvist', '1984-09-30');",
+      "SQL INSERT column list",
+      "pii-date-of-birth",
+      1,
+    ],
+    [
+      "INSERT INTO members (membership_number, name) VALUES ('MBR-5TR2N8WC', 'Oskar Lind'), ('MBR-7QW1X9ZK', 'Ana Ruiz');",
+      "SQL INSERT, two tuples",
+      "pii-customer-number",
+      2,
+    ],
+    [
+      "name,membership number,joined\nHana Sato,MBR-2GZ5R6DH,2021-04-11",
+      "CSV, membership number",
+      "pii-customer-number",
+      1,
+    ],
+    [
+      "| 氏名 | 顧客番号 |\n|---|---|\n| 渡辺 悠真 | C-0009921 |",
+      "Markdown table, 顧客番号",
+      "pii-customer-number",
+      1,
+    ],
+    [
+      "customer_number,name,tier\nC-0007710,Erika Lund,gold",
+      "CSV, snake_case header",
+      "pii-customer-number",
+      1,
+    ],
+    ["id\tdob\n7\t1990-05-06", "TSV", "pii-date-of-birth", 1],
+    [
+      '"Name","DOB"\n"Lee, Ann","1990-05-06"',
+      "quoted CSV with a comma in a cell",
+      "pii-date-of-birth",
+      1,
+    ],
+    [
+      "dob,version\n2024-01-15,1.2.3",
+      "a dob column is trusted: its values are read as dates",
+      "pii-date-of-birth",
+      1,
+    ],
+  ])("%s (%s)", (text, _reason, ruleId, expected) => {
+    expect(count(text, ruleId)).toBe(expected);
+  });
+
+  it("the values are the cells, and the header's own text is not one", () => {
+    expect(
+      values(
+        "name,dob,region\nLena Vogt,18.07.1961,DE-BW\nMarco Bellini,27/03/1973,IT-MI",
+        "pii-date-of-birth",
+      ),
+    ).toEqual(["18.07.1961", "27/03/1973"]);
+  });
+
+  it.each([
+    ["name,dob,region\nLena Vogt,,DE-BW", "an empty cell"],
+    ["version,released\n1.2.3,2024-01-15", "no header is a label"],
+    ["name,dob\n", "a header with no rows"],
+    ["| 氏名 | 生年月日 |\n|---|---|", "a separator row and no data"],
+    ["dob\nhello", "one column with no comma is not a row"],
+    ["INSERT INTO users (id, dob) VALUES (1, NULL)", "NULL is not a date"],
+    [
+      "name,dob,region\nLena Vogt,01/01/1970,DE-BW",
+      "the validator refuses the 1970 placeholder",
+    ],
+    ["customer_id,name\n1000,Erika", "a value of four characters is too short"],
+    ["member,count\nalice,12345", "member alone is not a label"],
+    [
+      "dob\n\n1990-05-06",
+      "a blank line ends the table, so the date is on its own line",
+    ],
+  ])("%s is not found (%s)", (text) => {
+    expect(
+      scan(text).filter(
+        (f) =>
+          f.ruleId.startsWith("pii-date") ||
+          f.ruleId.startsWith("pii-customer"),
+      ),
+    ).toEqual([]);
+  });
+
+  // A value that the label regex and the column pass both reach is reported
+  // once. A date with no separator on its own line is not a row, so it is not
+  // read from a column either.
+  it("a value found by the label and by its column is reported once", () => {
+    expect(count("dob: 1990-05-06", "pii-date-of-birth")).toBe(1);
+    expect(
+      count(
+        "INSERT INTO users (id, dob) VALUES ('x', '1990-05-06')",
+        "pii-date-of-birth",
+      ),
+    ).toBe(1);
+  });
+
+  it("a header with no delimiter is not a row, so its value is not read", () => {
+    expect(count("dob\n1990-05-06", "pii-date-of-birth")).toBe(0);
   });
 });
 

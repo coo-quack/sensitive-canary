@@ -725,6 +725,26 @@ describe("isBirthDate", () => {
     expect(isBirthDate(text)).toBe(false);
   });
 
+  // Kanji numerals in the era and 年月日 forms: 十 is positional, and without 十
+  // the digits are read one at a time.
+  it.each([
+    ["昭和五十年十二月三日", "kanji year 50 of 昭和 is 1975"],
+    ["一九八八年七月二十一日", "a kanji western year, digit by digit"],
+    ["平成元年一月一日", "元 with a kanji month and day"],
+    ["昭和六十四年一月七日", "kanji year 64 of 昭和 is 1989"],
+    ["平成二十年一月五日", "kanji year 20 of 平成 is 2008"],
+  ])("%s is a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(true);
+  });
+
+  it.each([
+    ["昭和十年二月三十日", "no 30 February, in kanji"],
+    ["令和〇年一月一日", "year 0 is not a year"],
+    ["昭和十十年一月一日", "十十 is not a number"],
+  ])("%s is not a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
+  });
+
   it("29 February is a date in a leap year", () => {
     expect(isBirthDate("1992-02-29")).toBe(true);
     expect(isBirthDate("2000-02-29")).toBe(true);
