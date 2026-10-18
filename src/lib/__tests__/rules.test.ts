@@ -693,7 +693,19 @@ describe("scan — adversarial inputs", () => {
   describe("no rule is quadratic", () => {
     // Runs with no match in them, each built so a quantifier that can also
     // match its own separator has somewhere to backtrack.
+    // The column pass is code, not a regex, so each of these is timed through
+    // scan() below as well. Each walks every line or every tuple of the text.
+    const COLUMN_SHAPES = {
+      // A column list that never closes: the bounded list is walked from every start.
+      "insert into x (": "insert into x (".repeat(13_334),
+      // Every line is a row, and no cell is a label, so every line is read once.
+      "a,b,c\n": "a,b,c\n".repeat(35_000),
+      // Every line is a header, and every line after it is a row to read.
+      "| dob |\n": "| dob |\n".repeat(26_000),
+    };
+
     const SHAPES = {
+      ...COLUMN_SHAPES,
       "digits and dots": "1.".repeat(128_000),
       "digits and hyphens": "123-".repeat(64_000),
       "capitals and underscores": "SECRET_".repeat(36_571),
@@ -707,7 +719,36 @@ describe("scan — adversarial inputs", () => {
       // the `@` never comes, so every start position pays the full retreat.
       "https urls that never reach an @":
         `https://${mixed(64)}:${mixed(256)}`.repeat(778),
+      // pii-address-jp: a municipality is found after every prefecture, so each town run is walked and fails
+      "prefecture names and municipality suffixes": "東京都市区町村".repeat(
+        30_000,
+      ),
+      // pii-address-jp: the block-number repeat takes each hyphen, then has to back off the last one
+      "prefectures with a town and a dangling hyphen":
+        "東京都千代田区丸の内1-".repeat(20_000),
+      // pii-date-of-birth: the gap after each label is walked to its limit, with no date to end on
+      "birth labels with no date": "DOB ".repeat(60_000),
+      // pii-date-of-birth: the date fails on its last digit, and each label walks the gap before it
+      "birth labels with a broken date": "DOB x: 1990-05-".repeat(15_000),
+      // pii-customer-number: the separator class after each label is walked, then the value fails
+      "customer labels with no number": "customer id ".repeat(20_000),
     };
+
+    // The column pass runs once per call, after the regex loop, so it is timed
+    // through scan(). Its budget is the same as a regex's.
+    it.each(Object.entries(COLUMN_SHAPES))(
+      "the column pass on %s",
+      (shape, input) => {
+        const start = performance.now();
+        scan(input);
+        const elapsed = performance.now() - start;
+        expect(
+          elapsed,
+          `column pass took ${elapsed.toFixed(0)}ms on ${(input.length / 1024).toFixed(0)}KB of ${shape}`,
+        ).toBeLessThan(BUDGET_MS);
+      },
+      30_000,
+    );
 
     // Every rule is linear or better on these. The slowest pair measured is
     // `pii-email` on digits and dots: 56ms warm, a little over 200ms on a cold

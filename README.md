@@ -392,6 +392,8 @@ User rules support the same fields as built-in rules:
 | `contextWords` | string[] | Words that satisfy the context requirement |
 | `excludeContext` | string[] | Words that, found nearby, say the match is not what the rule is after — the mirror of `contextWords` |
 | `contextWindow` | number | Override the global context window (default: 3 tokens) |
+| `columnLabels` | string[] | Header names of a column: a CSV, TSV or Markdown table header, or the column list of a SQL `INSERT`. The cells under a matching header are read as values. Needs `cellRegex` |
+| `cellRegex` | string | The value, matched against the whole trimmed cell with the rule's flags minus `g` and `y`, and the rule's `validate` too. Needs `columnLabels` |
 | `entropyThreshold` | number | Skip matches below this Shannon entropy |
 | `secretGroup` | number | Capture group holding the secret. Omit for the whole match — writing `0` is not the same as omitting it, see [Detection Rules](https://coo-quack.github.io/sensitive-canary/rules.html) |
 | `validate` | string | Name of a built-in checksum validator (see below) |
@@ -399,7 +401,7 @@ User rules support the same fields as built-in rules:
 
 Available validators (referenced by name in the `validate` field):
 
-`luhn`, `aws-key`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`, `password-like`, `basic-credentials`, `iban`, `phone-intl`, `nino-uk`, `phone-us`, `personal-mailbox`, `aws-secret-shape`
+`luhn`, `aws-key`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`, `password-like`, `basic-credentials`, `iban`, `phone-intl`, `nino-uk`, `phone-us`, `personal-mailbox`, `aws-secret-shape`, `birth-date`
 
 ### Overriding the context window globally
 
@@ -484,7 +486,7 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `password-json-key` | JSON value under a key that ends in `pass`, `passwd`, `password` or `pwd` |
 | `redis-auth` | Redis `AUTH` command, or `redis-cli -a` |
 
-### PII (27 rules)
+### PII (30 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
@@ -515,6 +517,9 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `pii-postal-cn` | Chinese postal code (6-digit) | Context-gated |
 | `pii-ipv4-public` | Public IPv4 address | Context-gated, reserved ranges excluded |
 | `pii-ipv6` | IPv6 address | Context-gated, reserved ranges excluded |
+| `pii-date-of-birth` | Date of birth after a label (`DOB`, `date of birth`, `生年月日`, `誕生日`) | Calendar date between 1900 and this year; the defaults 1970-01-01 and 1900-01-01 are not matched |
+| `pii-customer-number` | Member, customer or account number after a label (`customer ID`, `membership number`, `会員番号`, `顧客番号`) | Five to twenty-three characters with at least two digits, after a label |
+| `pii-address-jp` | Japanese postal address (prefecture, municipality and block number) | A prefecture, a municipality and a block number in sequence; a prefecture or a municipality alone is not matched |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
 

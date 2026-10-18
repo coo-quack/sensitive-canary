@@ -44,6 +44,310 @@ describe("numbers that are not people", () => {
   );
 });
 
+// A label is what says a date or a number belongs to a person. Each table below
+// is a label with the values it must reach, and the near misses it must not.
+describe("a date of birth after a label", () => {
+  it.each([
+    ["DOB: 1990-05-06", "ISO after DOB"],
+    ["D.O.B. 05/04/1991", "dotted label, day first"],
+    ["dob 18.07.1961", "lower case, dot form"],
+    ["Date of birth (form B): 03/01/1990", "a label with words after it"],
+    ["date of birth: 2 Apr 1978", "English day and abbreviated month"],
+    ["DOB on file: 15 Apr 1968", "words between the label and the date"],
+    ["Birthdate: March 27, 1973", "month name first"],
+    ['"dob": "1986-12-20"', "JSON key"],
+    ["DOB 24 Oct 1983", "no punctuation after the label"],
+    ["生年月日 1988年7月21日", "生年月日 with a western year"],
+    ["生年月日：昭和63年7月21日", "生年月日 with a Showa year"],
+    ["誕生日は平成元年1月1日", "誕生日 with 元 as the first year"],
+    ["生年月日 1988/07/21", "生年月日 with a slash date"],
+    ["DOB S63.7.21", "one-letter era form"],
+    ["DOB: 1990-05-06T00:00:00", "a timestamp after the date does not hide it"],
+    ["生年月日 一九八八年七月二十一日", "a western year written in kanji"],
+    ["生年月日：昭和五十年十二月三日", "kanji numerals in an era date"],
+    ["date_of_birth: 2 Apr 1978", "snake_case label"],
+    ["birth-date: 1984-09-30", "kebab-case label"],
+    ['"date_of_birth": "1994-02-17"', "JSON key in snake_case"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-date-of-birth");
+  });
+
+  it.each([
+    ["2024-01-15 release notes", "a date with no label"],
+    ["version 1.2.3", "a version"],
+    ["DOB 01/01/1970 is a placeholder", "the epoch default"],
+    ["DOB: 1900-01-01", "the 1900 default"],
+    ["(id, full_name, dob) VALUES", "a column name with no date"],
+    ["lack DOB.", "dob inside a word"],
+    ["adobe reader 2024-01-01", "dob inside a longer word"],
+    ["dob = new Date(1990, 0, 1)", "a constructor, not a date literal"],
+    ["DOB: 1990-05-061", "one digit too many"],
+    ["DOB 32/13/1990", "no such day or month"],
+    ["DOB 30/02/1990", "no such day"],
+    ["DOB 2099-01-01", "a future date"],
+    ["birthday party on 2026-11-02", "birthday is not a label"],
+    ["order date 2024-03-01", "date is not a label"],
+    ["DOB 90/05/06", "a two-digit year is not covered"],
+    [
+      "誕生日おめでとう！2024年1月1日",
+      "a ! ends the label's reach before the date",
+    ],
+    [
+      "誕生日会は2026年11月14日（土）13時から",
+      "誕生日会 is a party, and the date is the party's",
+    ],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-date-of-birth");
+  });
+});
+
+describe("a member, customer or account number after a label", () => {
+  it.each([
+    ["会員番号：ABC-12345678", "会員番号 with a full-width colon"],
+    ["顧客番号 0001234567", "顧客番号 with digits"],
+    ["お客様番号は 0001234567 です", "お客様番号 with は before the value"],
+    ["customer ID 12345", "five characters is the minimum"],
+    ["customer_id: 100042", "snake case"],
+    ["customerId = 100042", "camel case with an equals sign"],
+    ["member ID POL-WCYAPQ2N4FY", "a value with letters and digits"],
+    ["membership number: MBR-2GZ5R6DH", "membership number"],
+    ["My account number is AC-924089.", "a full stop after the value"],
+    ['"customer_id": "C-0001234"', "JSON key and value"],
+    ["Member No. 12345678", "No. label"],
+    ["account no: 1234567890", "account no"],
+    ['{member_id: "0000000070172001"}', "a brace before the label"],
+    ["user.customer_id = 100042", "a dot before the label"],
+    ["会員番号MBR-3PW8D6YT", "a Japanese label with no boundary after it"],
+    ["会員番号：１２３４５６７８", "full-width digits"],
+    ["口座番号 1234567", "口座番号 is a label"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-customer-number");
+  });
+
+  it.each([
+    ["order number 12345678", "order number is not a label the rule knows"],
+    ["customerIdx 12345", "an English label needs a boundary after it"],
+    ["customer_id = 1000", "four characters is below the minimum of five"],
+    ["customer_id IN (10001, 10002)", "a SQL list, not a value"],
+    ["customer_id: integer", "a type, with no digits"],
+    ["customerId: ${id}", "an interpolation"],
+    [
+      "account ID 123456789012",
+      "account ID is an infrastructure term and is not covered",
+    ],
+    ["account_number_length = 10", "a variable name, not a value"],
+    ["customer count 12345", "count is not a label"],
+    ["accountNumber.length", "a property access"],
+    ["member of the team since 2024", "member is a word, not a label"],
+    ["version 1.2.3", "a version"],
+    ["customer id: abcdef", "no digit in the value"],
+    ["customer id: A1", "too short"],
+    [
+      'organization_membership_id: "2c159c8f5eecbb28c233367b"',
+      "a membership record's key, not a member's number: the label is the tail of a longer key",
+    ],
+    ['cap_member_id: "CAP990000092"', "the label is the tail of a longer key"],
+    [
+      "billing_customer_id: 100042",
+      "the label is the tail of a longer key; a foreign key is not a member's number",
+    ],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-customer-number");
+  });
+});
+
+describe("a Japanese postal address", () => {
+  it.each([
+    ["東京都渋谷区神宮前5-28-11", "prefecture, ward and block with hyphens"],
+    [
+      "愛知県名古屋市中村区名駅4丁目3番2号グランドハイツ経堂210号室",
+      "the match stops after 号, before the building",
+    ],
+    ["京都府京都市左京区北白川1丁目6番11号", "丁目, 番 and 号"],
+    ["〒174-7567 東京都渋谷区神宮前5-28-11", "with a postal code in front"],
+    ["千葉県市川市八幡2-3-4", "a city whose name contains 市"],
+    ["東京都町田市原町田１−２−３", "full-width digits and minus"],
+    ["北海道札幌市中央区北一条西2丁目", "a 丁目 block in Hokkaido"],
+    ["大阪府大阪市北区梅田一丁目一番一号", "kanji numerals"],
+    ["埼玉県さいたま市浦和区高砂3-15-1", "a city written in hiragana"],
+    ["茨城県つくば市天王台1-1-1", "a city written in hiragana"],
+    ["東京都千代田区霞が関1-3-1", "a town name with が"],
+    ["神奈川県横浜市西区みなとみらい2-2-1", "a town name written in katakana"],
+    ["福岡県糟屋郡粕屋町仲原2500-1", "a county and a town"],
+    ["鹿児島県鹿児島市山下町11-1", "a prefecture whose name begins with 鹿"],
+    ["愛媛県松山市一番町4-4-2", "a town name made of a kanji numeral and 番"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-address-jp");
+  });
+
+  it.each([
+    ["東京都", "a prefecture alone"],
+    ["東京都千代田区", "a municipality alone, no block number"],
+    ["神奈川県横浜市", "a city alone"],
+    ["東京都渋谷区で2-3件", "a count, not a block"],
+    ["東京都渋谷区で2-3の案件", "a count, not a block"],
+    [
+      "大阪府の人口は2024年",
+      "a prefecture in a sentence with no municipality after it",
+    ],
+    ["東京都 2025年10月18日", "a date after a space"],
+    ["北海道は1-2月が寒い", "a month, not a block"],
+    ["東京都千代田区1", "a bare number without 丁目, 番, 号 or a hyphen"],
+    ["東京都渋谷区神宮前5-", "a dangling hyphen"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-address-jp");
+  });
+
+  // The issue leaves this open: the rule reads a company's footer the way it
+  // reads a person's address, and nothing in the text tells them apart. This
+  // records the current behaviour, not a decision about it.
+  it("a company's footer address is found, as a person's would be", () => {
+    expect(
+      ruleIds("株式会社ホライズン技研 本社：東京都港区虎ノ門一丁目2番3号"),
+    ).toContain("pii-address-jp");
+  });
+
+  // 二番 reads as a block number, so the match stops before 町. The match is
+  // shorter than the address, and it still blocks.
+  it("東京都千代田区二番町5 is found as 東京都千代田区二番", () => {
+    const found = scan("東京都千代田区二番町5").find(
+      (f) => f.ruleId === "pii-address-jp",
+    );
+    expect(found?.secretValue).toBe("東京都千代田区二番");
+  });
+});
+
+// A label in a table header reaches the cells under it, which a regex cannot
+// do. The header is CSV, TSV, a Markdown table or a SQL INSERT column list, and
+// the rows read are the ones directly under the header.
+describe("a value under a labelled column", () => {
+  const count = (text: string, ruleId: string): number =>
+    scan(text).filter((f) => f.ruleId === ruleId).length;
+  const values = (text: string, ruleId: string): string[] =>
+    scan(text)
+      .filter((f) => f.ruleId === ruleId)
+      .map((f) => f.secretValue);
+
+  it.each([
+    [
+      "name,dob,region\nLena Vogt,18.07.1961,DE-BW\nMarco Bellini,27/03/1973,IT-MI",
+      "CSV, two rows",
+      "pii-date-of-birth",
+      2,
+    ],
+    [
+      "name,date of birth\nAmara Okafor,1994-02-17\nYuto Hayashi,2001-11-20",
+      "CSV, a label of three words",
+      "pii-date-of-birth",
+      2,
+    ],
+    [
+      "| 氏名 | 生年月日 |\n|---|---|\n| 中村 れい | 1996年12月8日 |",
+      "Markdown table, kanji date",
+      "pii-date-of-birth",
+      1,
+    ],
+    [
+      "INSERT INTO users (id, display_name, birth_date) VALUES (1042, 'Sara Lindqvist', '1984-09-30');",
+      "SQL INSERT column list",
+      "pii-date-of-birth",
+      1,
+    ],
+    [
+      "INSERT INTO members (membership_number, name) VALUES ('MBR-5TR2N8WC', 'Oskar Lind'), ('MBR-7QW1X9ZK', 'Ana Ruiz');",
+      "SQL INSERT, two tuples",
+      "pii-customer-number",
+      2,
+    ],
+    [
+      "name,membership number,joined\nHana Sato,MBR-2GZ5R6DH,2021-04-11",
+      "CSV, membership number",
+      "pii-customer-number",
+      1,
+    ],
+    [
+      "| 氏名 | 顧客番号 |\n|---|---|\n| 渡辺 悠真 | C-0009921 |",
+      "Markdown table, 顧客番号",
+      "pii-customer-number",
+      1,
+    ],
+    [
+      "customer_number,name,tier\nC-0007710,Erika Lund,gold",
+      "CSV, snake_case header",
+      "pii-customer-number",
+      1,
+    ],
+    ["id\tdob\n7\t1990-05-06", "TSV", "pii-date-of-birth", 1],
+    [
+      '"Name","DOB"\n"Lee, Ann","1990-05-06"',
+      "quoted CSV with a comma in a cell",
+      "pii-date-of-birth",
+      1,
+    ],
+    [
+      "dob,version\n2024-01-15,1.2.3",
+      "a dob column is trusted: its values are read as dates",
+      "pii-date-of-birth",
+      1,
+    ],
+  ])("%s (%s)", (text, _reason, ruleId, expected) => {
+    expect(count(text, ruleId)).toBe(expected);
+  });
+
+  it("the values are the cells, and the header's own text is not one", () => {
+    expect(
+      values(
+        "name,dob,region\nLena Vogt,18.07.1961,DE-BW\nMarco Bellini,27/03/1973,IT-MI",
+        "pii-date-of-birth",
+      ),
+    ).toEqual(["18.07.1961", "27/03/1973"]);
+  });
+
+  it.each([
+    ["name,dob,region\nLena Vogt,,DE-BW", "an empty cell"],
+    ["version,released\n1.2.3,2024-01-15", "no header is a label"],
+    ["name,dob\n", "a header with no rows"],
+    ["| 氏名 | 生年月日 |\n|---|---|", "a separator row and no data"],
+    ["dob\nhello", "one column with no comma is not a row"],
+    ["INSERT INTO users (id, dob) VALUES (1, NULL)", "NULL is not a date"],
+    [
+      "name,dob,region\nLena Vogt,01/01/1970,DE-BW",
+      "the validator refuses the 1970 placeholder",
+    ],
+    ["customer_id,name\n1000,Erika", "a value of four characters is too short"],
+    ["member,count\nalice,12345", "member alone is not a label"],
+    [
+      "dob\n\n1990-05-06",
+      "a blank line ends the table, so the date is on its own line",
+    ],
+  ])("%s is not found (%s)", (text) => {
+    expect(
+      scan(text).filter(
+        (f) =>
+          f.ruleId.startsWith("pii-date") ||
+          f.ruleId.startsWith("pii-customer"),
+      ),
+    ).toEqual([]);
+  });
+
+  // A value that the label regex and the column pass both reach is reported
+  // once. A date with no separator on its own line is not a row, so it is not
+  // read from a column either.
+  it("a value found by the label and by its column is reported once", () => {
+    expect(count("dob: 1990-05-06", "pii-date-of-birth")).toBe(1);
+    expect(
+      count(
+        "INSERT INTO users (id, dob) VALUES ('x', '1990-05-06')",
+        "pii-date-of-birth",
+      ),
+    ).toBe(1);
+  });
+
+  it("a header with no delimiter is not a row, so its value is not read", () => {
+    expect(count("dob\n1990-05-06", "pii-date-of-birth")).toBe(0);
+  });
+});
+
 // Formats confirmed against each vendor's own documentation, after a survey
 // found the rules here were written to shapes those vendors do not issue.
 describe("credential formats", () => {
@@ -313,6 +617,9 @@ describe("every rule catches something", () => {
     "pii-iban": "DE89 3704 0044 0532 0130 00",
     "pii-phone-intl": "+49 151 85280948",
     "pii-nino-uk": "NI: RE 62 91 56 A",
+    "pii-date-of-birth": "DOB: 1990-05-06",
+    "pii-customer-number": "会員番号：ABC-12345678",
+    "pii-address-jp": "東京都渋谷区神宮前5-28-11",
   };
 
   it("has an example for every shipped rule", () => {
@@ -374,6 +681,8 @@ describe("every rule catches something", () => {
     "pii-phone-intl":
       "a dialling plan fixes the number of digits, and the rule's range is nine to fifteen",
     "pii-nino-uk": "two letters, six digits and a suffix",
+    "pii-date-of-birth":
+      "a date has a fixed number of digits; one more is not a date",
   };
 
   // The list above is a list, so it is held to the rules that exist: an id left
