@@ -232,6 +232,44 @@ describe("judge", () => {
       (await judge([{ source: "a", text: "x" }], config)).unavailable,
     ).toContain("413");
   });
+
+  // The socket timeout restarts with every byte, so a server that writes one
+  // byte every 100 ms and never finishes would hold the hook for as long as it
+  // liked. timeoutMs is a total, and the call has to end near it. The server
+  // records when its response socket closes, which only happens once the
+  // client has destroyed the request, so the cut-off itself is what is checked.
+  it("a server that trickles bytes is cut off at timeoutMs in total", async () => {
+    const trickle = join(dir, "trickle.sock");
+    let serverSawClose: (at: number) => void = () => {};
+    const serverClosed = new Promise<number>((resolve) => {
+      serverSawClose = resolve;
+    });
+    const s = http.createServer((req, res) => {
+      req.resume();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const timer = setInterval(() => res.write(" "), 100);
+      res.on("close", () => {
+        clearInterval(timer);
+        serverSawClose(Date.now());
+      });
+    });
+    others.push(s);
+    await new Promise<void>((resolve) => s.listen(trickle, resolve));
+    const config = readPiiSentinelConfig({ socket: trickle, timeoutMs: 300 });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const start = Date.now();
+    const { unavailable } = await judge([{ source: "a", text: "x" }], config);
+    const rejectedAt = Date.now();
+    expect(unavailable).toContain("no answer within");
+    expect(rejectedAt - start).toBeLessThan(1_500);
+    const closedAt = await Promise.race([
+      serverClosed,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2_000)),
+    ]);
+    expect(closedAt).not.toBeNull();
+    expect((closedAt as number) - rejectedAt).toBeLessThan(1_000);
+  });
 });
 
 // The model's value reaches the block reason, which goes to the model and the

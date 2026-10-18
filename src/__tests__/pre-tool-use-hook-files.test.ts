@@ -68,6 +68,99 @@ describe("pre-tool-use-hook — .env/.env.* name block (secret category)", () =>
   });
 });
 
+// The name is compared without regard to case, since a file system that finds
+// `.ENV` when asked for `.env` holds the same secret under that name.
+describe("pre-tool-use-hook — .env names in any case", () => {
+  const writeFixture = useFixtureDir("env-case");
+
+  it.each([".ENV", ".Env.local", ".ENV.PRODUCTION"])(
+    "blocks %s on its name",
+    (name) => {
+      const p = writeFixture(name, "DEBUG=true\n");
+      expect(runHook("Read", p).exitCode).toBe(2);
+    },
+  );
+
+  it("blocks cat .ENV on its name", () => {
+    const p = writeFixture(".ENV", "DEBUG=true\n");
+    expect(runBashHook(`cat ${p}`).exitCode).toBe(2);
+  });
+
+  it("a template in any case stays exempt", () => {
+    const p = writeFixture(".ENV.example", "TOKEN=changeme\n");
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+});
+
+// A link is judged on its own name and on the name of the file it points at. The
+// contents here carry no secret, so the name is what decides. Each case gets a
+// directory of its own, so that a link and its target can share a name.
+describe("pre-tool-use-hook — a link to a .env file", () => {
+  const writeFixture = useFixtureDir("env-links");
+  const dirFor = (name: string): string => {
+    const dir = writeFixture.path(name);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+
+  it("a link named notes.txt to .env is blocked on Read", () => {
+    const dir = dirFor("read-link");
+    const target = join(dir, ".env");
+    writeFileSync(target, "DEBUG=true\n");
+    const link = join(dir, "notes.txt");
+    symlinkSync(target, link);
+    expect(runHook("Read", link).exitCode).toBe(2);
+  });
+
+  it("a link named notes.txt to .env is blocked on cat", () => {
+    const dir = dirFor("cat-link");
+    const target = join(dir, ".env");
+    writeFileSync(target, "DEBUG=true\n");
+    const link = join(dir, "notes.txt");
+    symlinkSync(target, link);
+    expect(runBashHook(`cat ${link}`).exitCode).toBe(2);
+  });
+
+  it("a link named .env to a plain file is blocked by its own name", () => {
+    const dir = dirFor("own-name");
+    const target = join(dir, "notes.txt");
+    writeFileSync(target, "DEBUG=true\n");
+    const link = join(dir, ".env");
+    symlinkSync(target, link);
+    expect(runHook("Read", link).exitCode).toBe(2);
+  });
+
+  it("a link named .env.example to .env is blocked by the target's name", () => {
+    const dir = dirFor("template-name");
+    const target = join(dir, ".env");
+    writeFileSync(target, "DEBUG=true\n");
+    const link = join(dir, ".env.example");
+    symlinkSync(target, link);
+    expect(runHook("Read", link).exitCode).toBe(2);
+  });
+
+  it("a link named notes.txt to .env.example stays exempt", () => {
+    const dir = dirFor("template-target");
+    const target = join(dir, ".env.example");
+    writeFileSync(target, "TOKEN=changeme\n");
+    const link = join(dir, "notes.txt");
+    symlinkSync(target, link);
+    expect(runHook("Read", link).exitCode).toBe(0);
+  });
+
+  // The link has nothing behind it, so there is nothing to leak and nothing to
+  // throw over. An error out of `realpathSync` here would exit 1 and let the
+  // call through, so the exit code is the thing being asked.
+  it("a dangling link is allowed and does not crash the hook", () => {
+    const dir = dirFor("dangling");
+    const link = join(dir, "dangle.txt");
+    symlinkSync(join(dir, "missing-target"), link);
+    const result = runBashHook(`cat ${link}`);
+    expect(result.exitCode).toBe(0);
+    expect(result.reason).toBeNull();
+  });
+});
+
 // ── clean file ────────────────────────────────────────────────────────────────
 
 describe("pre-tool-use-hook — clean file", () => {
@@ -581,6 +674,60 @@ describe("pre-tool-use-hook — UTF-16", () => {
   it("a clean UTF-16 file is allowed", () => {
     const p = writeBytes("clean.txt", utf16le("hello, nothing here\n"));
     expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
+  // The first 16 KiB of this file is kana, which has no NUL in either byte of a
+  // pair, so the sample cannot say the file is UTF-16. The key comes after it,
+  // and its NULs are the only sign of the encoding.
+  const kanaThenKey = `${"あ".repeat(9_000)}AWS_ACCESS_KEY_ID=${AWS_KEY}\n`;
+
+  it("a UTF-16LE file without a mark, kana first and a key after, is found", () => {
+    const p = writeBytes("kana-nobom.txt", utf16le(kanaThenKey));
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("the same file with a byte-order mark is found", () => {
+    const p = writeBytes(
+      "kana-bom.txt",
+      Buffer.concat([Buffer.from([0xff, 0xfe]), utf16le(kanaThenKey)]),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a UTF-16LE file of kana with no key is allowed", () => {
+    const p = writeBytes("kana-clean.txt", utf16le("あ".repeat(9_000)));
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
+  // A stray NUL is not an encoding, so the UTF-8 reading stays the primary one,
+  // and the key is found in it.
+  // The hook reads the first and the last 1 MiB of a larger file, and nothing
+  // between. The file here is 3.2 MB of kana; the key is in its last few KiB,
+  // which is in the tail window, and the sample for the tail is kana too, so the
+  // NULs of the key are what show the file is UTF-16.
+  it("a UTF-16LE file of kana over 1 MiB, with a key in its last KiB, is found", () => {
+    const p = writeBytes(
+      "kana-tail.txt",
+      utf16le(`${"あ".repeat(1_600_000)}AWS_ACCESS_KEY_ID=${AWS_KEY}\n`),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  // The window is the documented limit, not a bug: a key past the first and last
+  // 1 MiB is not read, as the README says for any file over the cut.
+  it("the same key in the middle of the file, past both windows, is not found", () => {
+    const p = writeBytes(
+      "kana-middle.txt",
+      utf16le(
+        `${"あ".repeat(800_000)}AWS_ACCESS_KEY_ID=${AWS_KEY}\n${"あ".repeat(800_000)}`,
+      ),
+    );
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
+  it("a UTF-8 file with one stray NUL is still scanned as UTF-8", () => {
+    const p = writeFixture("stray-nul.txt", `notes\0\nAWS=${AWS_KEY}\n`);
+    expect(runHook("Read", p).exitCode).toBe(2);
   });
 
   // The byte-order mark decides it outright, and each branch needs a case only

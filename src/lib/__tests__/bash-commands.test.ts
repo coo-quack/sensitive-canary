@@ -15,7 +15,9 @@
 import { describe, expect, it } from "vitest";
 import { extractCommandRefs } from "../bash-commands.ts";
 import {
+  ARCHIVE_WRITING_COMMANDS,
   ARGUMENT_ONLY_COMMANDS,
+  COPY_COMMANDS,
   COUNT_ONLY_COMMANDS,
   commandName,
   FILE_READ_COMMANDS,
@@ -25,6 +27,8 @@ import {
   INLINE_CODE_READS_OPERANDS,
   PATTERN_OR_SCRIPT_FIRST_COMMANDS,
   POSIX_SHELLS,
+  TAR_COMMANDS,
+  TARGET_DIRECTORY_COMMANDS,
   WRAPPER_COMMANDS,
   WRITE_TARGET_FLAGS,
 } from "../command-tables.ts";
@@ -507,10 +511,162 @@ describe("inline code", () => {
   });
 });
 
+// A copy reads what it copies, and an archive reads what goes into it. The
+// destination is neither, and neither is the archive's own name or the directory
+// `-C` changes to.
+describe("copy and archive commands read their sources", () => {
+  it.each([...COPY_COMMANDS])(
+    "%s reads its source and not its destination",
+    (cmd) => {
+      const found = paths(`${cmd} secrets.txt copy.txt`);
+      expect(found).toContain("secrets.txt");
+      expect(found).not.toContain("copy.txt");
+    },
+  );
+
+  // Every entry of the table has its own case, so a name deleted from it takes
+  // its case with it and the equality below notices.
+  it.each([...TARGET_DIRECTORY_COMMANDS])(
+    "%s -t DIR reads every operand as a source",
+    (cmd) => {
+      const found = paths(`${cmd} -t backup secrets.txt other.txt`);
+      expect(found).toContain("secrets.txt");
+      expect(found).toContain("other.txt");
+      expect(found).not.toContain("backup");
+    },
+  );
+
+  it.each([
+    "cp --target-directory=backup secrets.txt",
+    "cp -rt backup secrets.txt",
+    "cp -tbackup secrets.txt",
+    "mv --target-directory backup secrets.txt",
+  ])("%s reads every operand as a source", (command) => {
+    expect(paths(command)).toContain("secrets.txt");
+  });
+
+  it.each([
+    "tar -cf out.tar secrets.txt",
+    "tar -czf out.tgz secrets.txt",
+    "tar -c -f out.tar secrets.txt",
+    "tar -f out.tar -c secrets.txt",
+    "tar --create --file=out.tar secrets.txt",
+    "tar cf out.tar secrets.txt",
+  ])("%s reads the file it archives", (command) => {
+    const found = paths(command);
+    expect(found).toContain("secrets.txt");
+    expect(found).not.toContain("out.tar");
+    expect(found).not.toContain("out.tgz");
+  });
+
+  it.each([...TAR_COMMANDS])(
+    "%s creates an archive from its operands",
+    (cmd) => {
+      const found = paths(`${cmd} -cf out.tar secrets.txt`);
+      expect(found).toContain("secrets.txt");
+      expect(found).not.toContain("out.tar");
+    },
+  );
+
+  it("zip reads the files after the archive's name", () => {
+    const found = paths("zip -r out.zip secrets.txt");
+    expect(found).toContain("secrets.txt");
+    expect(found).not.toContain("out.zip");
+  });
+
+  it.each([
+    "tar -xf out.tar secrets.txt",
+    "tar -tf out.tar",
+    "tar xf out.tar secrets.txt",
+    "bsdtar -xf out.tar secrets.txt",
+  ])("%s does not read its operands", (command) => {
+    expect(paths(command)).not.toContain("secrets.txt");
+  });
+
+  // `-C DIR` makes the names after it relative to DIR, and each `-C` applies to
+  // what follows it.
+  it.each([
+    ["tar -cf o.tar -C sub creds.txt", "sub/creds.txt"],
+    ["tar -cf o.tar -C a -C b creds.txt", "a/b/creds.txt"],
+    ["tar -cf o.tar --directory=/work creds.txt", "/work/creds.txt"],
+    ["tar -C /work -cf o.tar creds.txt", "/work/creds.txt"],
+  ])("%s reads %s", (command, expected) => {
+    expect(paths(command)).toContain(expected);
+  });
+
+  it("the directory of a later -C is relative to the one before it", () => {
+    expect(paths("tar -cf o.tar -C /a -C ../b creds.txt")).toContain(
+      "/b/creds.txt",
+    );
+  });
+
+  // The list is a file that names files. Its own name is read as a file, and the
+  // names it holds are the list's to read, which the hook does.
+  it.each([
+    "tar -cf o.tar -T list.txt",
+    "tar -cf o.tar --files-from=list.txt",
+    "bsdtar -cf o.tar -T list.txt",
+    "gtar -cf o.tar --files-from list.txt",
+  ])("%s reads the list file and names it for reading", (command) => {
+    expect(paths(command)).toContain("list.txt");
+    expect(extractCommandRefs(command).lists).toEqual([
+      { file: "list.txt", dirs: [""] },
+    ]);
+  });
+
+  it("a list named after -C is relative to that directory", () => {
+    expect(
+      extractCommandRefs("tar -cf o.tar -C sub -T list.txt").lists,
+    ).toEqual([{ file: "sub/list.txt", dirs: ["sub"] }]);
+  });
+
+  it("rsync --files-from names files relative to the current directory and each source", () => {
+    expect(
+      extractCommandRefs("rsync --files-from=list.txt src/ dst/").lists,
+    ).toEqual([{ file: "list.txt", dirs: ["", "src/"] }]);
+  });
+
+  it("a list read from standard input names nothing", () => {
+    expect(extractCommandRefs("tar -cf o.tar -T -").lists).toEqual([]);
+  });
+});
+
 // The tables written out. The generated cases above follow them wherever they
 // go, which is what makes an equality necessary rather than redundant: without
 // one, deleting an entry deletes its own case and nothing fails.
 describe("the tables", () => {
+  it("copy commands are exactly these", () => {
+    expect([...COPY_COMMANDS].sort()).toEqual([
+      "cp",
+      "install",
+      "ln",
+      "mv",
+      "rsync",
+    ]);
+  });
+
+  it("commands whose -t names the destination are exactly these", () => {
+    expect([...TARGET_DIRECTORY_COMMANDS].sort()).toEqual([
+      "cp",
+      "install",
+      "ln",
+      "mv",
+    ]);
+  });
+
+  it("commands that write an archive from their operands are exactly these", () => {
+    expect([...ARCHIVE_WRITING_COMMANDS].sort()).toEqual([
+      "bsdtar",
+      "gtar",
+      "tar",
+      "zip",
+    ]);
+  });
+
+  it("the tar family is exactly these", () => {
+    expect([...TAR_COMMANDS].sort()).toEqual(["bsdtar", "gtar", "tar"]);
+  });
+
   // Measured: with only the three equalities below, deleting `zcat` from this
   // one still passed all 820 cases. Deleting a read command is the fail-open
   // direction — the command stops being one whose operands are scanned.
