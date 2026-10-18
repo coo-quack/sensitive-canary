@@ -194,7 +194,7 @@ A rule that needs an unbounded repeat should say why in its `description`, and s
 
 What the bounds cost, stated rather than implied:
 
-- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_]` characters in an unbroken run before the `@`. Every other character the local part allows — `.`, `%`, `+`, `-` — is a non-word character, so the word boundary restarts at it and a long address containing one is still found (measured: 65 letters is missed, 65 with a `%` in the middle is not); 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
+- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_]` characters in an unbroken run before the `@`. Every other character the local part allows — `.`, `%`, `+`, `-` — is a non-word character, so the word boundary restarts at it and a long address containing one is still found (measured: 65 letters is missed, 65 with a `%` in the middle is not); 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost. The exemption for an address after `ssh`, `scp`, `rsync` or `sftp` is bounded too: it covers at most two arguments between the command and the address, each up to 64 characters, with runs of up to 16 spaces or tabs between them. An address after a longer argument, or after 17 or more spaces, is a finding (measured: 16 spaces exempt, 17 found; 64 characters exempt, 65 found).
 - **`env-assignment`**: a name with 65 or more capitals in a run on either side of the keyword — `AAA…SECRET=` and `SECRET…AAA=` alike. `_` is a word character, so `A×65_SECRET=` is lost too, since the boundary does not restart at the underscore.
 - **`connection-string`**: a user or a password longer than 1024 characters.
 
