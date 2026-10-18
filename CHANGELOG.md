@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- A `.env` file under a name in another case was read: `cat .ENV` and `Read .Env.local` were not blocked, because the name guard compared the name as written. The name is now compared without regard to case, and the template names are exempt in any case, so `.ENV.example` is read as `.env.example` is
+- A `.env` file read through a symbolic link was not blocked: `ln -s .env link.txt` followed by `Read link.txt` passed the name check, since the guard looked only at the name the link was given. The guard now also looks at the file the link resolves to, so a link named `notes.txt` to `.env` is blocked, and a link named `.env` is blocked by its own name. A link to a template is exempt by the template's name. A dangling link, a loop or a missing file keeps the name it was given, and nothing is read through it
+- `cp .env notes.txt` was not blocked: the copy has a name the guard does not know. `cp`, `mv`, `ln`, `install` and `rsync` now read their sources, which are every operand but the last, and `tar -c` (with `bsdtar` and `gtar`) and `zip` read the files they archive. The archive's own name and the destination are not read, `tar -x` reads none of its operands, and `cp -t DIR SRC...` takes every operand as a source. The names in a `tar -T` or `rsync --files-from` list are sources too, and `tar -C DIR` makes the names after it relative to DIR
+- A UTF-16LE file without a byte-order mark was missed when its first 16 KiB held fewer than eight NULs: a file of 9,000 kana followed by `AWS_ACCESS_KEY_ID=…` was read as UTF-8, and the key, split by NULs, matched nothing. When the sample is undecided and a NUL appears in the bytes read, both UTF-16 byte orders are now scanned alongside the UTF-8 reading, each where it reads as text. A UTF-8 file with a single stray NUL is still scanned as UTF-8
+
 ## v0.13.0 (2026-10-18)
 
 ### Features

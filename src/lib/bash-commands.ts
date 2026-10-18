@@ -5,6 +5,7 @@
 // turns a command line into the files it may print and the environment it may
 // expose, leaving the parsing to shell.ts.
 
+import path from "node:path";
 import {
   ARGUMENT_ONLY_COMMANDS,
   asksForRecursion,
@@ -18,11 +19,14 @@ import {
   gitSubcommandPrintsFiles,
   INLINE_CODE_COMMANDS,
   isWrapperTarget,
+  type ListedFiles,
   MAX_NESTING_DEPTH,
   mergeRefs,
   POSIX_SHELLS,
   patternSupplyingFlag,
   RECURSIVE_BY_DEFAULT,
+  TAR_COMMANDS,
+  TARGET_DIRECTORY_COMMANDS,
   WRAPPER_COMMANDS,
   WRITE_TARGET_FLAGS,
 } from "./command-tables.ts";
@@ -312,6 +316,7 @@ export function extractCommandRefs(command: string, depth = 0): CommandRefs {
     envVars: [...new Set(refs.envVars)],
     dumpsEnvironment: refs.dumpsEnvironment,
     searchesWorkingDirectory: refs.searchesWorkingDirectory,
+    lists: refs.lists,
   };
 }
 
@@ -322,6 +327,7 @@ function readCommandLine(command: string, depth: number): CommandRefs {
     envVars: [],
     dumpsEnvironment: false,
     searchesWorkingDirectory: false,
+    lists: [],
   };
 
   if (depth > MAX_NESTING_DEPTH) return refs;
@@ -525,6 +531,7 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
     envVars: [],
     dumpsEnvironment: false,
     searchesWorkingDirectory: false,
+    lists: [],
   };
 
   const start = findCommandIndex(tokens);
@@ -566,6 +573,15 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
         readProgram(refs, cmd, code.value, depth);
       }
     }
+    return refs;
+  }
+
+  // A copy or an archive tool is settled from its operands as a whole, which is
+  // what readOperands is for. The loop below has nothing to add to it.
+  const operandReads = readOperands(cmd, operands);
+  if (operandReads !== null) {
+    refs.paths.push(...operandReads.paths);
+    refs.lists.push(...operandReads.lists);
     return refs;
   }
 
@@ -774,4 +790,200 @@ function collectSegmentRefs(tokens: ShellToken[], depth: number): CommandRefs {
   }
 
   return refs;
+}
+
+// ── Copies and archives ─────────────────────────────────────────────────────
+
+// What a copy or an archive tool reads, settled from its operands as a whole.
+// `paths` are the files whose contents are scanned. `lists` are the files that
+// name other files (`tar -T`, `rsync --files-from`), which are read by the hook
+// since reading a file is I/O this module does not do.
+export interface OperandReads {
+  paths: string[];
+  lists: ListedFiles[];
+}
+
+// The files a copy (`cp`, `mv`, `ln`, `install`, `rsync`) or an archive written
+// in create mode (`tar -c`, `zip`) reads. Null for every other command, so the
+// caller falls through to the table-driven loop.
+//
+// A copy reads every operand but its destination. An archive reads every
+// operand after its name, and tar's names come after the directory `-C` put in
+// force before them. The archive's own name is not read, and nor is the
+// destination of a copy, which is the last operand unless `-t` has named it.
+export function readOperands(
+  cmd: string,
+  operands: ShellToken[],
+): OperandReads | null {
+  const behaviour = classifyCommand(cmd);
+  const tarStyle = TAR_COMMANDS.has(cmd);
+  const archive =
+    behaviour.writesArchive && (!tarStyle || createsTarArchive(operands));
+  if (!behaviour.copiesOperands && !archive) return null;
+
+  const copies = behaviour.copiesOperands;
+  const paths: string[] = [];
+  const lists: ListedFiles[] = [];
+  const sources: string[] = [];
+  // rsync's list names, which are relative to its sources, so they are resolved
+  // once the sources are known.
+  const rsyncLists: string[] = [];
+  // The directory `tar -C` has in force, which the names after it are relative to.
+  let dir = "";
+  // What the next operand is, when an option took it as its value.
+  let pending: "skip" | "dir" | "list" | null = null;
+  let targetDirectory = false;
+  let archiveNamed = false;
+  let optionsEnded = false;
+
+  const listFile = (value: string): void => {
+    if (value === "-") return;
+    if (tarStyle) {
+      const file = joinDirectory(dir, value);
+      paths.push(file);
+      lists.push({ file, dirs: [dir] });
+    } else {
+      paths.push(value);
+      rsyncLists.push(value);
+    }
+  };
+
+  for (let i = 0; i < operands.length; i++) {
+    const tok = operands[i];
+    if (tok === undefined) continue;
+
+    if (tok.redirect) {
+      // A `<` input is read, as it is for every command. The target of any other
+      // redirection is written, or is a delimiter.
+      const target = operands[i + 1];
+      if (tok.value === "<" && target !== undefined && !target.redirect) {
+        paths.push(target.value);
+      }
+      i++;
+      continue;
+    }
+
+    if (pending !== null) {
+      const kind = pending;
+      pending = null;
+      if (kind === "dir") dir = joinDirectory(dir, tok.value);
+      else if (kind === "list") listFile(tok.value);
+      continue;
+    }
+
+    if (!optionsEnded && tok.value === "--") {
+      optionsEnded = true;
+      continue;
+    }
+
+    // The old form of tar takes its options as a bare first word, `tar cf out.tar
+    // f`, so that word is read as the bundle it is.
+    const oldFormBundle =
+      archive && tarStyle && i === 0 && /^[A-Za-z]+$/.test(tok.value);
+    if (!optionsEnded && (tok.value.startsWith("-") || oldFormBundle)) {
+      const flag = tok.value.startsWith("-") ? tok.value : `-${tok.value}`;
+
+      if (tarStyle) {
+        // The archive's name is the value of `-f`, which is not read.
+        if (optionValue(flag, "f", "--file")?.kind === "next") pending = "skip";
+
+        const directory = optionValue(flag, "C", "--directory");
+        if (directory?.kind === "next") pending = "dir";
+        else if (directory?.kind === "attached") {
+          dir = joinDirectory(dir, directory.value);
+        }
+
+        const fileList = optionValue(flag, "T", "--files-from");
+        if (fileList?.kind === "next") pending = "list";
+        else if (fileList?.kind === "attached") listFile(fileList.value);
+      }
+
+      if (cmd === "rsync") {
+        const fileList = optionValue(flag, "", "--files-from");
+        if (fileList?.kind === "next") pending = "list";
+        else if (fileList?.kind === "attached") listFile(fileList.value);
+      }
+
+      // `cp -t DIR SRC...` names the destination as the flag's value, so every
+      // operand is a source.
+      if (TARGET_DIRECTORY_COMMANDS.has(cmd)) {
+        const target = targetDirectoryFlag(flag);
+        if (target !== null) targetDirectory = true;
+        if (target === "separate") pending = "skip";
+      }
+      continue;
+    }
+
+    if (archive && cmd === "zip" && !archiveNamed) {
+      archiveNamed = true;
+      continue;
+    }
+    sources.push(joinDirectory(dir, tok.value));
+  }
+
+  // The last operand of a copy is where it goes, unless `-t` has named that
+  // already.
+  const settled = copies && !targetDirectory ? sources.slice(0, -1) : sources;
+  paths.push(...settled);
+  for (const file of rsyncLists) lists.push({ file, dirs: ["", ...settled] });
+
+  return { paths, lists };
+}
+
+// A name taken relative to `dir`, which is the current directory when it is "".
+function joinDirectory(dir: string, value: string): string {
+  if (dir === "" || path.isAbsolute(value)) return value;
+  return path.join(dir, value);
+}
+
+// The value a tar-style option carries, in the three ways a shell gives one: the
+// next operand (`-f out`, `--file out`), attached to a long option (`--file=out`)
+// or attached in a bundle (`-fout`). In a bundle the option is its letter, and
+// the value is the next operand when that letter is the bundle's last. Null when
+// the token does not carry the option. `short` is "" for an option with no short
+// form.
+type OptionValue = { kind: "next" } | { kind: "attached"; value: string };
+
+function optionValue(
+  token: string,
+  short: string,
+  long: string,
+): OptionValue | null {
+  if (token === long) return { kind: "next" };
+  if (token.startsWith(`${long}=`)) {
+    return { kind: "attached", value: token.slice(long.length + 1) };
+  }
+  if (short === "" || token.startsWith("--") || !token.startsWith("-")) {
+    return null;
+  }
+  const letters = token.slice(1);
+  const at = letters.indexOf(short);
+  if (at === -1) return null;
+  if (at === letters.length - 1) return { kind: "next" };
+  return { kind: "attached", value: letters.slice(at + 1) };
+}
+
+// Whether a tar invocation creates an archive: `-c` or `--create`, or a `c` in a
+// bundle such as `-czf`. The old form without a dash (`tar cf out.tar f`) is
+// read from its first operand only, since that is where tar takes its options.
+function createsTarArchive(operands: ShellToken[]): boolean {
+  return operands.some(({ value, redirect }, index) => {
+    if (redirect) return false;
+    if (value === "--create") return true;
+    if (value.startsWith("--")) return false;
+    if (value.startsWith("-")) return value.slice(1).includes("c");
+    return index === 0 && /^[A-Za-z]+$/.test(value) && value.includes("c");
+  });
+}
+
+// How a copy command's target-directory flag names its destination: the next
+// operand (`-t DIR`, `-rt DIR`), or attached to the flag (`--target-directory=DIR`,
+// `-tDIR`). Null for every other flag.
+function targetDirectoryFlag(token: string): "separate" | "attached" | null {
+  if (token === "--target-directory" || token === "-t") return "separate";
+  if (token.startsWith("--target-directory=")) return "attached";
+  if (token.startsWith("--") || !token.startsWith("-")) return null;
+  const at = token.indexOf("t", 1);
+  if (at === -1) return null;
+  return at === token.length - 1 ? "separate" : "attached";
 }
