@@ -180,6 +180,9 @@ itself.
 | `pii-postal-cn` | Chinese Postal Code (6-digit) | Context-gated |
 | `pii-ipv4-public` | Public IPv4 Address | Context-gated; reserved/private ranges excluded |
 | `pii-ipv6` | IPv6 Address | Context-gated; loopback, link-local, ULA, multicast excluded |
+| `pii-date-of-birth` | Date of Birth after a label | Labels: `DOB`, `D.O.B.`, `date of birth`, `birthdate`, `生年月日` and `誕生日`. The words of an English label may be joined by spaces, underscores or hyphens (`date_of_birth`, `birth-date`). `誕生日会` (a birthday party) is not a label, so the date after it is not matched. Up to 24 characters that are not digits may separate the label from the date; after `生年月日` or `誕生日` it is up to 8, and none of them may be `!`, `！` or `。`. Date forms: ISO (`1990-05-06`), slash and dot, English month names (`2 Apr 1978`, `March 27, 1973`), 年月日 with a western or an era year (`1988年7月21日`, `昭和63年7月21日`, `平成元年1月1日`), and `S63.7.21`. A numeric form is read day first or month first, whichever is a real date. Only calendar dates from 1900 to this year are found, and `1970-01-01` and `1900-01-01` are not, since form defaults write them |
+| `pii-customer-number` | Member, Customer or Account Number after a label | Labels: `customer ID`, `customer number`, `customer no.`, `customer #`, the same forms for `member` and `membership` (`member ID`, `membership number`), `account number`, `account no.` and `account #` (not `account ID`), and `会員番号`, `顧客番号`, `お客様番号`, each with `番号`, `No.` or `ID`. The label has to stand alone: a label that is the tail of a longer snake_case key, such as `organization_membership_id` or `billing_customer_id`, is not matched, because the underscore before the label belongs to the key. The cost is that a number under a composite key such as `billing_customer_id` is not found. The value is five to twenty-three letters, digits or hyphens, with at least two digits and no hyphen at the end |
+| `pii-address-jp` | Japanese Postal Address | Starts at one of the 47 prefectures and needs a municipality suffix (市, 区, 郡, 町 or 村) within ten characters after it. The block number is `N丁目`, `N番`, `N番地`, `N号` or `N-N-N`, repeated as needed, in ASCII, full-width or kanji numerals, and may be followed by a final number and 号. A prefecture alone, a municipality alone, and a number followed by a counter such as 件 or 年 are not matched |
 
 ### Why three patterns carry length bounds
 
@@ -217,6 +220,12 @@ Phone numbers (IT, DE, FR, ES, KR, CN) and bare postal codes (5/9-digit and Chin
 National ID numbers rely on their checksums instead and do not require context. Japanese postal codes keep their `〒` prefix requirement, which is a stricter form of the same idea.
 
 Public IPv4 and IPv6 addresses are also context-gated, and additionally exclude reserved ranges (private, loopback, link-local, TEST-NET, multicast, documentation, etc.), so an address like `8.8.8.8` fires only when a label such as `ip`, `ipv4` or `ipv6` is nearby. RFC 1918 private addresses are not matched by any rule: they are non-routable and identify nothing outside their own network, and treating them as personal data blocked ordinary infrastructure work.
+
+### Labelled attributes
+
+`pii-date-of-birth`, `pii-customer-number` and `pii-address-jp` key on a label or on place names, not on the value alone. A bare date or a bare number is in every log, lockfile and fixture, so a rule that matched `1990-05-06` wherever it appeared would block most of what a developer pastes. The label is what says the value belongs to a person: `DOB: 1990-05-06` is a date of birth, and `1990-05-06` in a changelog is not. The address rule has no label, so the prefecture, the municipality and the block number in sequence are what say the text is an address.
+
+A company's address matches the same way a person's does, because the text of a footer does not say whose address it is. Issue #336 leaves that open. Until it is settled, the rule finds a company's office address in a document as it finds a person's.
 
 ### Credit Card Validation
 
@@ -383,6 +392,7 @@ Create `~/.config/sensitive-canary/config.json`, or set the `SENSITIVE_CANARY_CO
 | `phone-us` | Not area code 555; not the 555 exchange with line 0100 to 0199 or 1212; not a toll-free area code (800, 888, 877, 866, 855, 844, 833) |
 | `personal-mailbox` | The local part is not a role name (`noreply`, `no-reply`, `donotreply`, `do-not-reply`, `support`, `sales`, `info`, `help`, `contact`, `press`, `abuse`, `postmaster`, `webmaster`, `hostmaster`), compared whole and case-insensitively |
 | `aws-secret-shape` | Contains an upper case letter, a lower case letter and a digit |
+| `birth-date` | A calendar date between 1900 and this year, in the forms the date-of-birth rule reads (ISO, slash, dot, English, 年月日, era years, `S63.7.21`); not `1970-01-01` or `1900-01-01` |
 
 ### Global context window
 

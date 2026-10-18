@@ -626,6 +626,171 @@ export function hasAwsSecretShape(str: string): boolean {
   return /[A-Z]/.test(str) && /[a-z]/.test(str) && /[0-9]/.test(str);
 }
 
+// The first year of each era, so that 昭和63 is 1925 + 63.
+const ERA_BASE_YEARS: Readonly<Record<string, number>> = {
+  明治: 1867,
+  大正: 1911,
+  昭和: 1925,
+  平成: 1988,
+  令和: 2018,
+};
+
+// The one-letter prefixes of the S63.7.21 form, for the same eras.
+const ERA_LETTERS: Readonly<Record<string, string>> = {
+  M: "明治",
+  T: "大正",
+  S: "昭和",
+  H: "平成",
+  R: "令和",
+};
+
+const MONTH_ABBREVIATIONS = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+];
+
+const MONTH_NAME =
+  "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+
+const monthNumber = (name: string): number =>
+  MONTH_ABBREVIATIONS.indexOf(name.slice(0, 3).toLowerCase()) + 1;
+
+// "YYYY-M-D" when the day exists in that month and the year is from 1900 to
+// this year. Date.UTC rolls an impossible day into the next month, so the
+// fields are read back and compared.
+function calendarKey(
+  year: number,
+  month: number,
+  day: number,
+): string | undefined {
+  if (year < 1900 || year > new Date().getFullYear()) return undefined;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  )
+    return undefined;
+  return `${year}-${month}-${day}`;
+}
+
+function calendarKeys(...dates: [number, number, number][]): string[] {
+  return dates.flatMap(([y, m, d]) => {
+    const key = calendarKey(y, m, d);
+    return key === undefined ? [] : [key];
+  });
+}
+
+// 元 is the first year of an era. An era year of 0 is not a year.
+function eraCalendarKeys(
+  era: string,
+  eraYear: string,
+  month: number,
+  day: number,
+): string[] {
+  const base = ERA_BASE_YEARS[era];
+  const year = eraYear === "元" ? 1 : Number(eraYear);
+  if (base === undefined || !(year >= 1)) return [];
+  return calendarKeys([base + year, month, day]);
+}
+
+// A date of birth as the birth-date rule captures it. Returns the calendar dates
+// the text can mean, each as "YYYY-M-D": a numeric form in day-first and
+// month-first order gives both, and one that does not parse gives none.
+function birthDateKeys(str: string): string[] {
+  const iso = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(str);
+  if (iso)
+    return calendarKeys([Number(iso[1]), Number(iso[2]), Number(iso[3])]);
+
+  const kanjiWestern = /^(\d{4})年\s?(\d{1,2})月\s?(\d{1,2})日$/.exec(str);
+  if (kanjiWestern)
+    return calendarKeys([
+      Number(kanjiWestern[1]),
+      Number(kanjiWestern[2]),
+      Number(kanjiWestern[3]),
+    ]);
+
+  const numericEnd = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(str);
+  if (numericEnd) {
+    const a = Number(numericEnd[1]);
+    const b = Number(numericEnd[2]);
+    const y = Number(numericEnd[3]);
+    return calendarKeys([y, b, a], [y, a, b]);
+  }
+
+  const dayMonth = new RegExp(
+    `^(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH_NAME}\\.?,?\\s+(\\d{4})$`,
+    "i",
+  ).exec(str);
+  if (dayMonth)
+    return calendarKeys([
+      Number(dayMonth[3]),
+      monthNumber(dayMonth[2] ?? ""),
+      Number(dayMonth[1]),
+    ]);
+
+  const monthDay = new RegExp(
+    `^${MONTH_NAME}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})$`,
+    "i",
+  ).exec(str);
+  if (monthDay)
+    return calendarKeys([
+      Number(monthDay[3]),
+      monthNumber(monthDay[1] ?? ""),
+      Number(monthDay[2]),
+    ]);
+
+  const kanjiEra =
+    /^(明治|大正|昭和|平成|令和)\s?(元|\d{1,2})年\s?(\d{1,2})月\s?(\d{1,2})日$/.exec(
+      str,
+    );
+  if (kanjiEra)
+    return eraCalendarKeys(
+      kanjiEra[1] ?? "",
+      kanjiEra[2] ?? "",
+      Number(kanjiEra[3]),
+      Number(kanjiEra[4]),
+    );
+
+  const letterEra = /^([MTSHR])(\d{1,2})\.(\d{1,2})\.(\d{1,2})$/i.exec(str);
+  if (letterEra) {
+    const era = ERA_LETTERS[(letterEra[1] ?? "").toUpperCase()];
+    if (era === undefined) return [];
+    return eraCalendarKeys(
+      era,
+      letterEra[2] ?? "",
+      Number(letterEra[3]),
+      Number(letterEra[4]),
+    );
+  }
+
+  return [];
+}
+
+// 1970-01-01 and 1900-01-01 are what form defaults and "unknown" placeholders
+// write: a record that says DOB 01/01/1970 has no date of birth, and its subject
+// was not born that day.
+const BIRTH_DATE_PLACEHOLDERS: ReadonlySet<string> = new Set([
+  "1970-1-1",
+  "1900-1-1",
+]);
+
+export function isBirthDate(str: string): boolean {
+  return birthDateKeys(str.trim()).some(
+    (key) => !BIRTH_DATE_PLACEHOLDERS.has(key),
+  );
+}
+
 const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
   "password-like": isPasswordLike,
   "basic-credentials": isBasicCredentials,
@@ -648,6 +813,7 @@ const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
   "resident-id-cn": validateChineseID,
   "public-ipv4": (ip: string) => !isReservedIpv4(ip),
   "public-ipv6": (ip: string) => !isReservedIpv6(ip),
+  "birth-date": isBirthDate,
 };
 
 // The names a config file may put in `validate`. Exported so the documents can

@@ -156,7 +156,7 @@ describe("the documents and the registry agree", () => {
 });
 
 describe("the shipped rules", () => {
-  it("are exactly these eighty-eight", () => {
+  it("are exactly these ninety-one", () => {
     expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
       "anthropic-key",
       "atlassian-token",
@@ -199,9 +199,12 @@ describe("the shipped rules", () => {
       "password-netrc",
       "password-prose",
       "perplexity-key",
+      "pii-address-jp",
       "pii-brn-kr",
       "pii-codice-fiscale-it",
       "pii-credit-card",
+      "pii-customer-number",
+      "pii-date-of-birth",
       "pii-dni-nie-es",
       "pii-email",
       "pii-iban",
@@ -249,12 +252,12 @@ describe("the shipped rules", () => {
     ]);
   });
 
-  it("are split as the README says: 61 secret, 27 PII", () => {
+  it("are split as the README says: 61 secret, 30 PII", () => {
     const byCategory: Record<string, number> = {};
     for (const rule of DEFAULT_RULES) {
       byCategory[rule.category] = (byCategory[rule.category] ?? 0) + 1;
     }
-    expect(byCategory).toEqual({ secret: 61, pii: 27 });
+    expect(byCategory).toEqual({ secret: 61, pii: 30 });
   });
 
   it("each declare the fields the loader needs", () => {

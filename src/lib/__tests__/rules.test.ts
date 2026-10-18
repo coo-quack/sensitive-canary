@@ -707,6 +707,19 @@ describe("scan — adversarial inputs", () => {
       // the `@` never comes, so every start position pays the full retreat.
       "https urls that never reach an @":
         `https://${mixed(64)}:${mixed(256)}`.repeat(778),
+      // pii-address-jp: a municipality is found after every prefecture, so each town run is walked and fails
+      "prefecture names and municipality suffixes": "東京都市区町村".repeat(
+        30_000,
+      ),
+      // pii-address-jp: the block-number repeat takes each hyphen, then has to back off the last one
+      "prefectures with a town and a dangling hyphen":
+        "東京都千代田区丸の内1-".repeat(20_000),
+      // pii-date-of-birth: the gap after each label is walked to its limit, with no date to end on
+      "birth labels with no date": "DOB ".repeat(60_000),
+      // pii-date-of-birth: the date fails on its last digit, and each label walks the gap before it
+      "birth labels with a broken date": "DOB x: 1990-05-".repeat(15_000),
+      // pii-customer-number: the separator class after each label is walked, then the value fails
+      "customer labels with no number": "customer id ".repeat(20_000),
     };
 
     // Every rule is linear or better on these. The slowest pair measured is
