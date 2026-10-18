@@ -130,10 +130,24 @@ const modelTexts: { source: string; text: string }[] = [];
 // Both clocks start when the payload arrives, not when the process does. The
 // wait for stdin belongs to the runtime, and counting it against the scan lets
 // a slow handover spend the whole allowance before a single file is read.
+//
+// The length of that window is five seconds. `SENSITIVE_CANARY_DEADLINE_MS` is
+// a test seam, not a setting: it is honoured only when `VITEST` is set, which
+// vitest does in the processes it runs, so a shell or a Claude Code `env` block
+// cannot shorten the window. A value that is not a positive integer falls back
+// to the default silently.
+const DEFAULT_WINDOW_MS = 5_000;
 let DEADLINE = Number.POSITIVE_INFINITY;
 
+function readWindowMs(): number {
+  if (process.env["VITEST"] === undefined) return DEFAULT_WINDOW_MS;
+  const raw = process.env["SENSITIVE_CANARY_DEADLINE_MS"];
+  const ms = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : 0;
+  return Number.isSafeInteger(ms) && ms > 0 ? ms : DEFAULT_WINDOW_MS;
+}
+
 function startTheClock(): void {
-  DEADLINE = Date.now() + 5_000;
+  DEADLINE = Date.now() + readWindowMs();
   // One budget for the whole invocation rather than one per `scan()` call: a
   // call is made per environment variable and per end of each file, so the
   // payload sets how many there are.
