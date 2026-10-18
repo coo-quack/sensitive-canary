@@ -125,9 +125,24 @@ const modelTexts: { source: string; text: string }[] = [];
 // The clock is the scan budget's (see rules.ts), so it starts when the payload
 // arrives, not when the process does. The wait for stdin belongs to the runtime,
 // and counting it against the scan lets a slow handover spend the whole
-// allowance before a single file is read. Files are not read once five seconds
-// of it have gone; the rules themselves get the budget's full ten.
-const READ_WINDOW_MS = 5_000;
+// allowance before a single file is read. Files are not read once the window
+// has gone; the rules themselves get the budget's full ten seconds.
+//
+// The window is five seconds. `SENSITIVE_CANARY_DEADLINE_MS` is a test seam,
+// not a setting: it is honoured only when `VITEST` is set, which vitest does in
+// the processes it runs, so a shell or a Claude Code `env` block cannot shorten
+// the window. A value that is not a positive integer falls back to the default
+// silently.
+const DEFAULT_WINDOW_MS = 5_000;
+
+function readWindowMs(): number {
+  if (process.env["VITEST"] === undefined) return DEFAULT_WINDOW_MS;
+  const raw = process.env["SENSITIVE_CANARY_DEADLINE_MS"];
+  const ms = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : 0;
+  return Number.isSafeInteger(ms) && ms > 0 ? ms : DEFAULT_WINDOW_MS;
+}
+
+const READ_WINDOW_MS = readWindowMs();
 
 // The directory a relative path is relative to. Set from the payload before any
 // scanning; `process.cwd()` is where the hook was started, which is not
