@@ -26,7 +26,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **76 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **91 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
 - **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP, EU/KR and Chinese postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough. RFC 1918 private addresses are not matched at all — they are non-routable, they identify nothing outside the network they belong to, and they fill the inventories, manifests and ssh configs this tool is most often pointed at
 - **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`, `user@host:path`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work. A template is exempt only when its contents can be read whole. One holding a NUL byte, running past the per-file cut, reached after the call's budget or deadline, or that is not a regular file at all is blocked on its name, since the contents are what the exemption relies on. A template name that exists on no disk is not blocked — there is nothing to read and nothing to leak
@@ -392,6 +392,8 @@ User rules support the same fields as built-in rules:
 | `contextWords` | string[] | Words that satisfy the context requirement |
 | `excludeContext` | string[] | Words that, found nearby, say the match is not what the rule is after — the mirror of `contextWords` |
 | `contextWindow` | number | Override the global context window (default: 3 tokens) |
+| `columnLabels` | string[] | Header names of a column: a CSV, TSV or Markdown table header, or the column list of a SQL `INSERT`. The cells under a matching header are read as values. Needs `cellRegex` |
+| `cellRegex` | string | The value, matched against the whole trimmed cell with the rule's flags minus `g` and `y`, and the rule's `validate` too. Needs `columnLabels` |
 | `entropyThreshold` | number | Skip matches below this Shannon entropy |
 | `secretGroup` | number | Capture group holding the secret. Omit for the whole match — writing `0` is not the same as omitting it, see [Detection Rules](https://coo-quack.github.io/sensitive-canary/rules.html) |
 | `validate` | string | Name of a built-in checksum validator (see below) |
@@ -399,7 +401,7 @@ User rules support the same fields as built-in rules:
 
 Available validators (referenced by name in the `validate` field):
 
-`luhn`, `aws-key`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`, `password-like`, `basic-credentials`, `iban`, `phone-intl`, `nino-uk`, `phone-us`, `personal-mailbox`, `aws-secret-shape`
+`luhn`, `aws-key`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`, `password-like`, `basic-credentials`, `iban`, `phone-intl`, `nino-uk`, `phone-us`, `personal-mailbox`, `aws-secret-shape`, `birth-date`
 
 ### Overriding the context window globally
 
@@ -484,7 +486,7 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `password-json-key` | JSON value under a key that ends in `pass`, `passwd`, `password` or `pwd` |
 | `redis-auth` | Redis `AUTH` command, or `redis-cli -a` |
 
-### PII (27 rules)
+### PII (30 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
@@ -515,6 +517,9 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `pii-postal-cn` | Chinese postal code (6-digit) | Context-gated |
 | `pii-ipv4-public` | Public IPv4 address | Context-gated, reserved ranges excluded |
 | `pii-ipv6` | IPv6 address | Context-gated, reserved ranges excluded |
+| `pii-date-of-birth` | Date of birth after a label (`DOB`, `date of birth`, `生年月日`, `誕生日`) | Calendar date between 1900 and this year; the defaults 1970-01-01 and 1900-01-01 are not matched |
+| `pii-customer-number` | Member, customer or account number after a label (`customer ID`, `membership number`, `会員番号`, `顧客番号`) | Five to twenty-four characters with at least two digits, after a label |
+| `pii-address-jp` | Japanese postal address (prefecture, municipality and block number) | A prefecture, a municipality and a block number in sequence; a prefecture or a municipality alone is not matched |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
 

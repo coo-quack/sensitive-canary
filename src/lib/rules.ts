@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { normaliseLabel, scanColumns } from "./columns.ts";
 import {
   entropy,
   isNotSecretShaped,
@@ -37,6 +38,10 @@ interface Rule {
   // `max 3` are five-digit numbers beside a word that says they are not places.
   excludeContext?: string[];
   contextWindow?: number;
+  // See RuleConfig.columnLabels: the header names, normalised, and the cell
+  // pattern compiled with the rule's flags minus g and y.
+  columnLabels?: ReadonlySet<string>;
+  cellRegex?: RegExp;
 }
 
 // JSON representation of a rule, as written in config files. The `regex` is a
@@ -56,6 +61,14 @@ export interface RuleConfig {
   // See Rule.excludeContext.
   excludeContext?: string[];
   contextWindow?: number;
+  // Column-aware detection. A header cell that normalises to one of
+  // `columnLabels` names a column, and the cell in that column of each row
+  // under the header is a value: it is trimmed and unquoted, then tested
+  // against `cellRegex` (anchored, with the rule's flags minus g and y) and the
+  // rule's `validate`. The header is CSV, TSV, a Markdown table, or the column
+  // list of a SQL INSERT. The two fields are given together.
+  columnLabels?: string[];
+  cellRegex?: string;
 }
 
 // Top-level config file: a context window override plus a list of rules.
@@ -173,6 +186,8 @@ function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
     excludeContext,
     requireContext,
     contextWindow,
+    columnLabels,
+    cellRegex,
   } = rc as Record<string, unknown>;
 
   if (typeof id !== "string" || id.length === 0) {
@@ -237,6 +252,33 @@ function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
     throw new Error('"contextWindow" must be a positive integer');
   }
 
+  if (columnLabels != null) {
+    if (
+      !Array.isArray(columnLabels) ||
+      columnLabels.some((w) => typeof w !== "string" || w.length === 0)
+    ) {
+      throw new Error('"columnLabels" must be an array of non-empty strings');
+    }
+  }
+  if (
+    Array.isArray(columnLabels) &&
+    columnLabels.some((w) => normaliseLabel(String(w)) === "")
+  ) {
+    throw new Error('"columnLabels" entries must not be blank');
+  }
+  if (
+    cellRegex != null &&
+    (typeof cellRegex !== "string" || cellRegex.length === 0)
+  ) {
+    throw new Error('"cellRegex" must be a non-empty string');
+  }
+  if (columnLabels != null && cellRegex == null) {
+    throw new Error('"columnLabels" needs "cellRegex"');
+  }
+  if (cellRegex != null && columnLabels == null) {
+    throw new Error('"cellRegex" needs "columnLabels"');
+  }
+
   // Cross-field: requireContext is meaningless without contextWords
   if (
     requireContext === true &&
@@ -253,7 +295,14 @@ function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
 // fields so the caller (buildRules) can catch and warn per-rule.
 export function compileRule(rc: RuleConfig): Rule {
   validateRuleConfig(rc);
-  const { regex: source, flags, validate: validateName, ...rest } = rc;
+  const {
+    regex: source,
+    flags,
+    validate: validateName,
+    columnLabels,
+    cellRegex: cellSource,
+    ...rest
+  } = rc;
   // matchAll requires the global flag; ensure it is always present.
   const flagStr = flags ?? "g";
   const withG = flagStr.includes("g") ? flagStr : `${flagStr}g`;
@@ -261,6 +310,15 @@ export function compileRule(rc: RuleConfig): Rule {
     ...rest,
     regex: new RegExp(source, withG),
   };
+  if (columnLabels !== undefined && cellSource !== undefined) {
+    rule.columnLabels = new Set(columnLabels.map(normaliseLabel));
+    // Anchored, so a cell is the value and not a value inside a sentence. The
+    // g and y flags would make test() stateful, so they are removed.
+    rule.cellRegex = new RegExp(
+      `^(?:${cellSource})$`,
+      flagStr.replace(/[gy]/g, ""),
+    );
+  }
   if (validateName) {
     const fn = getValidator(validateName);
     if (fn) {
@@ -571,6 +629,31 @@ function scanUninterrupted(
         secretValue,
         score: hasContext ? 1.0 : 0.4,
       });
+    }
+
+    if (rule.columnLabels && rule.cellRegex) {
+      const cellRegex = rule.cellRegex;
+      const validate = rule.validate;
+      // A value that the regex also found is one finding, not two.
+      const found = new Set(
+        findings.filter((f) => f.ruleId === rule.id).map((f) => f.secretValue),
+      );
+      const cells = scanColumns(
+        text,
+        rule.columnLabels,
+        (cell) => cellRegex.test(cell) && (validate == null || validate(cell)),
+      );
+      for (const cell of cells) {
+        if (found.has(cell)) continue;
+        findings.push({
+          ruleId: rule.id,
+          description: rule.description,
+          category: rule.category,
+          matchRedacted: redact(cell),
+          secretValue: cell,
+          score: 1.0,
+        });
+      }
     }
   }
 

@@ -1,3 +1,5 @@
+import { isBirthDate } from "./birth-date.ts";
+
 // The checksum algorithms and range checks a rule may name in its `validate`
 // field.
 //
@@ -648,6 +650,7 @@ const VALIDATORS: Readonly<Record<string, (str: string) => boolean>> = {
   "resident-id-cn": validateChineseID,
   "public-ipv4": (ip: string) => !isReservedIpv4(ip),
   "public-ipv6": (ip: string) => !isReservedIpv6(ip),
+  "birth-date": isBirthDate,
 };
 
 // The names a config file may put in `validate`. Exported so the documents can

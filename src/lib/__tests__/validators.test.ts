@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isBirthDate } from "../birth-date.ts";
 import {
   hasAwsSecretShape,
   isBasicCredentials,
@@ -663,5 +664,152 @@ describe("isBasicCredentials and the documented pairs", () => {
     ["cm9vdDpYazltUDJxUjd2", "root:Xk9mP2qR7v, the same"],
   ])("%s is a credential (%s)", (value) => {
     expect(isBasicCredentials(value)).toBe(true);
+  });
+});
+
+// ── isBirthDate ───────────────────────────────────────────────────────────────
+
+describe("isBirthDate", () => {
+  const thisYear = new Date().getFullYear();
+
+  it.each([
+    ["1990-05-06", "ISO"],
+    ["1990/5/6", "slash, no padding"],
+    ["1990.05.06", "dot"],
+    ["1988年7月21日", "年月日 with a western year"],
+    ["1988年 7月 21日", "spaces after 年 and 月"],
+    ["2 Apr 1978", "day, abbreviated month"],
+    ["15th April 1968", "ordinal day, full month"],
+    ["March 27, 1973", "month name, day, year"],
+    ["Mar. 27 1973", "abbreviation with a full stop"],
+    ["Sept 3, 1990", "Sept"],
+    ["18 jul 1961", "lower case"],
+    ["昭和63年7月21日", "a Showa year"],
+    ["平成元年1月1日", "平成 元 is year 1"],
+    ["令和元年5月1日", "令和 元 is year 1"],
+    ["S63.7.21", "the one-letter Showa form"],
+    ["h1.1.8", "the one-letter Heisei form, lower case"],
+  ])("%s is a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(true);
+  });
+
+  // A numeric form is a date in whichever order makes a real one.
+  it.each([
+    ["05/04/1991", "day first, and month first is also a real date"],
+    ["13/04/1991", "only day first is a real date"],
+    ["04/13/1991", "only month first is a real date"],
+    ["13-04-1991", "dash"],
+    ["04.13.1991", "dot, month first"],
+  ])("%s is a birth date in one of its orders (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(true);
+  });
+
+  // The era year is added to the first year of the era, so each conversion
+  // is checked at the edge it decides: the epoch, 1900 and this year.
+  it.each([
+    ["昭和45年1月2日", "昭和45 is 1970, and the day after the epoch is a date"],
+    ["明治33年1月2日", "明治33 is 1900"],
+    ["大正14年1月1日", "大正14 is 1925"],
+    [`令和${thisYear - 2018}年1月1日`, "the 令和 year that is this year"],
+    ["H1.1.8", "the Heisei form with year 1 is 1989"],
+  ])("%s is a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(true);
+  });
+
+  it.each([
+    ["明治32年12月31日", "明治32 is 1899, before 1900"],
+    ["昭和0年1月1日", "an era has no year 0"],
+    ["S0.1.1", "the one-letter form has no year 0"],
+    [`令和${thisYear - 2018 + 1}年1月1日`, "the 令和 year after this one"],
+  ])("%s is not a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
+  });
+
+  // Kanji numerals in the era and 年月日 forms: 十 is positional, and without 十
+  // the digits are read one at a time.
+  it.each([
+    ["昭和五十年十二月三日", "kanji year 50 of 昭和 is 1975"],
+    ["一九八八年七月二十一日", "a kanji western year, digit by digit"],
+    ["平成元年一月一日", "元 with a kanji month and day"],
+    ["昭和六十四年一月七日", "kanji year 64 of 昭和 is 1989"],
+    ["平成二十年一月五日", "kanji year 20 of 平成 is 2008"],
+  ])("%s is a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(true);
+  });
+
+  it.each([
+    ["昭和十年二月三十日", "no 30 February, in kanji"],
+    ["令和〇年一月一日", "year 0 is not a year"],
+    ["昭和十十年一月一日", "十十 is not a number"],
+  ])("%s is not a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
+  });
+
+  it("29 February is a date in a leap year", () => {
+    expect(isBirthDate("1992-02-29")).toBe(true);
+    expect(isBirthDate("2000-02-29")).toBe(true);
+  });
+
+  it.each([
+    ["1990-02-29", "1990 is not a leap year"],
+    ["1900-02-29", "1900 is not a leap year"],
+    ["1990-02-30", "February has no 30th"],
+    ["31 Apr 1990", "April has 30 days"],
+    ["Apr 31, 1990", "April has 30 days, month first"],
+  ])("%s is not a calendar date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
+  });
+
+  // 1970-01-01 and 1900-01-01 are the defaults a form writes, so a record with
+  // them has no date of birth. Each is tested in every form the rule can see.
+  it.each([
+    ["1970-01-01", "ISO"],
+    ["1970/1/1", "slash"],
+    ["01.01.1970", "dot, day first"],
+    ["01/01/1970", "slash, day first"],
+    ["1 Jan 1970", "English, day first"],
+    ["Jan 1, 1970", "English, month first"],
+    ["1970年1月1日", "年月日"],
+    ["昭和45年1月1日", "the same day in 昭和"],
+    ["S45.1.1", "the one-letter Showa form"],
+    ["1900-01-01", "the 1900 default"],
+    ["01/01/1900", "the 1900 default, day first"],
+    ["1900年1月1日", "年月日"],
+    ["Jan 1 1900", "English, no comma"],
+  ])("%s is a placeholder, not a birth date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
+  });
+
+  it.each([
+    ["1899-12-31", "the day before 1900"],
+    ["1850-06-01", "well before 1900"],
+  ])("%s is before the range (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
+  });
+
+  it("the first day of this year is allowed", () => {
+    expect(isBirthDate(`${thisYear}-01-01`)).toBe(true);
+  });
+
+  it.each([
+    [`${thisYear + 1}-01-01`, "next year"],
+    [`01/01/${thisYear + 1}`, "next year, day first"],
+  ])("%s is in the future (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
+  });
+
+  it.each([
+    ["", "empty"],
+    ["tomorrow", "a word"],
+    ["1990-05", "no day"],
+    ["19900506", "no separators"],
+    ["90/05/06", "a two-digit year"],
+    ["1990年5月", "no day"],
+    ["1990-13-01", "month 13"],
+    ["1990-00-10", "month 0"],
+    ["1990-05-00", "day 0"],
+    ["2024-01-15 release notes", "text after the date"],
+  ])("%s is not a date (%s)", (text) => {
+    expect(isBirthDate(text)).toBe(false);
   });
 });
