@@ -32,20 +32,30 @@ interface HookInput {
   prompt?: unknown;
 }
 
-// Depth at which a prompt stops being searched. The bound is here so a deeply
-// nested value cannot make the hook walk an arbitrary tree before every prompt.
-const MAX_PROMPT_DEPTH = 4;
+// Every string in the value, in document order. There is no depth limit: a limit
+// stopped the walk and let everything below it through unscanned. The walk uses
+// an explicit stack, so a deep value cannot overflow it, and each node is visited
+// once, so the work is linear in the size of the payload. Keys are not scanned.
+function collectStrings(value: unknown): string[] {
+  const found: string[] = [];
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === "string") {
+      found.push(current);
+    } else if (Array.isArray(current) || isObject(current)) {
+      const children = Array.isArray(current)
+        ? current
+        : Object.values(current);
+      // Pushed last to first, so the first child is the next one popped.
+      for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+    }
+  }
+  return found;
+}
 
-function collectStrings(value: unknown, depth = 0): string[] {
-  if (typeof value === "string") return [value];
-  if (depth >= MAX_PROMPT_DEPTH) return [];
-  if (Array.isArray(value))
-    return value.flatMap((item) => collectStrings(item, depth + 1));
-  if (value !== null && typeof value === "object")
-    return Object.values(value as Record<string, unknown>).flatMap((item) =>
-      collectStrings(item, depth + 1),
-    );
-  return [];
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
 }
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
@@ -197,13 +207,13 @@ async function main(): Promise<void> {
       `  ${usedTags} cannot mask prompt content.`,
       "  The following sensitive data was detected:",
       "",
-      ...findingsToLines(dedupeFindings(maskableFindings)),
+      ...findingsToLines(afterAllow),
       "",
       "  Please choose one of the following:",
       "",
       "  1. Manually redact the values above and resubmit",
       "  2. To send as-is, add an allow tag to your prompt:",
-      ...allowTagLines(maskableFindings, { indent: "       " }),
+      ...allowTagLines(afterAllow, { indent: "       " }),
       "",
     ];
     process.stderr.write(maskBlockLines.join("\n"));

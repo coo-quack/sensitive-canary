@@ -251,10 +251,10 @@ The name-based block on `.env`/`.env.*` files is a secret guard, so `[allow-secr
 
 `[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content before it is sent to the API.
 
-If you include a mask tag in your prompt, sensitive-canary shows an explanation and suggests the equivalent allow tag instead. The prompt is not sent until you resend with an allow tag or redact the value manually.
+If you include a mask tag in your prompt, sensitive-canary shows an explanation and lists the findings the prompt would be blocked for, up to fifty as a block lists them. It suggests the allow tag for each category among them, so a prompt with a secret and PII is told about both `[allow-secret]` and `[allow-pii]`, not only the one that matches the mask tag. The prompt is not sent until you resend with an allow tag or redact the values manually.
 
-| Mask tag | Suggested allow tag |
-|----------|---------------------|
+| Mask tag | Allow tag for the same category |
+|----------|---------------------------------|
 | `[mask-secret]` | `[allow-secret]` |
 | `[mask-pii]` | `[allow-pii]` |
 | `[mask-all]` | `[allow-all]` |

@@ -58,11 +58,46 @@ describe("user-prompt-submit-hook — the shapes a prompt arrives in", () => {
     expect(run(payload)).toBe(0);
   });
 
-  // The walk is bounded, so a deep value cannot make the hook chase a tree.
-  it("a prompt nested past the bound is not walked", () => {
+  it("a prompt nested eight levels deep is scanned", () => {
     let deep: unknown = `key=${AWS_KEY}`;
     for (let i = 0; i < 8; i++) deep = { next: deep };
-    expect(run({ prompt: deep })).toBe(0);
+    expect(run({ prompt: deep })).toBe(2);
+  });
+
+  // Built as text, not as a value: a 10,000-level value would take the test's
+  // own JSON.stringify and recursion past what they handle.
+  const nested = (depth: number, leaf: string) =>
+    `{"prompt":${'{"next":'.repeat(depth)}"${leaf}"${"}".repeat(depth)}}`;
+  const runRaw = (text: string) => {
+    const started = Date.now();
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", HOOK],
+      { input: text, encoding: "utf8" },
+    );
+    return {
+      code: result.status ?? -1,
+      ms: Date.now() - started,
+      stderr: result.stderr,
+    };
+  };
+
+  it("a prompt nested 10,000 levels deep is scanned", () => {
+    expect(runRaw(nested(10_000, `key=${AWS_KEY}`)).code).toBe(2);
+  });
+
+  it("a 10,000-level nesting with no secret is allowed quickly", () => {
+    const { code, ms } = runRaw(nested(10_000, "no secret here"));
+    expect(code).toBe(0);
+    expect(ms).toBeLessThan(5_000);
+  });
+
+  // A line-anchored rule sees a newline only inside a single string, so the
+  // newline has to survive the walk for this to be found.
+  it("a newline inside a string nested below four levels still anchors a rule", () => {
+    const { code, stderr } = runRaw(nested(5, "note\\npassword V9N7z2!pjcRs"));
+    expect(code).toBe(2);
+    expect(stderr).toContain("password-netrc");
   });
 });
 
@@ -299,6 +334,20 @@ describe("user-prompt-submit-hook — [mask-xxx] tags", () => {
     expect(stderr).toContain("prompt masking is not supported");
     expect(stderr).toContain("[mask-secret]");
     expect(stderr).toContain("[allow-secret]");
+  });
+
+  // The refusal lists every finding and every allow tag that would let the
+  // prompt through, not only the category the mask tag covers.
+  it("[mask-secret] with a key and an e-mail lists both and suggests both allow tags", () => {
+    const { exitCode, stderr } = runHook(
+      `[mask-secret] key ${AWS_KEY} email ada@analytical-engines.org`,
+    );
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("prompt masking is not supported");
+    expect(stderr).toContain("aws-access-key");
+    expect(stderr).toContain("pii-email");
+    expect(stderr).toContain("[allow-secret]");
+    expect(stderr).toContain("[allow-pii]");
   });
 
   it("[mask-pii] with PII shows the actual tag in message", () => {
