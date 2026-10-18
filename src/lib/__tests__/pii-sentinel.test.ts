@@ -27,7 +27,10 @@ import {
   readPiiSentinelConfig,
   trustedNssSources,
   UnsafeSocketError,
+  type Verdict,
+  verdictFindings,
 } from "../pii-sentinel.ts";
+import { redact } from "../rules.ts";
 
 const PRE_TOOL_USE = fileURLToPath(
   new URL("../../pre-tool-use-hook.ts", import.meta.url),
@@ -229,6 +232,86 @@ describe("judge", () => {
       (await judge([{ source: "a", text: "x" }], config)).unavailable,
     ).toContain("413");
   });
+
+  // The socket timeout restarts with every byte, so a server that writes one
+  // byte every 100 ms and never finishes would hold the hook for as long as it
+  // liked. timeoutMs is a total, and the call has to end near it. The server
+  // records when its response socket closes, which only happens once the
+  // client has destroyed the request, so the cut-off itself is what is checked.
+  it("a server that trickles bytes is cut off at timeoutMs in total", async () => {
+    const trickle = join(dir, "trickle.sock");
+    let serverSawClose: (at: number) => void = () => {};
+    const serverClosed = new Promise<number>((resolve) => {
+      serverSawClose = resolve;
+    });
+    const s = http.createServer((req, res) => {
+      req.resume();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const timer = setInterval(() => res.write(" "), 100);
+      res.on("close", () => {
+        clearInterval(timer);
+        serverSawClose(Date.now());
+      });
+    });
+    others.push(s);
+    await new Promise<void>((resolve) => s.listen(trickle, resolve));
+    const config = readPiiSentinelConfig({ socket: trickle, timeoutMs: 300 });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const start = Date.now();
+    const { unavailable } = await judge([{ source: "a", text: "x" }], config);
+    const rejectedAt = Date.now();
+    expect(unavailable).toContain("no answer within");
+    expect(rejectedAt - start).toBeLessThan(1_500);
+    const closedAt = await Promise.race([
+      serverClosed,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2_000)),
+    ]);
+    expect(closedAt).not.toBeNull();
+    expect((closedAt as number) - rejectedAt).toBeLessThan(1_000);
+  });
+});
+
+// The model's value reaches the block reason, which goes to the model and the
+// terminal, so it is redacted as a rule finding's value is.
+describe("verdictFindings", () => {
+  it("redacts the value a finding carries, as a rule finding's is", async () => {
+    const value = "Taro Yamada-Secret-Name";
+    answer = () => high([{ type: "person_name", value, pii: true }]);
+    const config = readPiiSentinelConfig({ socket });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const { verdicts } = await judge(
+      [{ source: "a.txt", text: MEDICAL }],
+      config,
+    );
+    const finding = verdictFindings(verdicts[0] as Verdict).find(
+      (f) => f.description === "person name",
+    );
+    expect(finding?.matchRedacted).toBe(redact(value));
+    expect(finding?.matchRedacted).toBe("Ta****me");
+    expect(finding?.matchRedacted).not.toContain(value);
+  });
+
+  // The type is written into the block reason as a finding's description, so a
+  // type that is text rather than a name is replaced.
+  it("does not write a type that is text into the description", async () => {
+    const type = "password hunter2secret and a long note about the file here!!";
+    expect(type.length).toBe(60);
+    answer = () =>
+      high([{ type, value: "Taro Yamada-Secret-Name", pii: true }]);
+    const config = readPiiSentinelConfig({ socket });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const { verdicts } = await judge(
+      [{ source: "a.txt", text: MEDICAL }],
+      config,
+    );
+    const finding = verdictFindings(verdicts[0] as Verdict).at(-1);
+    expect(finding?.description).toBe("finding");
+    expect(finding?.description).not.toContain(type);
+    expect(finding?.description).not.toContain("hunter2secret");
+  });
 });
 
 describe("socket checks", () => {
@@ -349,6 +432,17 @@ describe("PreToolUse hook with pii-sentinel", () => {
     );
     expect(result.stderr).toContain("[allow-pii]");
     expect(received.map((r) => r.text)).toEqual([MEDICAL]);
+  });
+
+  it("does not write a finding's full value to the block reason", async () => {
+    const value = "Taro Yamada-Secret-Name";
+    answer = () => high([{ type: "person_name", value, pii: true }]);
+    const env = { SENSITIVE_CANARY_CONFIG: writeConfig("c8.json", { socket }) };
+    const result = await readFile(file, env);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("person name");
+    expect(result.stderr).toContain(redact(value));
+    expect(result.stderr).not.toContain(value);
   });
 
   it("allows a file below blockOn", async () => {

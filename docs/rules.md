@@ -194,7 +194,7 @@ A rule that needs an unbounded repeat should say why in its `description`, and s
 
 What the bounds cost, stated rather than implied:
 
-- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_]` characters in an unbroken run before the `@`. Every other character the local part allows — `.`, `%`, `+`, `-` — is a non-word character, so the word boundary restarts at it and a long address containing one is still found (measured: 65 letters is missed, 65 with a `%` in the middle is not); 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost.
+- **`pii-email`**: an address with 65 or more `[A-Za-z0-9_]` characters in an unbroken run before the `@`. Every other character the local part allows — `.`, `%`, `+`, `-` — is a non-word character, so the word boundary restarts at it and a long address containing one is still found (measured: 65 letters is missed, 65 with a `%` in the middle is not); 64 is RFC 5321's limit for the whole local part, so no deliverable address is lost. The exemption for an address after `ssh`, `scp`, `rsync` or `sftp` is bounded too: it covers at most two arguments between the command and the address, each up to 64 characters, with runs of up to 16 spaces or tabs between them. An address after a longer argument, or after 17 or more spaces, is a finding (measured: 16 spaces exempt, 17 found; 64 characters exempt, 65 found).
 - **`env-assignment`**: a name with 65 or more capitals in a run on either side of the keyword — `AAA…SECRET=` and `SECRET…AAA=` alike. `_` is a word character, so `A×65_SECRET=` is lost too, since the boundary does not restart at the underscore.
 - **`connection-string`**: a user or a password longer than 1024 characters.
 
@@ -251,10 +251,10 @@ The name-based block on `.env`/`.env.*` files is a secret guard, so `[allow-secr
 
 `[mask-secret]`, `[mask-pii]`, and `[mask-all]` are recognised but **not supported**. Claude Code hooks cannot rewrite prompt content before it is sent to the API.
 
-If you include a mask tag in your prompt, sensitive-canary shows an explanation and suggests the equivalent allow tag instead. The prompt is not sent until you resend with an allow tag or redact the value manually.
+If you include a mask tag in your prompt, sensitive-canary shows an explanation and lists the findings the prompt would be blocked for, up to fifty as a block lists them. It suggests the allow tag for each category among them, so a prompt with a secret and PII is told about both `[allow-secret]` and `[allow-pii]`, not only the one that matches the mask tag. The prompt is not sent until you resend with an allow tag or redact the values manually.
 
-| Mask tag | Suggested allow tag |
-|----------|---------------------|
+| Mask tag | Allow tag for the same category |
+|----------|---------------------------------|
 | `[mask-secret]` | `[allow-secret]` |
 | `[mask-pii]` | `[allow-pii]` |
 | `[mask-all]` | `[allow-all]` |
@@ -302,6 +302,10 @@ Values are comma-separated and case-insensitive. Unset, empty, or containing no 
 
 Files that end in `.env` but don't start with a dot (e.g. `production.env`) are handled by content scanning rather than name-based blocking.
 
+The name is compared without regard to case, so `.ENV` and `.Env.local` are blocked too. A symbolic link is judged by its own name and by the name of the file it points to, so a link named `notes.txt` that points to `.env` is blocked when it is read. The template names are exempt in any case, and a link to one is exempt by that name.
+
+Commands that copy, move, link or archive a file (`cp`, `mv`, `ln`, `install`, `rsync`, `tar -c` (and `bsdtar`, `gtar`) and `zip`) read their sources, so `cp .env backup.txt` is blocked on the name of `.env`. The same holds for a directory named as a source: `cp -r . backup` and `tar -czf b.tgz .` are blocked when a `.env` sits directly in it, as a read of that directory is. `tar -T FILE` and `rsync --files-from=FILE` read the names in FILE as sources, and `tar -C DIR` makes the names after it relative to DIR. `tar -x` reads none of its operands.
+
 `[allow-secret]` and `[allow-all]` lift the name-based block; `[allow-pii]` does not, since the block is a secret-category finding. Lifting the name block is not a pass: the contents are still scanned, and a tag only removes findings of the category it names. A file exempted by `[allow-secret]` is still blocked for an email address in it.
 
 ## Bash Command Scanning
@@ -310,7 +314,7 @@ When Claude uses the `Bash` tool, sensitive-canary checks three things:
 
 1. **Environment variables** — any `$VAR` or `${VAR}` references in the command are looked up in the current environment; if their values contain secrets or PII, the command is blocked.
 2. **Command string** — the raw command is scanned, which catches a secret written inline (`echo ghp_…`, `curl -H "Authorization: Bearer …"`).
-3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
+3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Copying, moving, linking and archiving commands (`cp`, `mv`, `ln`, `install`, `rsync`, `tar -c`, `bsdtar`, `gtar`, `zip`) read their sources, which are every operand but the destination, and the files named in a `tar -T` or `rsync --files-from` list. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
 
 ### Ways a rule goes quiet without saying so
 

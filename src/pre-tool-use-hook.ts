@@ -5,8 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractCommandRefs } from "./lib/bash-commands.ts";
-import type { CommandRefs } from "./lib/command-tables.ts";
-import { detectUtf16, looksBinary, utf8Runs } from "./lib/encoding.ts";
+import type { CommandRefs, ListedFiles } from "./lib/command-tables.ts";
+import {
+  detectUtf16,
+  looksBinary,
+  utf8Runs,
+  utf16GuessRuns,
+} from "./lib/encoding.ts";
 import { blockOnUnhandledError, failClosed } from "./lib/fail-closed.ts";
 import {
   allowTagLines,
@@ -179,20 +184,48 @@ const ENV_TEMPLATE_SUFFIXES = [
   ".defaults",
 ];
 
-// Any `.env` name, template or not.
+// Any `.env` name, template or not. The comparison ignores case, since a
+// case-insensitive file system opens `.ENV` when asked for `.env`.
 function isEnvName(filePath: string): boolean {
   if (!filePath) return false;
-  const base = path.basename(filePath);
+  const base = path.basename(filePath).toLowerCase();
   return base === ".env" || base.startsWith(".env.");
 }
 
-// The same names, minus the templates. Stated in terms of `isEnvName` rather
-// than repeating the test: the two answered the question separately, so a change
-// to one silently disagreed with the other.
-function isBlockedEnvFile(filePath: string): boolean {
+// The file a path resolves to through symbolic links, or the path itself when it
+// does not resolve. `realpathSync` walks the components of the path and never
+// opens the file, so a FIFO or a device at the end of a link is not read here,
+// which is the hang `isRegularFile` guards against. A dangling link, a loop or a
+// file that is gone throws; the given path stands, and there is nothing behind
+// it to leak.
+function resolvedPath(filePath: string): string {
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return filePath;
+  }
+}
+
+// Whether a path is an `.env` name as given, or as the file it links to.
+// `ln -s .env notes.txt` names the secret under another name, and the name guard
+// reads names, so the target's name is asked as well.
+function isEnvNameOrTarget(filePath: string): boolean {
+  return isEnvName(filePath) || isEnvName(resolvedPath(filePath));
+}
+
+// The same names, minus the templates, for one name.
+function isBlockedEnvName(filePath: string): boolean {
   if (!isEnvName(filePath)) return false;
-  const base = path.basename(filePath);
+  const base = path.basename(filePath).toLowerCase();
   return !ENV_TEMPLATE_SUFFIXES.some((suffix) => base.endsWith(suffix));
+}
+
+// Blocked when either the path as given or the file it links to is a `.env` that
+// is not a template. A link named `.env.example` pointing at `.env` is blocked by
+// the target; a link named `notes.txt` pointing at `.env.example` is exempt, as
+// the template it is.
+function isBlockedEnvFile(filePath: string): boolean {
+  return isBlockedEnvName(filePath) || isBlockedEnvName(resolvedPath(filePath));
 }
 
 // The .env name-based block is a secret guard: it only applies while the
@@ -464,11 +497,11 @@ function filesDirectlyUnder(candidate: string): string[] {
         .filter((entry) => entry.isFile())
         .slice(0, MAX_GLOB_MATCHES)
         .map((entry) => path.join(candidate, entry.name))
-        // An `.env` is kept whatever its bytes look like, because `scanFile`
-        // judges it on its name when the contents cannot speak for it. Dropping
-        // it here runs first, so a binary-looking one would never reach that
-        // guard — and eight bytes of NUL are all it takes to look binary.
-        .filter((file) => isEnvName(file) || !looksBinary(file))
+        // An `.env`, or a link to one, is kept whatever its bytes look like,
+        // because `scanFile` judges it on its name when the contents cannot speak
+        // for it. Dropping it here runs first, so a binary-looking one would never
+        // reach that guard — and eight bytes of NUL are all it takes to look binary.
+        .filter((file) => isEnvNameOrTarget(file) || !looksBinary(file))
     );
   } catch {
     // Not a directory, or not readable.
@@ -537,7 +570,7 @@ function blockUnreadEnvFile(
   allowTags: Set<string>,
   reason: string = UNREAD_ENV_REASON,
 ): void {
-  if (!isEnvName(filePath) || !ENABLED_CATEGORIES.has("secret")) return;
+  if (!isEnvNameOrTarget(filePath) || !ENABLED_CATEGORIES.has("secret")) return;
   // A path that names nothing has nothing to leak. `cat .env.example` in a
   // checkout without one is an ordinary command, and the plain `.env` guard
   // above already decides the names that are blocked whether they exist or not.
@@ -609,6 +642,46 @@ function scanPathsLiteralsFirst(
   }
   for (const candidate of patterns) {
     for (const p of expandCandidate(candidate)) scanOne(p);
+  }
+}
+
+// The names in the lists a command reads (`tar -T`, `rsync --files-from`): each
+// line of a list is a source, resolved against each of the list's directories.
+// The list is read the way a file is read: a regular file only, and only its head,
+// so a FIFO is not opened and a long list cannot hold the hook past its timeout.
+// A list that cannot be read names nothing; the list itself is scanned as a file
+// all the same.
+function listedSources(lists: ListedFiles[]): string[] {
+  const names: string[] = [];
+  for (const list of lists) {
+    for (const listPath of expandCandidate(list.file)) {
+      const text = readListHead(listPath);
+      if (text === null) continue;
+      for (const line of text.split(/\r?\n/)) {
+        if (line === "") continue;
+        for (const dir of list.dirs) {
+          names.push(
+            path.isAbsolute(line) || dir === "" ? line : path.join(dir, line),
+          );
+        }
+      }
+    }
+  }
+  return names;
+}
+
+function readListHead(listPath: string): string | null {
+  if (!isRegularFile(listPath)) return null;
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(listPath, "r");
+    const buf = Buffer.alloc(MAX_FILE_SCAN_BYTES);
+    const read = fs.readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, read).toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
@@ -713,6 +786,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       }
       if (tailUtf16 === null || !tailUtf16.fromBom)
         windows.push(utf8Runs(tail));
+      if (tailUtf16 === null) windows.push(...utf16GuessRuns(tail));
       tailContent = windows.join("\n");
     }
     // UTF-16 puts a NUL in every other byte, so the rule below stopped after one
@@ -735,7 +809,10 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     const hitTheCut = raw.length >= MAX_FILE_SCAN_BYTES;
     if (utf16 === null) {
       readWasPartial = raw.indexOf(0) !== -1 || hitTheCut;
-      content = utf8Runs(raw);
+      // A file whose sample held too few NULs to decide is read as UTF-16 too,
+      // in both byte orders, since its first 16 KiB may be Japanese with the
+      // NULs further on. The UTF-8 reading stays the primary one.
+      content = [utf8Runs(raw), ...utf16GuessRuns(raw)].join("\n");
     } else {
       const text = utf16.bytes.toString("utf16le").replace(/^\uFEFF/, "");
       const nul = text.indexOf("\0");
@@ -760,7 +837,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   // When the read is partial, the name is what is left to decide on.
   if (
     readWasPartial &&
-    isEnvName(filePath) &&
+    isEnvNameOrTarget(filePath) &&
     ENABLED_CATEGORIES.has("secret") &&
     !allowTags.has("secret") &&
     !allowTags.has("all")
@@ -994,7 +1071,10 @@ async function main(): Promise<void> {
       allowTags,
     );
 
-    scanPathsLiteralsFirst(refs.paths, allowTags);
+    scanPathsLiteralsFirst(
+      [...refs.paths, ...listedSources(refs.lists)],
+      allowTags,
+    );
     // `rg PATTERN` and `grep -r PATTERN` name nothing and print from the working
     // directory. Judged on names alone, for the reason set out where the same
     // thing is done for the search tools.
@@ -1032,7 +1112,13 @@ async function main(): Promise<void> {
       // command in it this can classify, and the path is a quoted literal — the
       // same shape inline `-c` text is read for.
       refs.paths.push(...extractQuotedLiterals(value));
-      scanPathsLiteralsFirst(refs.paths, allowTags, { onlyExisting: true });
+      scanPathsLiteralsFirst(
+        [...refs.paths, ...listedSources(refs.lists)],
+        allowTags,
+        {
+          onlyExisting: true,
+        },
+      );
 
       // Code reaches the environment in its own language:
       // `print(os.environ)` prints every value as `env` does.

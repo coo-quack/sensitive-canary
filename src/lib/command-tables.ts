@@ -159,6 +159,33 @@ export const WRITE_TARGET_FLAGS: Record<string, Set<string>> = {
   iconv: new Set(["-o", "--output"]),
 };
 
+// Commands that copy, move or link files: every non-flag operand but the last is
+// a source, and the last is where the result goes. A source is read as far as
+// the name guard is concerned, since the copy is a file under a name the guard
+// has not seen. `install -d` creates directories and reads none of its operands;
+// they are still counted as sources, which can only block a command that would
+// have been allowed.
+export const COPY_COMMANDS = new Set(["cp", "mv", "ln", "install", "rsync"]);
+
+// Copy commands whose `-t DIR` / `--target-directory DIR` names the destination
+// instead of the last operand, so every operand is a source: `cp -t out .env`.
+export const TARGET_DIRECTORY_COMMANDS = new Set(["cp", "mv", "ln", "install"]);
+
+// Commands that write an archive from the operands after its name. `zip` takes
+// the archive name as its first operand. The tar family names it with `-f`, and
+// creates an archive with `-c`; which of these is a read is settled in
+// bash-commands.ts, where the operands are read.
+export const ARCHIVE_WRITING_COMMANDS = new Set([
+  "bsdtar",
+  "gtar",
+  "tar",
+  "zip",
+]);
+
+// The tar family: BSD tar and GNU tar take the same options, so one spelling
+// decides both.
+export const TAR_COMMANDS = new Set(["bsdtar", "gtar", "tar"]);
+
 // Interpreters whose file operands are input to a one-liner given inline:
 // `perl -pe 's/a/b/' f` and `ruby -pe '…' f` print f. Hand them a program file
 // instead and the operands are argv — `perl script.pl data.txt` prints neither —
@@ -388,6 +415,19 @@ export interface CommandRefs {
   // names nothing, so there is no operand to collect and the whole tree it
   // prints from went unscanned.
   searchesWorkingDirectory: boolean;
+  // Files a copy or an archive is told to read by a list (`tar -T`,
+  // `rsync --files-from`). The hook reads each list and takes the names in it as
+  // sources, resolved against each of `dirs`.
+  lists: ListedFiles[];
+}
+
+// A file that names other files, one per line, and the directories its names are
+// resolved against: the directory a `tar -C` had in force when the list was
+// named, or for rsync the current directory and each source. `file` is the list
+// itself, as written and joined with its directory.
+export interface ListedFiles {
+  file: string;
+  dirs: string[];
 }
 
 // Searchers that walk the working directory when handed no path. The `grep`
@@ -429,6 +469,7 @@ export function mergeRefs(into: CommandRefs, refs: CommandRefs): void {
   into.dumpsEnvironment = into.dumpsEnvironment || refs.dumpsEnvironment;
   into.searchesWorkingDirectory =
     into.searchesWorkingDirectory || refs.searchesWorkingDirectory;
+  into.lists.push(...refs.lists);
 }
 
 // What this hook knows about how a command treats its operands.
@@ -443,6 +484,10 @@ export interface CommandBehaviour {
   inlineCodeReadsOperands: boolean;
   // Reads a file but prints only a measurement of it, and does not echo stdin.
   printsNoFileContents: boolean;
+  // Every operand but the last is a source file, read by a copy.
+  copiesOperands: boolean;
+  // The operands after an archive's name are files written into it.
+  writesArchive: boolean;
   // `git <subcommand> [paths]`.
   isGit: boolean;
   // `dd if=<file>` names its input in an assignment-style operand.
@@ -476,6 +521,8 @@ export function classifyCommand(cmd: string): CommandBehaviour {
     takesInlineCode: INLINE_CODE_COMMANDS.has(cmd),
     inlineCodeReadsOperands: INLINE_CODE_READS_OPERANDS.has(cmd),
     printsNoFileContents: COUNT_ONLY_COMMANDS.has(cmd),
+    copiesOperands: COPY_COMMANDS.has(cmd),
+    writesArchive: ARCHIVE_WRITING_COMMANDS.has(cmd),
     isGit: cmd === "git",
     isDd: cmd === "dd",
   };

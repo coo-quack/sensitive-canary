@@ -17,7 +17,7 @@ import http from "node:http";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import type { Finding } from "./rules.ts";
-import { userConfigFromCache } from "./rules.ts";
+import { redact, userConfigFromCache } from "./rules.ts";
 
 export type Level = "none" | "low" | "high";
 
@@ -118,7 +118,14 @@ function post(
   timeoutMs: number,
 ): Promise<unknown> {
   const body = Buffer.from(JSON.stringify({ text, rules: false }));
+  const timeoutError = () => new Error(`no answer within ${timeoutMs} ms`);
   return new Promise((resolve, reject) => {
+    // Every way out of the request goes through here, so the wall-clock timer
+    // below is cleared once the promise has settled.
+    const settle = (action: () => void): void => {
+      clearTimeout(deadline);
+      action();
+    };
     const req = http.request(
       {
         socketPath: config.socket,
@@ -135,27 +142,36 @@ function post(
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
-          if (res.statusCode !== 200) {
-            reject(
-              new Error(`answered ${res.statusCode}: ${text.slice(0, 200)}`),
-            );
-            return;
-          }
-          try {
-            resolve(JSON.parse(text));
-          } catch {
-            reject(new Error("answered with something that is not JSON"));
-          }
-        });
-        res.on("error", reject);
+        res.on("end", () =>
+          settle(() => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            if (res.statusCode !== 200) {
+              reject(
+                new Error(`answered ${res.statusCode}: ${text.slice(0, 200)}`),
+              );
+              return;
+            }
+            try {
+              resolve(JSON.parse(text));
+            } catch {
+              reject(new Error("answered with something that is not JSON"));
+            }
+          }),
+        );
+        res.on("error", (e) => settle(() => reject(e)));
       },
     );
-    req.on("timeout", () =>
-      req.destroy(new Error(`no answer within ${timeoutMs} ms`)),
-    );
-    req.on("error", reject);
+    // The socket timeout below restarts with every byte, so a server that
+    // trickles one out never trips it. The timer is the limit on the whole
+    // post: it rejects, and it destroys the request so the socket is closed.
+    req.on("timeout", () => req.destroy(timeoutError()));
+    req.on("error", (e) => settle(() => reject(e)));
+    const deadline = setTimeout(() => {
+      const err = timeoutError();
+      settle(() => reject(err));
+      req.destroy(err);
+    }, timeoutMs);
+    deadline.unref();
     req.end(body);
   });
 }
@@ -432,6 +448,11 @@ async function userdbIsPrivate(
   return true;
 }
 
+// A finding's type is written into the block reason, so it is kept only when it
+// is a short identifier. Anything else is a server putting text where a name
+// goes, and the block reason says "finding" in its place.
+const FINDING_TYPE = /^[a-z0-9_]{1,40}$/i;
+
 function toVerdict(source: string, report: unknown): Verdict {
   const r = report as {
     sensitivity?: { level?: unknown };
@@ -454,7 +475,10 @@ function toVerdict(source: string, report: unknown): Verdict {
             typeof f?.type === "string" && typeof f?.value === "string",
         )
         .filter((f) => f.pii !== false)
-        .map(({ type, value }) => ({ type, value }))
+        .map(({ type, value }) => ({
+          type: FINDING_TYPE.test(type) ? type : "finding",
+          value,
+        }))
     : [];
   return { source, level, categories, findings };
 }
@@ -530,7 +554,9 @@ export function verdictFindings(verdict: Verdict): Finding[] {
       ruleId: "pii-sentinel",
       description: f.type.replaceAll("_", " "),
       category: "pii" as const,
-      matchRedacted: f.value,
+      // Redacted as a rule finding's value is: the block reason reaches the model
+      // and the terminal, and the file or prompt it names was never read.
+      matchRedacted: redact(f.value),
       secretValue: `pii-sentinel:${verdict.source}:${f.type}:${f.value}`,
     })),
   ];

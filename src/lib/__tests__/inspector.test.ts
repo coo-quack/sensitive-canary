@@ -11,6 +11,7 @@ import {
   findingsToLines,
   MAX_FINDING_LINES,
   resolveTagPriority,
+  userTypedText,
 } from "../inspector.ts";
 
 // ── resolveTagPriority ────────────────────────────────────────────────────────
@@ -340,5 +341,75 @@ describe("how many findings are printed", () => {
     const lines = linesFor(MAX_FINDING_LINES + 4_000);
     expect(lines).toHaveLength(MAX_FINDING_LINES + 1);
     expect(lines[lines.length - 1]).toBe("  … and 4000 more");
+  });
+});
+
+// ── userTypedText ─────────────────────────────────────────────────────────────
+
+// What is left of a message once quoted spans are gone, with runs of white
+// space collapsed so the assertions do not depend on how many spaces a cut left.
+const typed = (content: string): string =>
+  userTypedText({ role: "user", content }).replace(/\s+/g, " ").trim();
+
+describe("userTypedText", () => {
+  it("removes a paired synthetic element", () => {
+    expect(typed("keep <command-name>/x</command-name> this")).toBe(
+      "keep this",
+    );
+  });
+
+  it("an unclosed synthetic element takes the rest of the message", () => {
+    expect(typed("keep <command-name>/x and [allow-all] y")).toBe("keep");
+  });
+
+  it("removes a paired fence", () => {
+    expect(typed("a ```\n[allow-all]\n``` b")).toBe("a b");
+  });
+
+  it("an unclosed fence takes the rest of the message", () => {
+    expect(typed("a ```\n[allow-all] y")).toBe("a");
+  });
+
+  it("backticks around one word are not a fence", () => {
+    expect(typed("use `[allow-secret]` here")).toBe(
+      "use `[allow-secret]` here",
+    );
+  });
+
+  // Each unclosed tag or fence has to be read in one pass over the text. The
+  // budget is far above that pass and far below the time a quadratic one takes.
+  it("20,000 unclosed <command-name> tags are read in under 100 ms", () => {
+    const content = "<command-name>".repeat(20_000);
+    const start = performance.now();
+    expect(typed(content)).toBe("");
+    expect(performance.now() - start).toBeLessThan(100);
+  });
+
+  // The fence closes on a marker that starts at least three characters after
+  // its opener. Six backticks are an empty fence, since the second marker starts
+  // exactly three after the first; four are an opener that cannot close, since
+  // the second would overlap it, so the rest of the message goes.
+  it("six backticks in a row are an empty fence, and their markers are gone", () => {
+    expect(typed("a ``````  b")).toBe("a b");
+  });
+
+  it("four backticks in a row are not a closed fence, and the rest goes", () => {
+    expect(typed("a ````b")).toBe("a");
+  });
+
+  it("20,000 unclosed fence markers are read in under 100 ms", () => {
+    const content = "```".repeat(20_000);
+    const start = performance.now();
+    expect(typed(content)).toBe("");
+    expect(performance.now() - start).toBeLessThan(100);
+  });
+
+  // The element is cut first, so the fence that opens inside it does not get
+  // to end at the marker that is inside it. Only the marker before the element
+  // is left, and it is unclosed, so the rest of the message goes with it.
+  it("an element opened inside a fence and closed after it wins: the fence sees only the markers outside it", () => {
+    const content =
+      "```\nnote <command-name>\n```\n[allow-all] read</command-name> now";
+    expect(typed(content)).toBe("");
   });
 });

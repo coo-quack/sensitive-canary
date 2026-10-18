@@ -21,29 +21,41 @@ import fs from "node:fs";
 // guesses and the caller scans the bytes both ways rather than betting on it.
 export type Utf16Reading = { bytes: Buffer; fromBom: boolean };
 
-export function detectUtf16(raw: Buffer): Utf16Reading | null {
-  if (raw.length < 4) return null;
-  // Swapping is done on a copy: `raw` is a view into the shared read buffer.
-  const swapped = (): Buffer =>
-    Buffer.from(raw)
-      .subarray(0, raw.length & ~1)
-      .swap16();
-  if (raw[0] === 0xff && raw[1] === 0xfe) return { bytes: raw, fromBom: true };
-  if (raw[0] === 0xfe && raw[1] === 0xff)
-    return { bytes: swapped(), fromBom: true };
+// Several, not one: a single stray NUL is not an encoding.
+const MINIMUM_NULS = 8;
 
-  // Far enough in to reach a newline or a space. Five hundred pairs of Japanese
-  // carry no zero byte at all, and that prefix decided the whole file.
-  const pairs = Math.min(raw.length >> 1, 8192);
+// Far enough in to reach a newline or a space. Five hundred pairs of Japanese
+// carry no zero byte at all, and that prefix decided the whole file.
+const SAMPLE_PAIRS = 8192;
+
+// Swapping is done on a copy: `raw` is a view into the shared read buffer.
+function swapBytePairs(raw: Buffer): Buffer {
+  return Buffer.from(raw)
+    .subarray(0, raw.length & ~1)
+    .swap16();
+}
+
+// The NULs in the first sample of the pairs, counted on each side of the pair.
+function sampleNuls(raw: Buffer): { evenNuls: number; oddNuls: number } {
+  const pairs = Math.min(raw.length >> 1, SAMPLE_PAIRS);
   let evenNuls = 0;
   let oddNuls = 0;
   for (let i = 0; i < pairs; i++) {
     if (raw[i * 2] === 0) evenNuls++;
     if (raw[i * 2 + 1] === 0) oddNuls++;
   }
-  // Several, not one: a single stray NUL is not an encoding.
-  const MINIMUM_NULS = 8;
+  return { evenNuls, oddNuls };
+}
+
+export function detectUtf16(raw: Buffer): Utf16Reading | null {
+  if (raw.length < 4) return null;
+  if (raw[0] === 0xff && raw[1] === 0xfe) return { bytes: raw, fromBom: true };
+  if (raw[0] === 0xfe && raw[1] === 0xff)
+    return { bytes: swapBytePairs(raw), fromBom: true };
+
+  const { evenNuls, oddNuls } = sampleNuls(raw);
   if (Math.max(evenNuls, oddNuls) < MINIMUM_NULS) return null;
+  const swapped = swapBytePairs(raw);
 
   // How much the minority side holds is not asked. Characters in the U+xx00
   // rows put a NUL on that side, and Japanese is full of them — `一` is U+4E00,
@@ -56,11 +68,43 @@ export function detectUtf16(raw: Buffer): Utf16Reading | null {
   // Which side leads picks the order the two byte orders are tried in, not
   // whether they are tried.
   const orderings: Buffer[] =
-    oddNuls >= evenNuls ? [raw, swapped()] : [swapped(), raw];
+    oddNuls >= evenNuls ? [raw, swapped] : [swapped, raw];
   for (const candidate of orderings) {
     if (readsAsText(candidate)) return { bytes: candidate, fromBom: false };
   }
   return null;
+}
+
+// The UTF-16 readings, for the ones that read as text, of a file that
+// `detectUtf16` gave no verdict on because its first 16 KiB holds fewer than
+// eight NULs. Both byte orders are returned, since the sample cannot say which
+// one the file is in. Empty unless some NUL is present in the bytes read: the
+// first 16 KiB of a UTF-16LE file of Japanese can hold none, and the NULs of a
+// credential after that prefix are what show it is UTF-16. The caller
+// reads these alongside the UTF-8 reading, which stays the primary one, since a
+// stray NUL is not an encoding.
+function utf16Guesses(raw: Buffer): Buffer[] {
+  if (raw.length < 4 || raw.indexOf(0) === -1) return [];
+  const { evenNuls, oddNuls } = sampleNuls(raw);
+  if (Math.max(evenNuls, oddNuls) >= MINIMUM_NULS) return [];
+  return [raw, swapBytePairs(raw)].filter(readsAsText);
+}
+
+// The UTF-16 readings of an undecided file, as text: one entry per byte order that
+// reads as text, each with its NULs made line breaks, as `utf8Runs` does for
+// UTF-8. Empty when `utf16Guesses` has none.
+export function utf16GuessRuns(raw: Buffer): string[] {
+  return utf16Guesses(raw).map(utf16Runs);
+}
+
+// Text of UTF-16LE bytes with each NUL made a line break, as `utf8Runs` does for
+// UTF-8, so no rule matches across two unrelated runs.
+function utf16Runs(bytes: Buffer): string {
+  return bytes
+    .toString("utf16le")
+    .replace(/^\uFEFF/, "")
+    .split("\0")
+    .join("\n");
 }
 
 // Whether the runs of text between the NUL bytes read as something someone
