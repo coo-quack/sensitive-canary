@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { isBirthDate } from "../birth-date.ts";
 import {
   hasAwsSecretShape,
   isBasicCredentials,
-  isBirthDate,
   isIban,
   isIntlPhone,
   isNinoUk,

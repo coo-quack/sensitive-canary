@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { normaliseLabel, scanColumns } from "./columns.ts";
 import {
   entropy,
   isNotSecretShaped,
@@ -258,6 +259,12 @@ function validateRuleConfig(rc: unknown): asserts rc is RuleConfig {
     ) {
       throw new Error('"columnLabels" must be an array of non-empty strings');
     }
+  }
+  if (
+    Array.isArray(columnLabels) &&
+    columnLabels.some((w) => normaliseLabel(String(w)) === "")
+  ) {
+    throw new Error('"columnLabels" entries must not be blank');
   }
   if (
     cellRegex != null &&
@@ -532,192 +539,6 @@ export function scan(
   );
 }
 
-// ── Column-aware detection ───────────────────────────────────────────────────
-// A label in a table header has its value in the rows under it, and no regex
-// reads across a line to reach that. These functions read the table: a header
-// names a column, and the cell at that column in each following row is the
-// value. Every line is split once, and every SQL tuple is read once, so the
-// pass is linear in the text.
-
-type RowDelimiter = "|" | "\t" | ",";
-
-interface Row {
-  delimiter: RowDelimiter;
-  cells: string[];
-}
-
-// One layer of surrounding quotes or backticks, as a cell or a label may carry.
-function unquote(text: string): string {
-  if (text.length >= 2) {
-    const first = text[0];
-    if (
-      first === text[text.length - 1] &&
-      (first === '"' || first === "'" || first === "`")
-    )
-      return text.slice(1, -1);
-  }
-  return text;
-}
-
-// A header name or a label, compared in one form: unquoted, lower case, with
-// runs of spaces, underscores and hyphens as one space, and no trailing full
-// stop or colon.
-function normaliseLabel(raw: string): string {
-  return unquote(raw.trim())
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_-]+/g, " ")
-    .replace(/[.:：]$/, "")
-    .trim();
-}
-
-// The value in a cell: trimmed, with one layer of quotes removed.
-function cellValue(raw: string): string {
-  return unquote(raw.trim()).trim();
-}
-
-// Splits a CSV line on commas outside double quotes. The cells keep their
-// quotes; cellValue removes them.
-function splitCsv(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
-  let quoted = false;
-  for (const ch of line) {
-    if (ch === '"') quoted = !quoted;
-    if (ch === "," && !quoted) {
-      cells.push(current);
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  cells.push(current);
-  return cells;
-}
-
-// A Markdown separator cell is dashes, colons and spaces, with at least one dash.
-function isSeparatorCell(cell: string): boolean {
-  let dash = false;
-  for (const ch of cell) {
-    if (ch === "-") dash = true;
-    else if (ch !== ":" && ch !== " " && ch !== "\t") return false;
-  }
-  return dash;
-}
-
-// The cells of a line that is a row, or undefined. A line is a Markdown row
-// with at least two pipes, a TSV row with a tab, or a CSV row with a comma, and
-// the first of those that fits is the delimiter.
-function splitRow(line: string): Row | undefined {
-  if (line.split("|").length - 1 >= 2) {
-    const cells = line.split("|");
-    if (line.trimStart().startsWith("|")) cells.shift();
-    if (line.trimEnd().endsWith("|")) cells.pop();
-    return { delimiter: "|", cells };
-  }
-  if (line.includes("\t")) return { delimiter: "\t", cells: line.split("\t") };
-  if (line.includes(",")) return { delimiter: ",", cells: splitCsv(line) };
-  return undefined;
-}
-
-// Splits the tuple of a SQL INSERT on commas outside single quotes.
-function splitSqlValues(tuple: string): string[] {
-  const values: string[] = [];
-  let current = "";
-  let quoted = false;
-  for (const ch of tuple) {
-    if (ch === "'") quoted = !quoted;
-    if (ch === "," && !quoted) {
-      values.push(current);
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  values.push(current);
-  return values;
-}
-
-// `INSERT INTO name (columns) VALUES`. The column list stops at the next
-// parenthesis, which a column name never contains, so every start reads a short
-// run and the scan stays linear. The tuples are read by SQL_TUPLE.
-const SQL_INSERT =
-  /\binsert\s+into\s+[\w."`\[\]]+\s*\(([^()]{0,2000})\)\s*values\s*/gi;
-// One tuple of values, and the comma or space that may follow it.
-const SQL_TUPLE = /\s*\(([^)]{0,4000})\)\s*,?/y;
-
-function scanColumns(text: string, rule: Rule): Finding[] {
-  const labels = rule.columnLabels;
-  const cellRegex = rule.cellRegex;
-  if (!labels || !cellRegex) return [];
-  const findings: Finding[] = [];
-  const emit = (raw: string): void => {
-    const cell = cellValue(raw);
-    if (!cellRegex.test(cell)) return;
-    if (rule.validate != null && !rule.validate(cell)) return;
-    findings.push({
-      ruleId: rule.id,
-      description: rule.description,
-      category: rule.category,
-      matchRedacted: redact(cell),
-      secretValue: cell,
-      score: 1.0,
-    });
-  };
-
-  // Delimited rows. A header that names a column starts a table, and the table
-  // ends at the first line that is not a row with the same delimiter.
-  const lines = text.split("\n");
-  let i = 0;
-  while (i < lines.length) {
-    const header = splitRow(lines[i] ?? "");
-    const indices = header
-      ? header.cells.flatMap((cell, k) =>
-          labels.has(normaliseLabel(cell)) ? [k] : [],
-        )
-      : [];
-    if (!header || indices.length === 0) {
-      i++;
-      continue;
-    }
-    let j = i + 1;
-    while (j < lines.length) {
-      const row = splitRow(lines[j] ?? "");
-      if (!row || row.delimiter !== header.delimiter) break;
-      j++;
-      if (row.delimiter === "|" && row.cells.every(isSeparatorCell)) continue;
-      for (const k of indices) {
-        const raw = row.cells[k];
-        if (raw !== undefined) emit(raw);
-      }
-    }
-    i = j;
-  }
-
-  // SQL INSERT column lists, read against the tuples that follow them.
-  for (const insert of text.matchAll(SQL_INSERT)) {
-    const indices = (insert[1] ?? "").split(",").flatMap((name, k) => {
-      const bare = /^[["'`](.*)[\]"'`]$/su.exec(name.trim());
-      return labels.has(normaliseLabel(bare?.[1] ?? name)) ? [k] : [];
-    });
-    if (indices.length === 0) continue;
-    let pos = (insert.index ?? 0) + insert[0].length;
-    for (;;) {
-      SQL_TUPLE.lastIndex = pos;
-      const tuple = SQL_TUPLE.exec(text);
-      if (!tuple) break;
-      const values = splitSqlValues(tuple[1] ?? "");
-      for (const k of indices) {
-        const raw = values[k];
-        if (raw !== undefined) emit(raw);
-      }
-      pos = SQL_TUPLE.lastIndex;
-    }
-  }
-
-  return findings;
-}
-
 function scanUninterrupted(
   text: string,
   categories: ReadonlySet<Category>,
@@ -811,12 +632,27 @@ function scanUninterrupted(
     }
 
     if (rule.columnLabels && rule.cellRegex) {
+      const cellRegex = rule.cellRegex;
+      const validate = rule.validate;
       // A value that the regex also found is one finding, not two.
       const found = new Set(
         findings.filter((f) => f.ruleId === rule.id).map((f) => f.secretValue),
       );
-      for (const finding of scanColumns(text, rule)) {
-        if (!found.has(finding.secretValue)) findings.push(finding);
+      const cells = scanColumns(
+        text,
+        rule.columnLabels,
+        (cell) => cellRegex.test(cell) && (validate == null || validate(cell)),
+      );
+      for (const cell of cells) {
+        if (found.has(cell)) continue;
+        findings.push({
+          ruleId: rule.id,
+          description: rule.description,
+          category: rule.category,
+          matchRedacted: redact(cell),
+          secretValue: cell,
+          score: 1.0,
+        });
       }
     }
   }

@@ -702,6 +702,16 @@ describe("scan — adversarial inputs", () => {
       "a,b,c\n": "a,b,c\n".repeat(35_000),
       // Every line is a header, and every line after it is a row to read.
       "| dob |\n": "| dob |\n".repeat(26_000),
+      // Every start opens a tuple that never closes before the next INSERT.
+      "insert into x (dob) values (": "insert into x (dob) values (".repeat(
+        7_200,
+      ),
+      // The same with a quote open, so the next INSERT is inside a value.
+      "insert into x (dob) values ('": "insert into x (dob) values ('".repeat(
+        6_950,
+      ),
+      // A stray quote on every line: each one is looked for a closing quote, and none is there.
+      'dob,x\n"': 'dob,x\n"'.repeat(30_000),
     };
 
     const SHAPES = {
