@@ -20,7 +20,6 @@ export interface Finding {
   category: Category;
   matchRedacted: string;
   secretValue: string;
-  score?: number;
 }
 
 interface Rule {
@@ -487,10 +486,20 @@ export class ScanBudgetExceeded extends Error {
 // Set once by each hook entry point. Left unset, every call gets the full
 // budget, which is what the test suite needs.
 let deadline: number | null = null;
+// When the invocation's clock started. Every limit in an invocation is read from
+// this one clock, through `scanBudgetElapsed`.
+let startedAt: number | null = null;
 
-// `null` clears it, which is the state a process starts in.
+// `null` clears the budget, which is the state a process starts in. The clock
+// starts either way.
 export function beginScanBudget(totalMs: number | null = SCAN_BUDGET_MS): void {
-  deadline = totalMs === null ? null : Date.now() + totalMs;
+  startedAt = Date.now();
+  deadline = totalMs === null ? null : startedAt + totalMs;
+}
+
+// Milliseconds since `beginScanBudget` started the clock, or 0 when it has not.
+export function scanBudgetElapsed(): number {
+  return startedAt === null ? 0 : Date.now() - startedAt;
 }
 
 // What is left of the budget, or the whole of it when none was begun.
@@ -627,7 +636,6 @@ function scanUninterrupted(
         category: rule.category,
         matchRedacted: redact(secretValue),
         secretValue,
-        score: hasContext ? 1.0 : 0.4,
       });
     }
 
@@ -651,7 +659,6 @@ function scanUninterrupted(
           category: rule.category,
           matchRedacted: redact(cell),
           secretValue: cell,
-          score: 1.0,
         });
       }
     }

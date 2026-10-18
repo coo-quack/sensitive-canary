@@ -78,6 +78,24 @@ function findCommandIndex(tokens: ShellToken[]): number {
   return lead;
 }
 
+// The words in a token list, with each redirection's target taken out along with
+// its operator. A target is a file or a heredoc delimiter, not an argument, so
+// the loops that read a command's words get them from here rather than each
+// stepping over the token after an operator.
+function wordsOf(tokens: readonly ShellToken[]): ShellToken[] {
+  const words: ShellToken[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === undefined) continue;
+    if (!token.redirect) {
+      words.push(token);
+      continue;
+    }
+    i++; // its target, or a heredoc delimiter
+  }
+  return words;
+}
+
 // Index of the first token that is not a flag, redirection, keyword or
 // `VAR=value` assignment, or -1 when there is none. `function NAME` is skipped
 // as a keyword with its name, so `function f { env; }` leads with `env`, as
@@ -153,14 +171,7 @@ function inspectVariableBuiltin(
 
   const flags: string[] = [];
   const operands: string[] = [];
-  const rest = tokens.slice(start + 1);
-  for (let j = 0; j < rest.length; j++) {
-    const t = rest[j];
-    if (t === undefined) continue;
-    if (t.redirect) {
-      j++; // its target
-      continue;
-    }
+  for (const t of wordsOf(tokens.slice(start + 1))) {
     if (/^[-+]/.test(t.value)) flags.push(t.value);
     else operands.push(t.value);
   }
@@ -205,15 +216,8 @@ function inspectEnvironmentCommand(tokens: ShellToken[]): {
   // everything, and counting `out.txt` as a named variable left the environment
   // unscanned.
   if (name === "printenv") {
-    const rest = tokens.slice(start + 1);
     const named: string[] = [];
-    for (let j = 0; j < rest.length; j++) {
-      const t = rest[j];
-      if (t === undefined) continue;
-      if (t.redirect) {
-        j++; // its target, or a heredoc delimiter
-        continue;
-      }
+    for (const t of wordsOf(tokens.slice(start + 1))) {
       if (isNonCommandToken(t)) continue; // flags
       named.push(t.value);
     }

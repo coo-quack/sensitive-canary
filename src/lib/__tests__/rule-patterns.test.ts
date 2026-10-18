@@ -2077,3 +2077,40 @@ describe("an HTTP Basic example that tutorials use", () => {
     expect(ruleHit(text, "http-basic-auth")).toBe(true);
   });
 });
+
+// The body of a regex's first capturing group: the text between its own
+// parentheses, with escapes and character classes skipped over.
+function firstCaptureBody(source: string): string {
+  const open: { capturing: boolean; start: number }[] = [];
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "\\") i++;
+    else if (inClass) {
+      if (ch === "]") inClass = false;
+    } else if (ch === "[") inClass = true;
+    else if (ch === "(")
+      open.push({ capturing: source[i + 1] !== "?", start: i + 1 });
+    else if (ch === ")") {
+      const group = open.pop();
+      if (group?.capturing) return source.slice(group.start, i);
+    }
+  }
+  throw new Error("no capturing group in the regex");
+}
+
+// pii-date-of-birth writes its date alternation twice: in the rule's regex, as
+// the first capturing group, and in its cellRegex, which judges a labelled cell.
+// The two are the same pattern, and this keeps them from drifting apart.
+describe("the date-of-birth cell pattern is the rule's capture group", () => {
+  const rule = DEFAULT_RULES.find((r) => r.id === "pii-date-of-birth");
+
+  it("the rule has a cell pattern to compare", () => {
+    expect(rule?.cellRegex).toBeTruthy();
+  });
+
+  it("the cell pattern is exactly the body of the regex's first capturing group", () => {
+    expect(rule).toBeDefined();
+    expect(rule?.cellRegex).toBe(firstCaptureBody(rule?.regex ?? ""));
+  });
+});
