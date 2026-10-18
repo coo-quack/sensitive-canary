@@ -26,7 +26,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **76 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **91 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
 - **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP, EU/KR and Chinese postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough. RFC 1918 private addresses are not matched at all — they are non-routable, they identify nothing outside the network they belong to, and they fill the inventories, manifests and ssh configs this tool is most often pointed at
 - **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`, `user@host:path`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work. A template is exempt only when its contents can be read whole. One holding a NUL byte, running past the per-file cut, reached after the call's budget or deadline, or that is not a regular file at all is blocked on its name, since the contents are what the exemption relies on. A template name that exists on no disk is not blocked — there is nothing to read and nothing to leak
@@ -518,7 +518,7 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `pii-ipv4-public` | Public IPv4 address | Context-gated, reserved ranges excluded |
 | `pii-ipv6` | IPv6 address | Context-gated, reserved ranges excluded |
 | `pii-date-of-birth` | Date of birth after a label (`DOB`, `date of birth`, `生年月日`, `誕生日`) | Calendar date between 1900 and this year; the defaults 1970-01-01 and 1900-01-01 are not matched |
-| `pii-customer-number` | Member, customer or account number after a label (`customer ID`, `membership number`, `会員番号`, `顧客番号`) | Five to twenty-three characters with at least two digits, after a label |
+| `pii-customer-number` | Member, customer or account number after a label (`customer ID`, `membership number`, `会員番号`, `顧客番号`) | Five to twenty-four characters with at least two digits, after a label |
 | `pii-address-jp` | Japanese postal address (prefecture, municipality and block number) | A prefecture, a municipality and a block number in sequence; a prefecture or a municipality alone is not matched |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).

@@ -392,6 +392,29 @@ describe("compileRule — schema validation", () => {
       } as never),
     ).toThrow("requireContext");
   });
+
+  it("rejects columnLabels without cellRegex", () => {
+    expect(() =>
+      compileRule({ ...valid, columnLabels: ["dob"] } as never),
+    ).toThrow('"columnLabels" needs "cellRegex"');
+  });
+
+  it("rejects cellRegex without columnLabels", () => {
+    expect(() => compileRule({ ...valid, cellRegex: "\\d+" } as never)).toThrow(
+      '"cellRegex" needs "columnLabels"',
+    );
+  });
+
+  // A label that normalises to nothing would match every blank header cell.
+  it("rejects a blank columnLabels entry", () => {
+    expect(() =>
+      compileRule({
+        ...valid,
+        columnLabels: ["   "],
+        cellRegex: "\\d+",
+      } as never),
+    ).toThrow("must not be blank");
+  });
 });
 
 // ── User config (custom rules) ────────────────────────────────────────────────
