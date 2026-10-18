@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- A value the pii-sentinel server found was written to the block reason in full. A file blocked before it was read named each finding with its value, so a name or other PII the server judged sensitive reached Claude and the terminal unmasked. The value is now redacted as a rule finding's is: `Taro Yamada-Secret-Name` shows as `Ta****me`. The finding's type is shown only when it is a short identifier; text in its place is shown as `finding`
+- A prompt nested more than four levels deep was not scanned: `{"prompt":{"a":{"b":{"c":{"d":{"e":"key=AKIA…"}}}}}}` passed, because an object at the depth limit was dropped with everything under it. The walk has no depth limit now. It reads every string in the prompt with an explicit stack, so the key is blocked at any depth, and its work is linear in the size of the prompt
+- The mask refusal named only the category the mask tag covers: with `[mask-secret]`, a key and an e-mail address, it listed the key and suggested `[allow-secret]`, so the next attempt was blocked again for the address. It now lists every finding, up to fifty as a block does, and suggests the allow tag for each category, and still says which mask tag was used and that masking is not supported
+
 ## v0.13.0 (2026-10-18)
 
 ### Features

@@ -300,7 +300,7 @@ If you use a mask tag, sensitive-canary will display an explanation and list wha
        [allow-all]     — bypass all sensitive-canary checks
 ```
 
-To proceed, either manually redact the sensitive value and resubmit, or replace the mask tag with the corresponding allow tag.
+To proceed, either manually redact the sensitive values and resubmit, or replace the mask tag with the allow tag for each category listed.
 
 ## Uninstall
 

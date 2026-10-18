@@ -27,7 +27,10 @@ import {
   readPiiSentinelConfig,
   trustedNssSources,
   UnsafeSocketError,
+  type Verdict,
+  verdictFindings,
 } from "../pii-sentinel.ts";
+import { redact } from "../rules.ts";
 
 const PRE_TOOL_USE = fileURLToPath(
   new URL("../../pre-tool-use-hook.ts", import.meta.url),
@@ -231,6 +234,48 @@ describe("judge", () => {
   });
 });
 
+// The model's value reaches the block reason, which goes to the model and the
+// terminal, so it is redacted as a rule finding's value is.
+describe("verdictFindings", () => {
+  it("redacts the value a finding carries, as a rule finding's is", async () => {
+    const value = "Taro Yamada-Secret-Name";
+    answer = () => high([{ type: "person_name", value, pii: true }]);
+    const config = readPiiSentinelConfig({ socket });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const { verdicts } = await judge(
+      [{ source: "a.txt", text: MEDICAL }],
+      config,
+    );
+    const finding = verdictFindings(verdicts[0] as Verdict).find(
+      (f) => f.description === "person name",
+    );
+    expect(finding?.matchRedacted).toBe(redact(value));
+    expect(finding?.matchRedacted).toBe("Ta****me");
+    expect(finding?.matchRedacted).not.toContain(value);
+  });
+
+  // The type is written into the block reason as a finding's description, so a
+  // type that is text rather than a name is replaced.
+  it("does not write a type that is text into the description", async () => {
+    const type = "password hunter2secret and a long note about the file here!!";
+    expect(type.length).toBe(60);
+    answer = () =>
+      high([{ type, value: "Taro Yamada-Secret-Name", pii: true }]);
+    const config = readPiiSentinelConfig({ socket });
+    if (config === null || typeof config === "string")
+      throw new Error(String(config));
+    const { verdicts } = await judge(
+      [{ source: "a.txt", text: MEDICAL }],
+      config,
+    );
+    const finding = verdictFindings(verdicts[0] as Verdict).at(-1);
+    expect(finding?.description).toBe("finding");
+    expect(finding?.description).not.toContain(type);
+    expect(finding?.description).not.toContain("hunter2secret");
+  });
+});
+
 describe("socket checks", () => {
   it("accepts a socket in a directory only we can write to", async () => {
     const d = makeDir("private", 0o700);
@@ -349,6 +394,17 @@ describe("PreToolUse hook with pii-sentinel", () => {
     );
     expect(result.stderr).toContain("[allow-pii]");
     expect(received.map((r) => r.text)).toEqual([MEDICAL]);
+  });
+
+  it("does not write a finding's full value to the block reason", async () => {
+    const value = "Taro Yamada-Secret-Name";
+    answer = () => high([{ type: "person_name", value, pii: true }]);
+    const env = { SENSITIVE_CANARY_CONFIG: writeConfig("c8.json", { socket }) };
+    const result = await readFile(file, env);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("person name");
+    expect(result.stderr).toContain(redact(value));
+    expect(result.stderr).not.toContain(value);
   });
 
   it("allows a file below blockOn", async () => {

@@ -17,7 +17,7 @@ import http from "node:http";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import type { Finding } from "./rules.ts";
-import { userConfigFromCache } from "./rules.ts";
+import { redact, userConfigFromCache } from "./rules.ts";
 
 export type Level = "none" | "low" | "high";
 
@@ -432,6 +432,11 @@ async function userdbIsPrivate(
   return true;
 }
 
+// A finding's type is written into the block reason, so it is kept only when it
+// is a short identifier. Anything else is a server putting text where a name
+// goes, and the block reason says "finding" in its place.
+const FINDING_TYPE = /^[a-z0-9_]{1,40}$/i;
+
 function toVerdict(source: string, report: unknown): Verdict {
   const r = report as {
     sensitivity?: { level?: unknown };
@@ -454,7 +459,10 @@ function toVerdict(source: string, report: unknown): Verdict {
             typeof f?.type === "string" && typeof f?.value === "string",
         )
         .filter((f) => f.pii !== false)
-        .map(({ type, value }) => ({ type, value }))
+        .map(({ type, value }) => ({
+          type: FINDING_TYPE.test(type) ? type : "finding",
+          value,
+        }))
     : [];
   return { source, level, categories, findings };
 }
@@ -530,7 +538,9 @@ export function verdictFindings(verdict: Verdict): Finding[] {
       ruleId: "pii-sentinel",
       description: f.type.replaceAll("_", " "),
       category: "pii" as const,
-      matchRedacted: f.value,
+      // Redacted as a rule finding's value is: the block reason reaches the model
+      // and the terminal, and the file or prompt it names was never read.
+      matchRedacted: redact(f.value),
       secretValue: `pii-sentinel:${verdict.source}:${f.type}:${f.value}`,
     })),
   ];
