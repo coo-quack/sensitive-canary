@@ -156,17 +156,19 @@ describe("the documents and the registry agree", () => {
 });
 
 describe("the shipped rules", () => {
-  it("are exactly these seventy-six", () => {
+  it("are exactly these eighty-eight", () => {
     expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
       "anthropic-key",
       "atlassian-token",
       "aws-access-key",
+      "aws-secret-near-key-id",
       "azure-sas-key",
       "azure-storage-key",
       "connection-string",
       "databricks-token",
       "digitalocean-pat",
       "discord-webhook",
+      "docker-hub-pat",
       "doppler-token",
       "env-assignment",
       "flyio-token",
@@ -178,6 +180,8 @@ describe("the shipped rules", () => {
       "google-oauth-secret",
       "grafana-token",
       "groq-key",
+      "http-basic-auth",
+      "http-bearer-token",
       "huggingface-token",
       "jwt",
       "linear-key",
@@ -190,20 +194,27 @@ describe("the shipped rules", () => {
       "openai-project-key",
       "openai-service-key",
       "openrouter-key",
+      "password-cli-flag",
+      "password-json-key",
+      "password-netrc",
+      "password-prose",
       "perplexity-key",
       "pii-brn-kr",
       "pii-codice-fiscale-it",
       "pii-credit-card",
       "pii-dni-nie-es",
       "pii-email",
+      "pii-iban",
       "pii-ipv4-public",
       "pii-ipv6",
       "pii-mynumber-jp",
+      "pii-nino-uk",
       "pii-nir-fr",
       "pii-phone-cn",
       "pii-phone-de",
       "pii-phone-es",
       "pii-phone-fr",
+      "pii-phone-intl",
       "pii-phone-it",
       "pii-phone-jp",
       "pii-phone-kr",
@@ -218,6 +229,7 @@ describe("the shipped rules", () => {
       "postman-key",
       "private-key",
       "private-key-base64",
+      "redis-auth",
       "replicate-token",
       "sendgrid-key",
       "sentry-org-token",
@@ -237,12 +249,12 @@ describe("the shipped rules", () => {
     ]);
   });
 
-  it("are split as the README says: 52 secret, 24 PII", () => {
+  it("are split as the README says: 61 secret, 27 PII", () => {
     const byCategory: Record<string, number> = {};
     for (const rule of DEFAULT_RULES) {
       byCategory[rule.category] = (byCategory[rule.category] ?? 0) + 1;
     }
-    expect(byCategory).toEqual({ secret: 52, pii: 24 });
+    expect(byCategory).toEqual({ secret: 61, pii: 27 });
   });
 
   it("each declare the fields the loader needs", () => {

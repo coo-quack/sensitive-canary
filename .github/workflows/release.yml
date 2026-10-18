@@ -111,7 +111,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.21.0"
+          node-version: "24.22.0"
           registry-url: "https://registry.npmjs.org"
 
       - run: pnpm install --frozen-lockfile
@@ -344,7 +344,7 @@ jobs:
       # left the catalog stuck whenever that step was the one that failed.
       - name: Mint app token for marketplace sync
         id: marketplace-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.BACKPORT_APP_CLIENT_ID }}
           private-key: ${{ secrets.BACKPORT_APP_PRIVATE_KEY }}

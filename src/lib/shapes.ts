@@ -23,8 +23,12 @@ export function isNotSecretShaped(value: string): boolean {
   )
     return true;
   if (/^urn:/i.test(v)) return true;
-  // A filesystem path.
-  if (/^[~.]?\/[^\s]*$/.test(v)) return true;
+  // A filesystem path: an absolute one with a second separator, or one written
+  // from home or the working directory. A single leading slash is not enough,
+  // because a base64 secret can begin with `/`, and a 40-character AWS secret
+  // access key does; `/etc/ssl/key` has two.
+  if (/^\/[^\s]*\/[^\s]*$/.test(v) || /^(?:~|\.{1,2})\/[^\s]*$/.test(v))
+    return true;
   // The name of a variable rather than its value.
   if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(v)) return true;
   // An HTTP header name.
@@ -91,11 +95,53 @@ export function keyDescribesRatherThanHolds(matchText: string): boolean {
 
 // A word that only ever appears in a value nobody typed.
 const PLACEHOLDER_MARKERS =
-  /^(?:changeme|change|me|replace|insert|set|with|real|this|your|my|here|todo|tbd|fixme|dummy|placeholder|insecure|sample|example|test|fake|redacted|value|x{3,})$/i;
+  /^(?:changeme|change|me|replace|insert|set|with|real|this|your|my|here|todo|tbd|fixme|dummy|placeholder|insecure|sample|example|test|tests|mock|stub|fake|redacted|value|x{3,})$/i;
 
 // A word that can make up the rest of such a value, but never marks one alone.
 const PLACEHOLDER_FILLER =
-  /^(?:api|key|keys|token|tokens|secret|secrets|password|passwd|pwd|pass|base|url|uri|host|hostname|name|user|username|id|access|refresh|client|auth|sk|pk|in|production|development|staging|local|dev|the|a|of|for|and|[0-9]+)$/i;
+  /^(?:api|key|keys|token|tokens|secret|secrets|password|passwd|pwd|pass|base|url|uri|host|hostname|name|user|username|id|access|refresh|client|auth|sk|pk|in|production|development|staging|local|dev|the|a|of|for|and|unit|only|use|[0-9]+)$/i;
+
+// Values that the vendors print in their own documentation. A rule that finds
+// one of these is finding the example, not a key, and the comparison is whole:
+// a real key that begins with a documented one is still a key, which is why
+// these are not matched as prefixes. The surrounding quotes are not part of the
+// value. The jwt.io sample is the token its debugger loads by default.
+const DOCUMENTED_EXAMPLE_VALUES: ReadonlySet<string> = new Set([
+  // AWS: the secret access key in its getting-started guide.
+  "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  // Stripe: the test secret key in its API reference. Joined so that GitHub's
+  // push protection does not read the literal as a leaked key.
+  ["sk", "test", "4eC39HqLyjWDarjtT1zdp7dc"].join("_"),
+  // jwt.io: the default token in its debugger.
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+]);
+
+// A value made of filler: a short letter prefix, then a run of one character
+// that is at least eight long, as a stand-in for a random tail. `ghp_` followed
+// by thirty-six `x` is one; `xoxb-111111111111-222222222222-XXXX…` is another,
+// with each part a run. A random tail is never built of runs, so a key with a
+// few repeated characters inside it does not match: every part has to be a
+// run, and only the first part may be a bare word of up to eight letters.
+const FILLER_RUN = /^([A-Za-z]{0,4})([A-Za-z0-9])\2{3,}$/;
+const FILLER_RUN_LENGTH = 8;
+export function isFillerBody(value: string): boolean {
+  let hasLongRun = false;
+  for (const [index, part] of value.split(/[-_]/).entries()) {
+    if (index === 0 && /^[A-Za-z]{1,8}$/.test(part)) continue;
+    if (FILLER_RUN.exec(part) === null) return false;
+    // The run is counted from the end. The letter prefix is greedy in the
+    // pattern and would take the first characters of a run for itself.
+    if (trailingRunLength(part) >= FILLER_RUN_LENGTH) hasLongRun = true;
+  }
+  return hasLongRun;
+}
+
+function trailingRunLength(part: string): number {
+  let length = 0;
+  for (let i = part.length - 1; i >= 0 && part[i] === part.at(-1); i--)
+    length++;
+  return length;
+}
 
 // The scheme is bounded: an unbounded `\w+` in front of a literal that usually
 // is not there makes the match quadratic in the length of the value, and a
@@ -107,8 +153,15 @@ const GENERIC_HOST =
   /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host|hostname|db|database|example\.(?:com|org|net))\b/i;
 
 export function isPlaceholder(value: string, following = ""): boolean {
-  const v = value.trim();
+  // A quoted value is judged without its quotes. The rules that take a quoted
+  // value (password-prose, for one) hand them over, and a quote would stop
+  // `'fake-token-for-unit-tests'` from being read as its words.
+  const v = value
+    .trim()
+    .replace(/^(["'])(.*)\1$/s, "$2")
+    .trim();
   if (!v) return false;
+  if (DOCUMENTED_EXAMPLE_VALUES.has(v)) return true;
   // Filler on its own: `xxxxxxxxxxxx`.
   if (/^[Xx]+$/.test(v)) return true;
   // A slot rather than a value: `<your-token>`, `${TOKEN}`, `{{ token }}`.
@@ -152,6 +205,7 @@ export function isPlaceholder(value: string, following = ""): boolean {
   // Otherwise every part of the value has to be one of these words, and at
   // least one has to be a marker. Testing whether the value *contains* a marker
   // was a way through: `changeme_` in front of a live key disabled the rule.
+  if (isFillerBody(v)) return true;
   const parts = v.split(/[-_.\s]+/).filter(Boolean);
   if (parts.length === 0) return false;
   if (!parts.some((part) => PLACEHOLDER_MARKERS.test(part))) return false;
