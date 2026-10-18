@@ -525,6 +525,24 @@ describe("pre-tool-use-hook — .env templates", () => {
     expect(runHook("Read", p).exitCode).toBe(2);
   });
 
+  // A read that fills the cap cannot be told from a longer file, so a template of
+  // exactly the cap is judged on its name. One byte under it is read whole.
+  it("a template of exactly 1 MiB is judged on its name", () => {
+    const p = writeFixture(
+      ".env.exact.example",
+      "TOKEN=changeme\n".padEnd(1_048_576, "#"),
+    );
+    expect(runHook("Read", p).exitCode).toBe(2);
+  });
+
+  it("a template one byte under 1 MiB is read whole and allowed", () => {
+    const p = writeFixture(
+      ".env.under.example",
+      "TOKEN=changeme\n".padEnd(1_048_575, "#"),
+    );
+    expect(runHook("Read", p).exitCode).toBe(0);
+  });
+
   it("a template larger than the per-file cut is not", () => {
     const p = writeFixture(
       ".env.big.example",

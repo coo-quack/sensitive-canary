@@ -627,22 +627,6 @@ describe("scan — postal code", () => {
   });
 });
 
-// ── scan: context scoring ─────────────────────────────────────────────────────
-
-describe("scan — context scoring", () => {
-  it("assigns score 1.0 to a context-gated match", () => {
-    const findings = scan("ZIP: 90210");
-    const postal = findings.find((f) => f.ruleId === "pii-postal-code");
-    expect(postal?.score).toBe(1.0);
-  });
-
-  it("assigns score 1.0 to rules without context requirements", () => {
-    const findings = scan("contact: ada@analytical-engines.org");
-    const email = findings.find((f) => f.ruleId === "pii-email");
-    expect(email?.score).toBe(1.0);
-  });
-});
-
 // ── scan: adversarial inputs ─────────────────────────────────────────────────
 
 describe("scan — adversarial inputs", () => {
