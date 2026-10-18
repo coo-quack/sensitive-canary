@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- The README's PreToolUse section now says which tool inputs are not scanned. `WebFetch` and `WebSearch` are not in the default matcher, so the hook never runs for them and a URL carrying a key is not checked. MCP tools are in the matcher, but the hook reads only their path fields and command fields, so a key in another argument, such as a message body, is not checked. Widening the matcher to `WebFetch|WebSearch` starts the hook for those calls without scanning them, since the hook reads nothing from them; scanning URLs needs a change to what the hook reads
+
 ## v0.13.1 (2026-10-18)
 
 ### Fixes

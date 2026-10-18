@@ -16,7 +16,7 @@ import { lstat, readdir, readFile, readlink } from "node:fs/promises";
 import http from "node:http";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "./rules.ts";
+import type { Category, Finding } from "./rules.ts";
 import { redact, userConfigFromCache } from "./rules.ts";
 
 export type Level = "none" | "low" | "high";
@@ -564,4 +564,52 @@ export function verdictFindings(verdict: Verdict): Finding[] {
 
 export function connectionTarget(config: PiiSentinelConfig): string {
   return `unix:${config.socket}`;
+}
+
+// What the pii-sentinel check decided about a set of texts, before a hook has
+// written it out. The hooks word and block differently, but they agree on
+// which of these outcomes applies, and in what order they are checked.
+export type PiiSentinelDecision =
+  | { kind: "pass" }
+  | { kind: "settings"; problem: string }
+  | { kind: "refused"; target: string; reason: string }
+  | { kind: "judged"; verdict: Verdict; findings: Finding[] }
+  | { kind: "unavailable"; target: string; reason: string };
+
+const PASS: PiiSentinelDecision = { kind: "pass" };
+
+// Asks the user's pii-sentinel server about texts the rules let through. Only
+// with a `piiSentinel` entry in the config and the PII category on; `[allow-pii]`
+// lifts it. A server that does not answer blocks unless the entry says otherwise:
+// the user asked for the check, and a check that silently did not run is a pass.
+// A socket another user could have put in place blocks whatever the entry says,
+// since the server behind it may well be running.
+export async function consultPiiSentinel(
+  texts: { source: string; text: string }[],
+  allowTags: ReadonlySet<string>,
+  enabledCategories: ReadonlySet<Category>,
+): Promise<PiiSentinelDecision> {
+  if (texts.length === 0 || !enabledCategories.has("pii")) return PASS;
+  if (allowTags.has("pii")) return PASS;
+  const config = readPiiSentinelConfig();
+  if (config === null) return PASS;
+  if (typeof config === "string") return { kind: "settings", problem: config };
+  const { verdicts, unavailable, refused } = await judge(texts, config);
+  if (refused !== null)
+    return {
+      kind: "refused",
+      target: connectionTarget(config),
+      reason: refused,
+    };
+  for (const verdict of verdicts) {
+    if (!reachesBlockLevel(verdict.level, config)) continue;
+    return { kind: "judged", verdict, findings: verdictFindings(verdict) };
+  }
+  if (unavailable !== null && config.onUnavailable === "block")
+    return {
+      kind: "unavailable",
+      target: connectionTarget(config),
+      reason: unavailable,
+    };
+  return PASS;
 }
