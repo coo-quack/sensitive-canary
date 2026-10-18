@@ -302,6 +302,10 @@ Values are comma-separated and case-insensitive. Unset, empty, or containing no 
 
 Files that end in `.env` but don't start with a dot (e.g. `production.env`) are handled by content scanning rather than name-based blocking.
 
+The name is compared without regard to case, so `.ENV` and `.Env.local` are blocked too. A symbolic link is judged by its own name and by the name of the file it points to, so a link named `notes.txt` that points to `.env` is blocked when it is read. The template names are exempt in any case, and a link to one is exempt by that name.
+
+Commands that copy, move, link or archive a file (`cp`, `mv`, `ln`, `install`, `rsync`, `tar -c` (and `bsdtar`, `gtar`) and `zip`) read their sources, so `cp .env backup.txt` is blocked on the name of `.env`. The same holds for a directory named as a source: `cp -r . backup` and `tar -czf b.tgz .` are blocked when a `.env` sits directly in it, as a read of that directory is. `tar -T FILE` and `rsync --files-from=FILE` read the names in FILE as sources, and `tar -C DIR` makes the names after it relative to DIR. `tar -x` reads none of its operands.
+
 `[allow-secret]` and `[allow-all]` lift the name-based block; `[allow-pii]` does not, since the block is a secret-category finding. Lifting the name block is not a pass: the contents are still scanned, and a tag only removes findings of the category it names. A file exempted by `[allow-secret]` is still blocked for an email address in it.
 
 ## Bash Command Scanning
@@ -310,7 +314,7 @@ When Claude uses the `Bash` tool, sensitive-canary checks three things:
 
 1. **Environment variables** — any `$VAR` or `${VAR}` references in the command are looked up in the current environment; if their values contain secrets or PII, the command is blocked.
 2. **Command string** — the raw command is scanned, which catches a secret written inline (`echo ghp_…`, `curl -H "Authorization: Bearer …"`).
-3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
+3. **File-reading commands** — the target files are read and scanned before the command runs. The set is the one in `src/lib/bash-commands.ts`: around forty commands that print their operands (`cat`, `head`, `xxd`, `zcat`, `iconv`, `comm`, …), a second class whose first argument is a pattern and whose rest are files (`grep`, `sed`, `awk`, `jq`, `zgrep`, …), the git subcommands that print contents, `dd if=`, and inline program text. Copying, moving, linking and archiving commands (`cp`, `mv`, `ln`, `install`, `rsync`, `tar -c`, `bsdtar`, `gtar`, `zip`) read their sources, which are every operand but the destination, and the files named in a `tar -T` or `rsync --files-from` list. Compound commands using `|`, `;`, `&&`, `||` are split and each segment is checked independently. README's "How it works" has the full picture.
 
 ### Ways a rule goes quiet without saying so
 

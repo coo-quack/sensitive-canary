@@ -3,6 +3,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  TAR_COMMANDS,
+  TARGET_DIRECTORY_COMMANDS,
+} from "../lib/command-tables.ts";
+import {
   AWS_KEY,
   runBashHook,
   runToolHook,
@@ -1221,5 +1225,142 @@ describe("pre-tool-use-hook — command classification", () => {
       expect(result.exitCode).toBe(2);
       expect(result.blocked).toBe(true);
     });
+  });
+});
+
+// A copy, move, link or archive hands the source to a new name, and the name
+// guard only knows the old one. Its contents are read as a file's are, so a
+// copy of a credential is blocked on what is in it, and an `.env` source on its
+// name, whichever of these commands is run.
+describe("pre-tool-use-hook — copy, move, link and archive commands", () => {
+  const writeFixture = useFixtureDir("copy-commands");
+
+  it.each([
+    ["cp", (src: string) => `cp ${src} notes.txt`],
+    ["mv", (src: string) => `mv ${src} notes.txt`],
+    ["ln -s", (src: string) => `ln -s ${src} link.txt`],
+    ["tar -cf", (src: string) => `tar -cf out.tar ${src}`],
+    ["zip", (src: string) => `zip out.zip ${src}`],
+  ])("%s reads an .env source, which is blocked on its name", (_, build) => {
+    const env = writeFixture(".env", "DEBUG=true\n");
+    expect(runBashHook(build(env)).exitCode).toBe(2);
+  });
+
+  it("cp of a file holding a key is blocked on its contents", () => {
+    const creds = writeFixture("creds-copy.txt", `key=${AWS_KEY}\n`);
+    expect(runBashHook(`cp ${creds} backup.txt`).exitCode).toBe(2);
+  });
+
+  it("cp of an ordinary file is allowed", () => {
+    const notes = writeFixture(
+      "notes-copy.txt",
+      "release notes, nothing here\n",
+    );
+    expect(runBashHook(`cp ${notes} backup.txt`).exitCode).toBe(0);
+  });
+
+  // Extracting reads the archive and writes the members out, so the names given
+  // after the archive are not files to read.
+  it("tar -xf reads none of its operands", () => {
+    const env = writeFixture(".env", "DEBUG=true\n");
+    expect(runBashHook(`tar -xf out.tar ${env}`).exitCode).toBe(0);
+  });
+});
+
+// The archive tools and the lists they are told to read. Each project is a
+// directory of its own, the one the command runs in, so a relative name resolves
+// the way it would for the tool.
+describe("pre-tool-use-hook — tar family, lists and -C", () => {
+  const writeFixture = useFixtureDir("tar-lists");
+
+  const project = (name: string, files: Record<string, string>): string => {
+    const dir = writeFixture.path(name);
+    mkdirSync(join(dir, "sub"), { recursive: true });
+    for (const [file, content] of Object.entries(files)) {
+      writeFileSync(join(dir, file), content);
+    }
+    return dir;
+  };
+
+  const ENV = "DB_HOST=db.internal\n";
+
+  it.each([...TAR_COMMANDS])(
+    "%s -c reads a .env it archives, blocked on its name",
+    (cmd) => {
+      const cwd = project(`family-${cmd}`, { ".env": ENV });
+      expect(runBashHook(`${cmd} -cf o.tar .env`, { cwd }).exitCode).toBe(2);
+    },
+  );
+
+  it("tar -T reads the list file, and a .env the list names is blocked", () => {
+    const cwd = project("list-env", { ".env": ENV, "list.txt": ".env\n" });
+    expect(runBashHook("tar -cf o.tar -T list.txt", { cwd }).exitCode).toBe(2);
+  });
+
+  it("tar --files-from= reads the list the same way", () => {
+    const cwd = project("list-env-attached", {
+      ".env": ENV,
+      "list.txt": ".env\n",
+    });
+    expect(
+      runBashHook("tar -cf o.tar --files-from=list.txt", { cwd }).exitCode,
+    ).toBe(2);
+  });
+
+  it("a list naming only a clean file is allowed", () => {
+    const cwd = project("list-clean", {
+      ".env": ENV,
+      "clean.txt": "release notes\n",
+      "list.txt": "clean.txt\n",
+    });
+    expect(runBashHook("tar -cf o.tar -T list.txt", { cwd }).exitCode).toBe(0);
+  });
+
+  // The names in a list are resolved against the directory `-C` has in force, so
+  // the file named in sub is the one that is read.
+  it("tar -C reads the names after it from that directory", () => {
+    const cwd = project("c-creds", {
+      "sub/creds.txt": `key=${AWS_KEY}\n`,
+    });
+    expect(
+      runBashHook("tar -cf o.tar -C sub creds.txt", { cwd }).exitCode,
+    ).toBe(2);
+  });
+
+  it("tar -C reads a clean file in that directory and allows it", () => {
+    const cwd = project("c-clean", { "sub/clean.txt": "release notes\n" });
+    expect(
+      runBashHook("tar -cf o.tar -C sub clean.txt", { cwd }).exitCode,
+    ).toBe(0);
+  });
+
+  it("a list named after -C is resolved against that directory", () => {
+    const cwd = project("c-list", {
+      "sub/list.txt": ".env\n",
+      "sub/.env": ENV,
+    });
+    expect(
+      runBashHook("tar -cf o.tar -C sub -T list.txt", { cwd }).exitCode,
+    ).toBe(2);
+  });
+
+  it.each([...TARGET_DIRECTORY_COMMANDS])(
+    "%s -t DIR reads a .env source, blocked on its name",
+    (cmd) => {
+      const cwd = project(`target-${cmd}`, { ".env": ENV });
+      expect(runBashHook(`${cmd} -t backup .env`, { cwd }).exitCode).toBe(2);
+    },
+  );
+
+  // A directory named as a source has the files directly in it read, as it is
+  // for any command, so the .env in it is blocked on its name.
+  it("cp -r of a directory holding .env is blocked", () => {
+    const cwd = project("cp-tree", { ".env": ENV });
+    expect(runBashHook("cp -r . backup", { cwd }).exitCode).toBe(2);
+  });
+
+  it("tar -czf of a directory holding .env is blocked", () => {
+    const cwd = project("tar-tree", { ".env": ENV });
+    expect(runBashHook("tar -czf b.tgz .", { cwd }).exitCode).toBe(2);
   });
 });
