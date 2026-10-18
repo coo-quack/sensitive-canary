@@ -369,6 +369,9 @@ describe("verdictFindings", () => {
 
 // `blockOn: "identifiable"`: the verdicts are the fake server's answers, judged
 // under the config each test names.
+const DATE_OF_BIRTH_REASON =
+  "document names a date of birth, which identifies a person once it is linked to a name, in this conversation or another";
+
 describe("blockOn identifiable", () => {
   function configOf(raw: unknown): PiiSentinelConfig {
     const config = readPiiSentinelConfig(raw);
@@ -581,6 +584,179 @@ describe("blockOn identifiable", () => {
       });
     },
   );
+  // A finding of a blocking type that the server marks pii: true blocks under
+  // "identifiable" whatever the level and the probabilities; under "high" it
+  // does not, as the level is what that setting reads.
+  it("blocks a date_of_birth finding marked pii true at level low, and not under high", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: {},
+      findings: [{ type: "date_of_birth", value: "1990-05-06", pii: true }],
+    };
+    const verdict = (await answerUnder(body, "high")).verdicts[0] as Verdict;
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(true);
+    expect(verdictBlocks(verdict, configOf({ socket, blockOn: "high" }))).toBe(
+      false,
+    );
+    expect(verdictBlocks(verdict, configOf({ socket, blockOn: "low" }))).toBe(
+      true,
+    );
+  });
+
+  it("blocks a finding whatever its probability, and words it as the category does, with the value redacted", async () => {
+    const value = "Taro Yamada-Secret-Name";
+    const body = {
+      sensitivity: { level: "low" },
+      categories: { date_of_birth: 0.1 },
+      findings: [{ type: "date_of_birth", value, pii: true }],
+    };
+    const config = configOf({ socket, blockOn: "identifiable" });
+    const verdict = (await answerUnder(body, "identifiable"))
+      .verdicts[0] as Verdict;
+    expect(verdictBlocks(verdict, config)).toBe(true);
+    const findings = verdictFindings(verdict, config);
+    expect(findings.map((f) => f.description)).toEqual([
+      "document names a date of birth, which identifies a person once it is linked to a name, in this conversation or another",
+    ]);
+    expect(findings[0]?.matchRedacted).toBe(redact(value));
+    expect(findings[0]?.matchRedacted).not.toContain(value);
+  });
+
+  it("does not block a date_of_birth finding marked pii false", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: {},
+      findings: [{ type: "date_of_birth", value: "1990-05-06", pii: false }],
+    };
+    const verdict = (await answerUnder(body, "high")).verdicts[0] as Verdict;
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(false);
+  });
+
+  it("does not block an employment_info finding marked pii true, which is a hint", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: {},
+      findings: [{ type: "employment_info", value: "Acme Labs", pii: true }],
+    };
+    const verdict = (await answerUnder(body, "high")).verdicts[0] as Verdict;
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(false);
+  });
+
+  it("ignores a finding of a type it does not know, even when marked pii true", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: {},
+      findings: [{ type: "shoe_size", value: "42", pii: true }],
+    };
+    const verdict = (await answerUnder(body, "high")).verdicts[0] as Verdict;
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(false);
+  });
+  it("blocks a postal_address finding marked pii true at level low, and not under high", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: {},
+      findings: [{ type: "postal_address", value: "1-1 Chiyoda", pii: true }],
+    };
+    const verdict = (await answerUnder(body, "high")).verdicts[0] as Verdict;
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(true);
+    expect(verdictBlocks(verdict, configOf({ socket, blockOn: "high" }))).toBe(
+      false,
+    );
+    expect(verdictBlocks(verdict, configOf({ socket, blockOn: "low" }))).toBe(
+      true,
+    );
+  });
+
+  // One reason line per blocking type: two spans of one type are one line.
+  it("gives one reason line for two date_of_birth spans", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: {},
+      findings: [
+        { type: "date_of_birth", value: "1990-05-06", pii: true },
+        { type: "date_of_birth", value: "1991-07-21", pii: true },
+      ],
+    };
+    const verdict = (await answerUnder(body, "identifiable"))
+      .verdicts[0] as Verdict;
+    const config = configOf({ socket, blockOn: "identifiable" });
+    expect(verdictFindings(verdict, config).map((f) => f.description)).toEqual([
+      DATE_OF_BIRTH_REASON,
+    ]);
+  });
+
+  // The category path is not repeated for a type a blocking finding names.
+  it("does not repeat the category line for a date_of_birth that a finding also names", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: { date_of_birth: 0.9 },
+      findings: [{ type: "date_of_birth", value: "1990-05-06", pii: true }],
+    };
+    const verdict = (await answerUnder(body, "identifiable"))
+      .verdicts[0] as Verdict;
+    const config = configOf({ socket, blockOn: "identifiable" });
+    expect(verdictFindings(verdict, config).map((f) => f.description)).toEqual([
+      DATE_OF_BIRTH_REASON,
+    ]);
+  });
+
+  // A pii that is not a boolean is a malformed answer under "identifiable", so
+  // the answer is unavailable; under "high" the finding is parsed and not used.
+  it.each([
+    ["missing", { type: "date_of_birth", value: "1990-05-06" }],
+    [
+      "the string true",
+      { type: "date_of_birth", value: "1990-05-06", pii: "true" },
+    ],
+  ])(
+    "treats a finding whose pii is %s as unavailable under identifiable, and not blocking under high",
+    async (_label, finding) => {
+      const body = {
+        sensitivity: { level: "low" },
+        categories: {},
+        findings: [finding],
+      };
+      expect((await answerUnder(body, "identifiable")).unavailable).toContain(
+        "blocking type",
+      );
+      const verdict = (await answerUnder(body, "high")).verdicts[0] as Verdict;
+      expect(
+        verdictBlocks(verdict, configOf({ socket, blockOn: "high" })),
+      ).toBe(false);
+    },
+  );
+
+  // A value that is not a string is malformed under "identifiable", as a pii
+  // that is not a boolean is; under "high" the finding is dropped as before.
+  it("treats a blocking-type finding whose value is null as unavailable under identifiable, and dropped under high", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: {},
+      findings: [{ type: "date_of_birth", value: null, pii: true }],
+    };
+    expect((await answerUnder(body, "identifiable")).unavailable).toContain(
+      "blocking type",
+    );
+    const high = await answerUnder(body, "high");
+    expect(high.unavailable).toBeNull();
+    expect(high.verdicts[0]).toMatchObject({ findings: [] });
+    expect(
+      verdictBlocks(
+        high.verdicts[0] as Verdict,
+        configOf({ socket, blockOn: "high" }),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("socket checks", () => {
@@ -821,6 +997,32 @@ describe("PreToolUse hook with pii-sentinel", () => {
     expect((await readFile(file, env, transcript)).code).toBe(0);
     const byDefault = await readFile(file, {
       SENSITIVE_CANARY_CONFIG: writeConfig("c10.json", { socket }),
+    });
+    expect(byDefault.code).toBe(0);
+  });
+
+  it("blocks a file on a date_of_birth finding marked pii true under identifiable, not under the default", async () => {
+    answer = () => ({
+      status: 200,
+      body: {
+        sensitivity: { level: "low" },
+        categories: {},
+        findings: [{ type: "date_of_birth", value: "1990-05-06", pii: true }],
+      },
+    });
+    const blocked = await readFile(file, {
+      SENSITIVE_CANARY_CONFIG: writeConfig("c13.json", {
+        socket,
+        blockOn: "identifiable",
+      }),
+    });
+    expect(blocked.code).toBe(2);
+    expect(blocked.stderr).toContain(
+      "found identifiers or attributes that can pin a person down in this file",
+    );
+    expect(blocked.stderr).toContain("document names a date of birth");
+    const byDefault = await readFile(file, {
+      SENSITIVE_CANARY_CONFIG: writeConfig("c14.json", { socket }),
     });
     expect(byDefault.code).toBe(0);
   });

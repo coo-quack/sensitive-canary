@@ -31,46 +31,75 @@ const CATEGORY = {
     kind: "identifier",
     noun: "an e-mail address or phone number",
     threshold: 0.5,
+    blocksAsFinding: false,
   },
   government_id: {
     kind: "identifier",
     noun: "a government ID",
     threshold: 0.5,
+    blocksAsFinding: false,
   },
   financial_account: {
     kind: "identifier",
     noun: "a financial account",
     threshold: 0.5,
+    blocksAsFinding: false,
   },
   sns_handle: {
     kind: "identifier",
     noun: "a social media handle",
     threshold: 0.5,
+    blocksAsFinding: false,
   },
   ip_address_of_a_person: {
     kind: "identifier",
     noun: "an IP address",
     threshold: 0.5,
+    blocksAsFinding: false,
   },
   postal_address: {
     kind: "attribute",
     noun: "a postal address",
     threshold: 0.5,
+    blocksAsFinding: true,
   },
-  date_of_birth: { kind: "attribute", noun: "a date of birth", threshold: 0.5 },
-  employment_info: { kind: "attribute", noun: "a workplace", threshold: 0.5 },
+  date_of_birth: {
+    kind: "attribute",
+    noun: "a date of birth",
+    threshold: 0.5,
+    blocksAsFinding: true,
+  },
+  employment_info: {
+    kind: "attribute",
+    noun: "a workplace",
+    threshold: 0.5,
+    blocksAsFinding: false,
+  },
   precise_location: {
     kind: "attribute",
     noun: "a precise location",
     threshold: 0.5,
+    blocksAsFinding: false,
   },
 } satisfies Record<
   string,
-  { kind: "identifier" | "attribute"; noun: string; threshold: number }
+  {
+    kind: "identifier" | "attribute";
+    noun: string;
+    threshold: number;
+    blocksAsFinding: boolean;
+  }
 >;
 type IdentifiableCategory = keyof typeof CATEGORY;
 type Thresholds = Record<IdentifiableCategory, number>;
 const IDENTIFIABLE_CATEGORIES = Object.keys(CATEGORY) as IdentifiableCategory[];
+
+// The finding types that block on their own under "identifiable" when the
+// server marks them `pii: true`: the rows flagged `blocksAsFinding`, so the
+// table is the one place that says which they are.
+const BLOCKING_FINDING_TYPES = new Set<string>(
+  IDENTIFIABLE_CATEGORIES.filter((c) => CATEGORY[c].blocksAsFinding),
+);
 
 function defaultThresholds(): Thresholds {
   return Object.fromEntries(
@@ -96,7 +125,7 @@ export interface Verdict {
   categories: string[];
   // Every numeric category the server answered, not only those at 0.5 or above.
   probabilities: Record<string, number>;
-  findings: { type: string; value: string }[];
+  findings: { type: string; value: string; pii: boolean }[];
 }
 
 interface Judgement {
@@ -592,6 +621,24 @@ function toVerdict(
   const categories = Object.entries(probabilities)
     .filter(([, p]) => p >= 0.5)
     .map(([name]) => name);
+  // Under "identifiable" a finding of a blocking type must carry a string value
+  // and a boolean pii. One that does not is a malformed answer, so it is
+  // unavailable rather than dropped, which would pass the text unchecked.
+  if (blockOn === "identifiable" && Array.isArray(r.findings))
+    for (const f of r.findings as {
+      type?: unknown;
+      value?: unknown;
+      pii?: unknown;
+    }[]) {
+      if (
+        typeof f?.type === "string" &&
+        BLOCKING_FINDING_TYPES.has(f.type) &&
+        (typeof f.value !== "string" || typeof f.pii !== "boolean")
+      )
+        throw new Error(
+          "answered with a finding of a blocking type whose value or pii is not the expected kind",
+        );
+    }
   const findings = Array.isArray(r.findings)
     ? r.findings
         .filter(
@@ -599,9 +646,10 @@ function toVerdict(
             typeof f?.type === "string" && typeof f?.value === "string",
         )
         .filter((f) => f.pii !== false)
-        .map(({ type, value }) => ({
+        .map(({ type, value, pii }) => ({
           type: FINDING_TYPE.test(type) ? type : "finding",
           value,
+          pii: pii === true,
         }))
     : [];
   return { source, level, categories, probabilities, findings };
@@ -680,13 +728,35 @@ function identifiableHits(
   });
 }
 
+// A finding that blocks on its own: under "identifiable", a finding of a
+// blocking type that the server marks `pii: true`, whatever the level and the
+// probabilities. Under "high" and "low" findings never block by themselves.
+function isBlockingFinding(
+  finding: Verdict["findings"][number],
+  config: PiiSentinelConfig,
+): boolean {
+  return (
+    config.blockOn === "identifiable" &&
+    finding.pii &&
+    BLOCKING_FINDING_TYPES.has(finding.type)
+  );
+}
+
+function blockingFindings(
+  verdict: Verdict,
+  config: PiiSentinelConfig,
+): Verdict["findings"] {
+  return verdict.findings.filter((f) => isBlockingFinding(f, config));
+}
+
 export function verdictBlocks(
   verdict: Verdict,
   config: PiiSentinelConfig,
 ): boolean {
   return (
     reachesBlockLevel(verdict.level, config) ||
-    identifiableHits(verdict, config).length > 0
+    identifiableHits(verdict, config).length > 0 ||
+    blockingFindings(verdict, config).length > 0
   );
 }
 
@@ -733,7 +803,12 @@ export function verdictFindings(
   const nameSuffix = verdict.categories.includes("person_name")
     ? "; a name is present"
     : "";
+  // A category that a blocking finding already names is not repeated.
+  const blockingTypes = new Set(
+    blockingFindings(verdict, config).map((f) => f.type),
+  );
   for (const category of identifiableHits(verdict, config)) {
+    if (blockingTypes.has(category)) continue;
     // identifiableHits returns only answered categories.
     const probability = verdict.probabilities[category] ?? 0;
     findings.push({
@@ -744,17 +819,29 @@ export function verdictFindings(
       secretValue: `pii-sentinel:${verdict.source}:${category}:${probability}`,
     });
   }
+  // One reason line per blocking type, however many spans of it there are.
+  const shownBlockingTypes = new Set<string>();
   return [
     ...findings,
-    ...verdict.findings.map((f) => ({
-      ruleId: "pii-sentinel",
-      description: f.type.replaceAll("_", " "),
-      category: "pii" as const,
-      // Redacted as a rule finding's value is: the block reason reaches the model
-      // and the terminal, and the file or prompt it names was never read.
-      matchRedacted: redact(f.value),
-      secretValue: `pii-sentinel:${verdict.source}:${f.type}:${f.value}`,
-    })),
+    ...verdict.findings.flatMap((f) => {
+      if (isBlockingFinding(f, config)) {
+        if (shownBlockingTypes.has(f.type)) return [];
+        shownBlockingTypes.add(f.type);
+      }
+      return [
+        {
+          ruleId: "pii-sentinel",
+          description: isBlockingFinding(f, config)
+            ? `document names ${categoryReason(f.type as IdentifiableCategory)}${nameSuffix}`
+            : f.type.replaceAll("_", " "),
+          category: "pii" as const,
+          // Redacted as a rule finding's value is: the block reason reaches the model
+          // and the terminal, and the file or prompt it names was never read.
+          matchRedacted: redact(f.value),
+          secretValue: `pii-sentinel:${verdict.source}:${f.type}:${f.value}`,
+        },
+      ];
+    }),
   ];
 }
 

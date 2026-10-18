@@ -306,7 +306,7 @@ expanded there (replace `/Users/you` with your home directory):
 | Key | Default | Meaning |
 |---|---|---|
 | `socket` | | The server's Unix socket, as an absolute path. |
-| `blockOn` | `"high"` | Block at this level or above (`"high"` or `"low"`). `"identifiable"` (experimental) blocks at `"high"`, and also when an identifier or attribute reaches its `identifiableThresholds` value. Switching from `"low"` drops the level block at `low`. Opt-in, see [pii-sentinel](https://coo-quack.github.io/sensitive-canary/pii-sentinel). |
+| `blockOn` | `"high"` | Block at this level or above (`"high"` or `"low"`). `"identifiable"` (experimental) blocks at `"high"`, and also when an identifier or attribute reaches its `identifiableThresholds` value. Switching from `"low"` drops the level block at `low`. With pii-sentinel 0.5.0 it also blocks on `date_of_birth` and `postal_address` findings marked `pii: true`. Opt-in, see [pii-sentinel](https://coo-quack.github.io/sensitive-canary/pii-sentinel). |
 | `identifiableThresholds` | `0.5` for each | Under `"identifiable"`, the probability (0 to 1) at which each category blocks, by name: `email_or_phone`, `government_id`, `financial_account`, `sns_handle`, `ip_address_of_a_person`, `postal_address`, `date_of_birth`, `employment_info`, `precise_location`. Other names are refused. A threshold of 1 in effect turns a category off, and 0 blocks whenever the server reports it. A category the server does not report never blocks, and an answer without `categories` is unavailable under `"identifiable"`. The defaults are provisional. |
 | `timeoutMs` | `3000` | How long one hook call waits for the server, in total. |
 | `maxChars` | `20000` | How much of each file or prompt is sent; the model judges the beginning. |
