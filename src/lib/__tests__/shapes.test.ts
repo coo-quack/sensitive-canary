@@ -2,13 +2,20 @@ import { describe, expect, it } from "vitest";
 import { scan } from "../rules.ts";
 import {
   entropy,
+  isFillerBody,
   isNotSecretShaped,
+  isPlaceholder,
   MIN_MEAN_WORD_LENGTH,
   readsAsWords,
   SHORTEST_MEASURABLE_SEGMENT,
 } from "../shapes.ts";
 import { isRealAwsKey } from "../validators.ts";
-import { AWS_KEY, ruleIds } from "./rule-fixtures.ts";
+import {
+  AWS_KEY,
+  mixed,
+  ruleIds,
+  STRIPE_DOCS_TEST_KEY,
+} from "./rule-fixtures.ts";
 
 // The guards that decide a match is not a credential after all. Each one waves
 // a value through, so each is a way past every rule it runs over.
@@ -374,5 +381,193 @@ describe("each threshold, from both sides", () => {
       expect(isNotSecretShaped(`config.${wordsOf(3, 4)}`)).toBe(true);
       expect(isNotSecretShaped(`config.${wordsOf(2, 6)}`)).toBe(false);
     });
+  });
+});
+
+// ── filler bodies ─────────────────────────────────────────────────────────────
+
+// A value written as a run of one character, after a short prefix, is a stand-in
+// for a random tail. Every part of it must be a run, and at least one run must
+// be eight characters or more. A random tail never is, so it is still found.
+describe("a value built from filler is a placeholder", () => {
+  it.each([
+    ["ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "a GitHub token of x"],
+    ["glpat-XXXXXXXXXXXXXXXXXXXX", "a GitLab token of X"],
+    [
+      ["xoxb", "1".repeat(12), "2".repeat(12), "X".repeat(24)].join("-"),
+      "a Slack token, three runs",
+    ],
+    [
+      "AC00000000000000000000000000000000",
+      "a Twilio SID of zeros after a prefix",
+    ],
+  ])("%s is a placeholder (%s)", (value) => {
+    expect(isPlaceholder(value)).toBe(true);
+  });
+
+  it.each([
+    ["ghp_E64NXJeC2PsmvG1MkSioJyHDrW5vRGlMfaix", "a random GitHub token"],
+    [
+      `ghp_${mixed(10)}aaaaaa${mixed(20)}`,
+      "a random tail with a run of six inside it",
+    ],
+    [`ghp_kkkkkkk${mixed(29)}`, "a run of seven at the start of a random tail"],
+    [`glpat-${mixed(8)}1111${mixed(8)}`, "a run of four in a random tail"],
+    [
+      ["sk", "live", "a".repeat(26)].join("_"),
+      "a prefix word after the first part is not filler",
+    ],
+  ])("%s is not a placeholder (%s)", (value) => {
+    expect(isPlaceholder(value)).toBe(false);
+  });
+
+  // The run has to be eight characters. Seven is short of it, and a value with
+  // only seven-character runs is not a placeholder.
+  it("a run of seven is not enough on its own", () => {
+    expect(isFillerBody("ghp_xxxxxxx")).toBe(false);
+    expect(isFillerBody("ghp_xxxxxxxx")).toBe(true);
+  });
+
+  it("the letter prefix can be at most four letters in the run part", () => {
+    expect(isFillerBody("ABCDxxxxxxxx")).toBe(true);
+    expect(isFillerBody("ABCDEFxxxxxxxx")).toBe(false);
+  });
+
+  it("the first part may be a bare word of up to eight letters, others may not", () => {
+    expect(isFillerBody("abcdefgh-XXXXXXXXXXXX")).toBe(true);
+    expect(isFillerBody("abcdefghi-XXXXXXXXXXXX")).toBe(false);
+    expect(isFillerBody("token-value-XXXXXXXXXXXX")).toBe(false);
+  });
+
+  it("an empty value is not filler", () => {
+    expect(isFillerBody("")).toBe(false);
+  });
+});
+
+// The words that mark a placeholder and the words that may fill one out. A
+// marker alone makes a value a placeholder when every other part is a filler
+// word, so each new word is checked in that position.
+describe("the words a placeholder is written with", () => {
+  it.each([
+    ["mock-token-value", "mock is a marker"],
+    ["stub-secret", "stub is a marker"],
+    ["tests-only-key", "tests is a marker, only is filler"],
+    ["fake-token-for-unit-tests", "unit is filler, tests is a marker"],
+    ["use-only-fake-key", "use and only are filler"],
+  ])("%s is a placeholder (%s)", (value) => {
+    expect(isPlaceholder(value)).toBe(true);
+  });
+
+  // A marker in a real value is not a marker. The part has to be the word, not
+  // a word that happens to contain it.
+  it.each([
+    ["mock9F3x8KqLp2Vn7Ws", "mock inside a random part"],
+    ["Xk9mock2qR7vL4nW1s", "mock inside a random value"],
+    ["unit2Xk9mP2qR7vL4n", "unit with a random part after it"],
+  ])("%s is not a placeholder (%s)", (value) => {
+    expect(isPlaceholder(value)).toBe(false);
+  });
+
+  it("a filler word alone is not a marker", () => {
+    expect(isPlaceholder("unit-only-use")).toBe(false);
+  });
+});
+
+// The documented example values are matched whole, so a real value that begins
+// with one is still a value, and the quotes around a value do not count.
+describe("the values vendors print in their documentation", () => {
+  const AWS_EXAMPLE = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const STRIPE_EXAMPLE = STRIPE_DOCS_TEST_KEY;
+  const JWT_EXAMPLE =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+
+  it.each([
+    [AWS_EXAMPLE, "the AWS secret access key"],
+    [`"${AWS_EXAMPLE}"`, "the same in double quotes"],
+    [`'${AWS_EXAMPLE}'`, "the same in single quotes"],
+    [STRIPE_EXAMPLE, "the Stripe test key"],
+    [JWT_EXAMPLE, "the jwt.io token"],
+  ])("%s is a placeholder (%s)", (value) => {
+    expect(isPlaceholder(value)).toBe(true);
+  });
+
+  it.each([
+    [`${AWS_EXAMPLE}X`, "one character past the example"],
+    [`A${AWS_EXAMPLE}`, "a character before the example"],
+    ["wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLE", "the example cut short"],
+    [`${STRIPE_EXAMPLE}A`, "the Stripe key with a character added"],
+    [
+      `sk_live_${STRIPE_EXAMPLE.slice(8)}`,
+      "the Stripe body under a live prefix",
+    ],
+    [`${JWT_EXAMPLE}.x`, "the jwt.io token with a segment added"],
+  ])("%s is not a placeholder (%s)", (value) => {
+    expect(isPlaceholder(value)).toBe(false);
+  });
+
+  it("a secret with the AWS example as its prefix is still a secret", () => {
+    expect(
+      scan(`AWS_SECRET_ACCESS_KEY=${AWS_EXAMPLE}X`).some(
+        (f) => f.ruleId === "env-assignment",
+      ),
+    ).toBe(true);
+  });
+
+  it("the AWS example in its own assignment is not a finding", () => {
+    expect(
+      scan(`aws_secret_access_key = ${AWS_EXAMPLE}`).some(
+        (f) => f.ruleId === "env-assignment",
+      ),
+    ).toBe(false);
+  });
+});
+
+// The fake-token example in the password context: the env-assignment rule
+// reads the constant's name, and the value is the one that is filler.
+describe("a constant holding a fake token in a test", () => {
+  it("is not flagged", () => {
+    expect(
+      ruleIds("const password = 'fake-token-for-unit-tests'"),
+    ).not.toContain("env-assignment");
+  });
+
+  it("a real value under the same name is still flagged", () => {
+    expect(ruleIds("const password = 'Xk9mP2qR7vL4nW1s'")).toContain(
+      "env-assignment",
+    );
+  });
+});
+
+// The filesystem-path test now needs a second separator, or a home or working
+// directory prefix. A base64 value that begins with a slash is a secret.
+describe("a value that begins with a slash", () => {
+  it.each([
+    ["/etc/ssl/key", "an absolute path with two separators"],
+    ["~/.ssh/id_ed25519", "from home"],
+    ["./config/key", "from the working directory"],
+  ])("%s is a path (%s)", (value) => {
+    expect(isNotSecretShaped(value)).toBe(true);
+  });
+
+  it("a forty-character secret that begins with a slash is not a path", () => {
+    expect(isNotSecretShaped("/yvGmsLPhuxamXfuIt4mxDZncVBbdM4d4bs6SuZc")).toBe(
+      false,
+    );
+  });
+});
+
+// A quoted value is judged by what is inside the quotes. The password rules pass
+// the quotes along, and a placeholder written in quotes is still one.
+describe("a quoted value is judged without its quotes", () => {
+  it.each([
+    ["'fake-token-for-unit-tests'", "single quotes"],
+    ['"fake-token-for-unit-tests"', "double quotes"],
+    ['"ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"', "a filler run in quotes"],
+  ])("%s is a placeholder (%s)", (value) => {
+    expect(isPlaceholder(value)).toBe(true);
+  });
+
+  it("a quoted real value is not a placeholder", () => {
+    expect(isPlaceholder('"Xk9mP2qR7vL4nW1s"')).toBe(false);
   });
 });

@@ -399,7 +399,7 @@ User rules support the same fields as built-in rules:
 
 Available validators (referenced by name in the `validate` field):
 
-`luhn`, `aws-key`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`
+`luhn`, `aws-key`, `phone-jp`, `mynumber-jp`, `nir-fr`, `codice-fiscale-it`, `steuer-id-de`, `dni-nie-es`, `rrn-kr`, `brn-kr`, `resident-id-cn`, `public-ipv4`, `public-ipv6`, `password-like`, `basic-credentials`, `iban`, `phone-intl`, `nino-uk`, `phone-us`, `personal-mailbox`, `aws-secret-shape`
 
 ### Overriding the context window globally
 
@@ -418,7 +418,7 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 
 ## Detection rules
 
-### Secrets (52 rules)
+### Secrets (61 rules)
 
 | Rule ID | Description |
 |---|---|
@@ -474,21 +474,33 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `generic-secret` | Generic API key / secret assignment *(entropy ≥ 3.5)* |
 | `env-assignment` | `.env`-style secret assignment *(entropy ≥ 3.0)* |
 | `connection-string` | Database connection string with embedded credentials |
+| `aws-secret-near-key-id` | AWS Secret Access Key written beside its Access Key ID, on the same line or the next |
+| `docker-hub-pat` | Docker Hub Personal Access Token (`dckr_pat_` prefix) |
+| `http-basic-auth` | HTTP Basic `Authorization` header whose value decodes to `user:password` |
+| `http-bearer-token` | HTTP Bearer token in an `Authorization` header *(entropy ≥ 3.5)* |
+| `password-cli-flag` | Password on a command line: `--password`, `--passwd`, `--pass`, or `mysql -p'…'` |
+| `password-netrc` | `password` line in a `.netrc` file or a vault key listing |
+| `password-prose` | Password written in a sentence: `password is …`, `pw: …`, `パスワードは …` |
+| `password-json-key` | JSON value under a key that ends in `pass`, `passwd`, `password` or `pwd` |
+| `redis-auth` | Redis `AUTH` command, or `redis-cli -a` |
 
-### PII (24 rules)
+### PII (27 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
-| `pii-email` | Email address | — |
+| `pii-email` | Email address | Role addresses such as `support@` and `noreply@` are not matched |
 | `pii-credit-card` | Credit card number | Luhn check |
 | `pii-ssn` | US Social Security Number | Invalid prefix exclusion |
-| `pii-mynumber-jp` | Japanese Individual Number (My Number) | Checksum (weighted mod 11) |
+| `pii-mynumber-jp` | Japanese Individual Number (My Number) | Checksum (weighted mod 11); a twelve-digit AWS account ID in an ARN is not matched |
 | `pii-nir-fr` | French NIR / Social Security Number | Check key (mod 97) |
 | `pii-codice-fiscale-it` | Italian Codice Fiscale | Control character (mod 26) |
 | `pii-steuer-id-de` | German Steuer-Identifikationsnummer | MOD 11,10 |
 | `pii-dni-nie-es` | Spanish DNI / NIE | Control letter (mod 23) |
-| `pii-phone-us` | US phone number | — |
+| `pii-iban` | IBAN | Length for the common countries, and mod-97 check digits |
+| `pii-nino-uk` | UK National Insurance number (spaced form, `AB 12 34 56 C`) | Excluded letters and prefixes |
+| `pii-phone-us` | US phone number | Area code and exchange: 555 and toll-free numbers are not matched |
 | `pii-phone-jp` | Japanese phone number | — |
+| `pii-phone-intl` | International phone number with a country code (`+49 151 85280948`) | Nine to fifteen digits |
 | `pii-phone-fr` | French phone number | Context-gated |
 | `pii-phone-it` | Italian phone number | Context-gated |
 | `pii-phone-de` | German phone number | Context-gated |
