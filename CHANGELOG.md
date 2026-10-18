@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- A run of spaces or tabs made the scan take 12 seconds and then fail closed. The `pii-email` exemption for an address after `ssh`, `scp`, `rsync` or `sftp` walked back over each run of white space from every position: 20,000 spaces took 478 ms, 50,000 took 2.9 s and 100,000 took 12.4 s, when `scan()` threw `ScanBudgetExceeded`. Now the white space between words is at most 16 characters and each argument at most 64, so 200,000 spaces, 200,000 tabs and 100,000 `a ` pairs each scan in about 20 ms. `ssh deploy@bastion.analytical-engines.org` and `scp build.tar ops@files.analytical-engines.org:/srv/` are still not findings. An address after an argument of 65 characters, or after 17 spaces, is a finding now; `docs/rules.md` states the bounds
+- Unclosed synthetic tags made `userTypedText` quadratic: 20,000 unclosed `<command-name>` (280 KB) took 0.8 to 4.6 s here, and the function runs on every user line of a transcript. The four regular expression passes are now one linear pass, and the same input takes 0.2 ms. Paired and unclosed elements and fences are removed as before
+- The `pii-sentinel` timeout restarted with every byte, although `docs/pii-sentinel.md` describes `timeoutMs` as the wait for one hook call in total. A server that wrote one byte every 100 ms and never finished held the hook for more than 5 seconds with `timeoutMs` set to 300 ms. The call now ends at `timeoutMs` in total: 305 ms in the same probe, with the connection closed
+
 ## v0.13.0 (2026-10-18)
 
 ### Features

@@ -742,6 +742,12 @@ describe("scan — adversarial inputs", () => {
       "birth labels with a broken date": "DOB x: 1990-05-".repeat(15_000),
       // pii-customer-number: the separator class after each label is walked, then the value fails
       "customer labels with no number": "customer id ".repeat(20_000),
+      // pii-email: the ssh exemption walks back over each run of spaces, bounded at sixteen
+      spaces: " ".repeat(200_000),
+      // pii-email: the same walk over a run of tabs
+      tabs: "\t".repeat(200_000),
+      // pii-email: each word and its space are walked back, with the argument bounded at sixty-four
+      "words and spaces": "a ".repeat(100_000),
     };
 
     // The column pass runs once per call, after the regex loop, so it is timed
@@ -811,6 +817,14 @@ describe("ordinary work is not a finding", () => {
     ["git clone git@github.com:acme/widgets.git", "git over ssh"],
     ["ssh deploy@bastion.analytical-engines.org", "an ssh target"],
     ["scp build.tar ops@files.analytical-engines.org:/srv/", "an scp target"],
+    [
+      "ssh      deploy@bastion.analytical-engines.org",
+      "an ssh target after six spaces",
+    ],
+    [
+      `scp ${"x".repeat(64)} deploy@files.analytical-engines.org`,
+      "an scp argument of 64 characters",
+    ],
     ["rsync -a ops@files.analytical-engines.org:/srv/ .", "an rsync target"],
     ["ping 10.0.0.1", "a private address"],
     ["curl http://10.0.0.5:8080/health", "a private address in a URL"],
@@ -836,6 +850,35 @@ describe("ordinary work is not a finding", () => {
   it("an ssh public key is not a Square token", () => {
     const key = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDEAAAJ1${mixed(60)}`;
     expect(flags(key)).toEqual([]);
+  });
+});
+
+// The ssh, scp, rsync and sftp exemption covers at most two arguments of up to
+// 64 characters, with up to 16 spaces or tabs between words. Past those bounds
+// the address after the command is a finding, and docs/rules.md says so. Both
+// sides are pinned: the exempt side would pass with the bounds removed too.
+describe("the ssh and scp exemption stops at its bounds", () => {
+  const hits = (text: string): string[] => scan(text).map((f) => f.ruleId);
+  const host = "deploy@bastion.analytical-engines.org";
+
+  it.each([
+    [`ssh${" ".repeat(16)}${host}`, "sixteen spaces before the address"],
+    [
+      `scp ${"x".repeat(64)} ops@files.analytical-engines.org`,
+      "a 64-character argument",
+    ],
+  ])("%s is still exempt (%s)", (text) => {
+    expect(hits(text)).toEqual([]);
+  });
+
+  it.each([
+    [`ssh${" ".repeat(17)}${host}`, "seventeen spaces before the address"],
+    [
+      `scp ${"x".repeat(65)} ops@files.analytical-engines.org`,
+      "a 65-character argument",
+    ],
+  ])("%s is a finding (%s)", (text) => {
+    expect(hits(text)).toEqual(["pii-email"]);
   });
 });
 
