@@ -22,11 +22,12 @@ import {
   randomBird,
 } from "./lib/inspector.ts";
 import {
+  blockPhrase,
   connectionTarget,
   judge,
   REFUSED_SOCKET_NOTE,
-  reachesBlockLevel,
   readPiiSentinelConfig,
+  verdictBlocks,
   verdictFindings,
 } from "./lib/pii-sentinel.ts";
 import { addProgramEnvironment } from "./lib/program-environment.ts";
@@ -917,12 +918,12 @@ async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
     );
   }
   for (const verdict of verdicts) {
-    if (!reachesBlockLevel(verdict.level, config)) continue;
-    const findings = verdictFindings(verdict);
+    if (!verdictBlocks(verdict, config)) continue;
+    const findings = verdictFindings(verdict, config);
     block(
       verdict.source,
       [
-        `🚫 Blocked: pii-sentinel judged this file ${verdict.level} sensitivity`,
+        `🚫 Blocked: pii-sentinel ${blockPhrase(verdict, config, "this file")}`,
         "",
         ...findingsToLines(findings),
       ],

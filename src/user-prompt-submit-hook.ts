@@ -12,11 +12,12 @@ import {
   typedTextOf,
 } from "./lib/inspector.ts";
 import {
+  blockPhrase,
   connectionTarget,
   judge,
   REFUSED_SOCKET_NOTE,
-  reachesBlockLevel,
   readPiiSentinelConfig,
+  verdictBlocks,
   verdictFindings,
 } from "./lib/pii-sentinel.ts";
 import {
@@ -108,10 +109,10 @@ async function consultPiiSentinel(
       "To send this prompt anyway, add [allow-pii] to it.",
     ]);
   const verdict = verdicts[0];
-  if (verdict && reachesBlockLevel(verdict.level, config)) {
-    const findings = verdictFindings(verdict);
+  if (verdict && verdictBlocks(verdict, config)) {
+    const findings = verdictFindings(verdict, config);
     blockPrompt([
-      `pii-sentinel judged this prompt ${verdict.level} sensitivity — blocked`,
+      `pii-sentinel ${blockPhrase(verdict, config, "this prompt")} — blocked`,
       ...findingsToLines(findings),
       "",
       "To allow, add a tag to your prompt:",

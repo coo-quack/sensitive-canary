@@ -19,13 +19,74 @@ import { join } from "node:path";
 import type { Finding } from "./rules.ts";
 import { redact, userConfigFromCache } from "./rules.ts";
 
-export type Level = "none" | "low" | "high";
+type Level = "none" | "low" | "high";
+
+// The categories `blockOn: "identifiable"` consults. An identifier reaches a
+// person on its own; an attribute does so once it is linked to a name. The
+// noun is what a block reason calls the category. The threshold is a
+// placeholder: the measured thresholds from coo-quack/pii-sentinel#46 replace
+// these 0.5s before the option is recommended.
+const CATEGORY = {
+  email_or_phone: {
+    kind: "identifier",
+    noun: "an e-mail address or phone number",
+    threshold: 0.5,
+  },
+  government_id: {
+    kind: "identifier",
+    noun: "a government ID",
+    threshold: 0.5,
+  },
+  financial_account: {
+    kind: "identifier",
+    noun: "a financial account",
+    threshold: 0.5,
+  },
+  sns_handle: {
+    kind: "identifier",
+    noun: "a social media handle",
+    threshold: 0.5,
+  },
+  ip_address_of_a_person: {
+    kind: "identifier",
+    noun: "an IP address",
+    threshold: 0.5,
+  },
+  postal_address: {
+    kind: "attribute",
+    noun: "a postal address",
+    threshold: 0.5,
+  },
+  date_of_birth: { kind: "attribute", noun: "a date of birth", threshold: 0.5 },
+  employment_info: { kind: "attribute", noun: "a workplace", threshold: 0.5 },
+  precise_location: {
+    kind: "attribute",
+    noun: "a precise location",
+    threshold: 0.5,
+  },
+} satisfies Record<
+  string,
+  { kind: "identifier" | "attribute"; noun: string; threshold: number }
+>;
+type IdentifiableCategory = keyof typeof CATEGORY;
+type Thresholds = Record<IdentifiableCategory, number>;
+const IDENTIFIABLE_CATEGORIES = Object.keys(CATEGORY) as IdentifiableCategory[];
+
+function defaultThresholds(): Thresholds {
+  return Object.fromEntries(
+    IDENTIFIABLE_CATEGORIES.map((category) => [
+      category,
+      CATEGORY[category].threshold,
+    ]),
+  ) as Thresholds;
+}
 
 export interface PiiSentinelConfig {
   socket: string;
   timeoutMs: number;
   maxChars: number;
-  blockOn: Exclude<Level, "none">;
+  blockOn: "high" | "low" | "identifiable";
+  identifiableThresholds: Thresholds;
   onUnavailable: "block" | "allow";
 }
 
@@ -33,10 +94,12 @@ export interface Verdict {
   source: string;
   level: Level;
   categories: string[];
+  // Every numeric category the server answered, not only those at 0.5 or above.
+  probabilities: Record<string, number>;
   findings: { type: string; value: string }[];
 }
 
-export interface Judgement {
+interface Judgement {
   verdicts: Verdict[];
   // Why the server could not answer, when it could not.
   unavailable: string | null;
@@ -84,7 +147,11 @@ export function readPiiSentinelConfig(
   const socket = r["socket"];
   if (typeof socket !== "string" || socket === "")
     return '"socket" must be a path';
-  const config: PiiSentinelConfig = { ...DEFAULTS, socket };
+  const config: PiiSentinelConfig = {
+    ...DEFAULTS,
+    socket,
+    identifiableThresholds: defaultThresholds(),
+  };
   for (const [key, min, max] of [
     ["timeoutMs", 100, 60_000],
     ["maxChars", 1, 1_000_000],
@@ -100,9 +167,21 @@ export function readPiiSentinelConfig(
     config[key] = value as number;
   }
   if (r["blockOn"] !== undefined) {
-    if (r["blockOn"] !== "high" && r["blockOn"] !== "low")
-      return '"blockOn" must be "high" or "low"';
+    if (
+      r["blockOn"] !== "high" &&
+      r["blockOn"] !== "low" &&
+      r["blockOn"] !== "identifiable"
+    )
+      return '"blockOn" must be "high", "low" or "identifiable"';
     config.blockOn = r["blockOn"];
+  }
+  if (r["identifiableThresholds"] !== undefined) {
+    const thresholds = readThresholds(r["identifiableThresholds"]);
+    if (typeof thresholds === "string") return thresholds;
+    config.identifiableThresholds = {
+      ...config.identifiableThresholds,
+      ...thresholds,
+    };
   }
   if (r["onUnavailable"] !== undefined) {
     if (r["onUnavailable"] !== "block" && r["onUnavailable"] !== "allow")
@@ -110,6 +189,29 @@ export function readPiiSentinelConfig(
     config.onUnavailable = r["onUnavailable"];
   }
   return config;
+}
+
+// A map from category name to a probability from 0 to 1. Only the identifier
+// and attribute categories are accepted: a threshold set on another category
+// is refused rather than ignored, since it would look as if it applied.
+function readThresholds(raw: unknown): Partial<Thresholds> | string {
+  const names = IDENTIFIABLE_CATEGORIES.join(", ");
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return `"identifiableThresholds" must be an object from category name to a number from 0 to 1 (${names})`;
+  const thresholds: Partial<Thresholds> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (!(IDENTIFIABLE_CATEGORIES as readonly string[]).includes(name))
+      return `"identifiableThresholds" names "${name}", which is not an identifier or attribute category: use one of ${names}`;
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      value > 1
+    )
+      return `"identifiableThresholds.${name}" must be a number from 0 to 1`;
+    thresholds[name as IdentifiableCategory] = value;
+  }
+  return thresholds;
 }
 
 function post(
@@ -453,7 +555,11 @@ async function userdbIsPrivate(
 // goes, and the block reason says "finding" in its place.
 const FINDING_TYPE = /^[a-z0-9_]{1,40}$/i;
 
-function toVerdict(source: string, report: unknown): Verdict {
+function toVerdict(
+  source: string,
+  report: unknown,
+  blockOn: PiiSentinelConfig["blockOn"],
+): Verdict {
   const r = report as {
     sensitivity?: { level?: unknown };
     categories?: unknown;
@@ -462,12 +568,30 @@ function toVerdict(source: string, report: unknown): Verdict {
   const level = r?.sensitivity?.level;
   if (level !== "none" && level !== "low" && level !== "high")
     throw new Error("answered without a sensitivity level");
-  const categories =
-    r.categories && typeof r.categories === "object"
-      ? Object.entries(r.categories as Record<string, unknown>)
-          .filter(([, p]) => typeof p === "number" && p >= 0.5)
-          .map(([name]) => name)
-      : [];
+  const probabilities: Record<string, number> = {};
+  const reported = r.categories;
+  if (blockOn === "identifiable") {
+    // The categories decide the block under this setting, so an answer that
+    // leaves them out or garbles one is unavailable, not a pass.
+    if (
+      reported === null ||
+      typeof reported !== "object" ||
+      Array.isArray(reported)
+    )
+      throw new Error("answered without categories");
+    for (const [name, p] of Object.entries(reported)) {
+      if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1)
+        throw new Error(
+          `answered with a probability for ${FINDING_TYPE.test(name) ? name : "a category"} that is not a number from 0 to 1`,
+        );
+      probabilities[name] = p;
+    }
+  } else if (reported && typeof reported === "object")
+    for (const [name, p] of Object.entries(reported as Record<string, unknown>))
+      if (typeof p === "number") probabilities[name] = p;
+  const categories = Object.entries(probabilities)
+    .filter(([, p]) => p >= 0.5)
+    .map(([name]) => name);
   const findings = Array.isArray(r.findings)
     ? r.findings
         .filter(
@@ -480,7 +604,7 @@ function toVerdict(source: string, report: unknown): Verdict {
           value,
         }))
     : [];
-  return { source, level, categories, findings };
+  return { source, level, categories, probabilities, findings };
 }
 
 // Ask about each text in turn within one deadline for the whole call. Only the
@@ -517,6 +641,7 @@ export async function judge(
         toVerdict(
           source,
           await post(config, text.slice(0, config.maxChars), left),
+          config.blockOn,
         ),
       );
     } catch (e) {
@@ -530,26 +655,97 @@ export async function judge(
   return { verdicts, unavailable: null, refused: null };
 }
 
-export function reachesBlockLevel(
-  level: Level,
+// Whether the level blocks. Under "identifiable" only "high" does: the
+// identifiers and attributes are judged by their own thresholds instead.
+function reachesBlockLevel(level: Level, config: PiiSentinelConfig): boolean {
+  const blockLevel =
+    config.blockOn === "identifiable" ? "high" : config.blockOn;
+  return RANK[level] >= RANK[blockLevel];
+}
+
+// The identifier and attribute categories at or above their thresholds. Only
+// under "identifiable", and only for a category the server answered: an absent
+// one is not treated as zero, so a threshold of 0 cannot block on it.
+function identifiableHits(
+  verdict: Verdict,
+  config: PiiSentinelConfig,
+): IdentifiableCategory[] {
+  if (config.blockOn !== "identifiable") return [];
+  return IDENTIFIABLE_CATEGORIES.filter((category) => {
+    const probability = verdict.probabilities[category];
+    return (
+      probability !== undefined &&
+      probability >= config.identifiableThresholds[category]
+    );
+  });
+}
+
+export function verdictBlocks(
+  verdict: Verdict,
   config: PiiSentinelConfig,
 ): boolean {
-  return RANK[level] >= RANK[config.blockOn];
+  return (
+    reachesBlockLevel(verdict.level, config) ||
+    identifiableHits(verdict, config).length > 0
+  );
+}
+
+// The reason a category block gives. An identifier identifies a person by
+// itself; an attribute does so once it is linked to a name, which the reason
+// says, since the name may be in this conversation or another.
+function categoryReason(category: IdentifiableCategory): string {
+  const { kind, noun } = CATEGORY[category];
+  return kind === "identifier"
+    ? `${noun}, which identifies a person on its own`
+    : `${noun}, which identifies a person once it is linked to a name, in this conversation or another`;
+}
+
+// What a blocked verdict was judged for, as the hooks say it after
+// "pii-sentinel": the level, or the identifiers and attributes that reached
+// their thresholds. `subject` is "this file" or "this prompt".
+export function blockPhrase(
+  verdict: Verdict,
+  config: PiiSentinelConfig,
+  subject: string,
+): string {
+  return reachesBlockLevel(verdict.level, config)
+    ? `judged ${subject} ${verdict.level} sensitivity`
+    : `found identifiers or attributes that can pin a person down in ${subject}`;
 }
 
 // The model's findings in the shape the rule findings are reported in, so the
 // block message and the allow tags treat them the same way: they are PII, and
-// `[allow-pii]` lifts them.
-export function verdictFindings(verdict: Verdict): Finding[] {
-  const level: Finding = {
-    ruleId: "pii-sentinel",
-    description: `document judged ${verdict.level}${verdict.categories.length ? ` (${verdict.categories.join(", ")})` : ""}`,
-    category: "pii",
-    matchRedacted: verdict.source,
-    secretValue: `pii-sentinel:${verdict.source}`,
-  };
+// `[allow-pii]` lifts them. A level block and each category block are findings
+// too, so the message says why the verdict was blocked.
+export function verdictFindings(
+  verdict: Verdict,
+  config: PiiSentinelConfig,
+): Finding[] {
+  const findings: Finding[] = [];
+  if (reachesBlockLevel(verdict.level, config))
+    findings.push({
+      ruleId: "pii-sentinel",
+      description: `document judged ${verdict.level}${verdict.categories.length ? ` (${verdict.categories.join(", ")})` : ""}`,
+      category: "pii",
+      matchRedacted: verdict.source,
+      secretValue: `pii-sentinel:${verdict.source}`,
+    });
+  const nameSuffix = verdict.categories.includes("person_name")
+    ? "; a name is present"
+    : "";
+  for (const category of identifiableHits(verdict, config)) {
+    // identifiableHits returns only answered categories.
+    const probability = verdict.probabilities[category] ?? 0;
+    findings.push({
+      ruleId: "pii-sentinel",
+      description: `document names ${categoryReason(category)}${nameSuffix}`,
+      category: "pii",
+      matchRedacted: probability.toFixed(2),
+      secretValue: `pii-sentinel:${verdict.source}:${category}:${probability}`,
+    });
+  }
   return [
-    level,
+    ...findings,
     ...verdict.findings.map((f) => ({
       ruleId: "pii-sentinel",
       description: f.type.replaceAll("_", " "),
