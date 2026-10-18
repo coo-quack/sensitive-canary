@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { blockOnUnhandledError, failClosed } from "./lib/fail-closed.ts";
+import { blockOnUnhandledError } from "./lib/fail-closed.ts";
+import { parsePayload, readStdin } from "./lib/hook-payload.ts";
 import {
   allowTagLines,
   applyAllowTags,
@@ -11,14 +12,7 @@ import {
   resolveTagPriority,
   typedTextOf,
 } from "./lib/inspector.ts";
-import {
-  connectionTarget,
-  judge,
-  REFUSED_SOCKET_NOTE,
-  reachesBlockLevel,
-  readPiiSentinelConfig,
-  verdictFindings,
-} from "./lib/pii-sentinel.ts";
+import { consultPiiSentinel, REFUSED_SOCKET_NOTE } from "./lib/pii-sentinel.ts";
 import {
   beginScanBudget,
   enabledCategoriesFromEnv,
@@ -77,94 +71,73 @@ function blockPrompt(lines: string[]): never {
   process.exit(2);
 }
 
-// Ask the user's pii-sentinel server about a prompt the rules let through. Only
-// with a `piiSentinel` entry in the config and the PII category on; `[allow-pii]`
-// lifts it. See the PreToolUse hook for why a silent server blocks by default.
-async function consultPiiSentinel(
+// A prompt the rules let through is asked of the pii-sentinel server as well.
+// Whether it is asked, and what the answer blocks on, is decided in
+// lib/pii-sentinel.ts. Only the wording of each block is this hook's.
+async function blockOnPiiSentinel(
   prompt: string,
   allow: Set<string>,
 ): Promise<void> {
-  if (prompt.trim() === "" || !ENABLED_CATEGORIES.has("pii")) return;
-  if (allow.has("pii") || allow.has("all")) return;
-  const config = readPiiSentinelConfig();
-  if (config === null) return;
-  if (typeof config === "string")
+  // An empty prompt is nothing to send. Left to the check, the socket would still
+  // be looked at, and a refused socket would block a prompt with nothing in it.
+  const texts =
+    prompt.trim() === "" ? [] : [{ source: "prompt", text: prompt }];
+  const decision = await consultPiiSentinel(
+    texts,
+    allow,
+    ENABLED_CATEGORIES,
+    "this prompt",
+  );
+  if (decision.kind === "pass") return;
+  if (decision.kind === "settings") {
     blockPrompt([
       `the "piiSentinel" entry in ${USER_CONFIG_PATH} cannot be used — blocked`,
-      `  ${config}`,
+      `  ${decision.problem}`,
       "",
       "Fix the entry, or remove it to stop asking pii-sentinel.",
     ]);
-  const { verdicts, unavailable, refused } = await judge(
-    [{ source: "prompt", text: prompt }],
-    config,
-  );
-  if (refused !== null)
+  }
+  if (decision.kind === "refused") {
     blockPrompt([
       "the pii-sentinel socket was refused — blocked",
-      `  ${connectionTarget(config)}: ${refused}`,
+      `  ${decision.target}: ${decision.reason}`,
       "",
       REFUSED_SOCKET_NOTE,
       "To send this prompt anyway, add [allow-pii] to it.",
     ]);
-  const verdict = verdicts[0];
-  if (verdict && reachesBlockLevel(verdict.level, config)) {
-    const findings = verdictFindings(verdict);
+  }
+  if (decision.kind === "judged") {
     blockPrompt([
-      `pii-sentinel judged this prompt ${verdict.level} sensitivity — blocked`,
-      ...findingsToLines(findings),
+      `pii-sentinel ${decision.phrase} — blocked`,
+      ...findingsToLines(decision.findings),
       "",
       "To allow, add a tag to your prompt:",
-      ...allowTagLines(findings),
+      ...allowTagLines(decision.findings),
     ]);
   }
-  if (unavailable !== null && config.onUnavailable === "block")
+  if (decision.kind === "unavailable") {
     blockPrompt([
       "pii-sentinel did not answer — blocked",
-      `  ${connectionTarget(config)}: ${unavailable}`,
+      `  ${decision.target}: ${decision.reason}`,
       "",
       'Start it with `pii-sentinel serve`, set "onUnavailable": "allow" in the "piiSentinel" entry, or add [allow-pii] to your prompt.',
     ]);
+  }
 }
 
-let raw = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk: string) => (raw += chunk));
-// The handler is async because the pii-sentinel server is asked over a socket.
-// An async listener's throw is a rejected promise, not an uncaught exception,
-// and on Node 24 a rejection here ended the process with 0 — a scan that could
-// not finish passed the call. Caught explicitly so it stops the call instead.
-process.stdin.on("end", () => {
-  main().catch(failClosed);
-});
+readStdin(main);
 
-async function main(): Promise<void> {
+async function main(raw: string): Promise<void> {
   // Started here rather than at module load: the wait for stdin belongs to the
   // runtime, and counting it against the scan let a slow handover spend the
   // whole allowance before anything was read.
   beginScanBudget();
-  let data: HookInput;
-  try {
-    // Empty stdin is nothing to check. Bytes that do not parse are a check that
-    // could not read its input, which is not the same as safe: two characters
-    // missing from the end of a payload are enough to hide a key.
-    if (raw.trim().length === 0) process.exit(0);
-    const parsed: unknown = JSON.parse(raw);
-    // `JSON.parse("null")` succeeds and returns null, which then threw on the
-    // first field read. A payload that is not an object carries no prompt.
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
-      process.exit(0);
-    data = parsed as HookInput;
-  } catch (error) {
-    // The check never started, so it vouches for nothing. Everything else that
-    // cannot finish stops the call; input that will not parse is the same case.
-    failClosed(error);
-  }
+  const data = parsePayload(raw) as HookInput;
 
   // Whatever the runtime sends. Not throwing on a prompt that is not a string
   // was only half of it: coercing to "" made the hook exit 0 on the shapes it
   // could not read, which is the same silence as never running. Every string
-  // inside the value is collected instead, to a bounded depth, so
+  // inside the value is collected instead, at whatever depth it sits, so
   // `{"prompt":{"text":"…"}}` and `{"prompt":["…"]}` are read like a prompt.
   const prompt = collectStrings(data.prompt).join("\n");
 
@@ -183,7 +156,7 @@ async function main(): Promise<void> {
   );
 
   if (afterAllow.length === 0) {
-    await consultPiiSentinel(prompt, effectiveAllow);
+    await blockOnPiiSentinel(prompt, effectiveAllow);
     process.exit(0);
   }
 

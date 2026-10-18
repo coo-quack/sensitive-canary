@@ -12,7 +12,8 @@ import {
   utf8Runs,
   utf16GuessRuns,
 } from "./lib/encoding.ts";
-import { blockOnUnhandledError, failClosed } from "./lib/fail-closed.ts";
+import { blockOnUnhandledError } from "./lib/fail-closed.ts";
+import { parsePayload, readStdin } from "./lib/hook-payload.ts";
 import {
   allowTagLines,
   applyAllowTags,
@@ -21,20 +22,14 @@ import {
   forOutput,
   randomBird,
 } from "./lib/inspector.ts";
-import {
-  connectionTarget,
-  judge,
-  REFUSED_SOCKET_NOTE,
-  reachesBlockLevel,
-  readPiiSentinelConfig,
-  verdictFindings,
-} from "./lib/pii-sentinel.ts";
+import { consultPiiSentinel, REFUSED_SOCKET_NOTE } from "./lib/pii-sentinel.ts";
 import { addProgramEnvironment } from "./lib/program-environment.ts";
 import {
   beginScanBudget,
   enabledCategoriesFromEnv,
   type Finding,
   scan,
+  scanBudgetElapsed,
   USER_CONFIG_PATH,
 } from "./lib/rules.ts";
 import {
@@ -124,21 +119,30 @@ const modelTexts: { source: string; text: string }[] = [];
 // checked between files, so it bounds the reading of many files where a byte
 // count would not. It does not bound a single `globSync` call, which cannot be
 // interrupted: a pattern several directories deep still costs what the walk
-// costs. Files after the deadline are not scanned, and a `.env` name reached
-// after it falls back on the name.
+// costs. Files reached once the read window (`READ_WINDOW_MS`) has closed are not
+// scanned, and a `.env` name reached after it falls back on the name.
 //
-// Both clocks start when the payload arrives, not when the process does. The
-// wait for stdin belongs to the runtime, and counting it against the scan lets
-// a slow handover spend the whole allowance before a single file is read.
-let DEADLINE = Number.POSITIVE_INFINITY;
+// The clock is the scan budget's (see rules.ts), so it starts when the payload
+// arrives, not when the process does. The wait for stdin belongs to the runtime,
+// and counting it against the scan lets a slow handover spend the whole
+// allowance before a single file is read. Files are not read once the window
+// has gone; the rules themselves get the budget's full ten seconds.
+//
+// The window is five seconds. `SENSITIVE_CANARY_DEADLINE_MS` is a test seam,
+// not a setting: it is honoured only when `VITEST` is set, which vitest does in
+// the processes it runs, so a shell or a Claude Code `env` block cannot shorten
+// the window. A value that is not a positive integer falls back to the default
+// silently.
+const DEFAULT_WINDOW_MS = 5_000;
 
-function startTheClock(): void {
-  DEADLINE = Date.now() + 5_000;
-  // One budget for the whole invocation rather than one per `scan()` call: a
-  // call is made per environment variable and per end of each file, so the
-  // payload sets how many there are.
-  beginScanBudget();
+function readWindowMs(): number {
+  if (process.env["VITEST"] === undefined) return DEFAULT_WINDOW_MS;
+  const raw = process.env["SENSITIVE_CANARY_DEADLINE_MS"];
+  const ms = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : 0;
+  return Number.isSafeInteger(ms) && ms > 0 ? ms : DEFAULT_WINDOW_MS;
 }
+
+const READ_WINDOW_MS = readWindowMs();
 
 // The directory a relative path is relative to. Set from the payload before any
 // scanning; `process.cwd()` is where the hook was started, which is not
@@ -575,7 +579,7 @@ function blockUnreadEnvFile(
   // checkout without one is an ordinary command, and the plain `.env` guard
   // above already decides the names that are blocked whether they exist or not.
   if (!fs.existsSync(filePath)) return;
-  if (allowTags.has("secret") || allowTags.has("all")) return;
+  if (allowTags.has("secret")) return;
   const shown = shownPath(filePath);
   block(
     shown,
@@ -614,8 +618,8 @@ function scanEnvironment(names: string[], allowTags: Set<string>): void {
 // Files named outright, then the ones a pattern has to be expanded to find.
 //
 // Expanding a pattern costs what the walk costs and cannot be interrupted, so a
-// deep one spent the call's whole deadline — and every file named after it in
-// the same command went unscanned. `cat ~/*/*/*/*/* secrets` read nothing of
+// deep one could use up the read window, and every file named after it in the
+// same command went unscanned. `cat ~/*/*/*/*/* secrets` read nothing of
 // `secrets`. Ordering does not make the walk cheaper; it stops one token
 // starving the rest.
 function scanPathsLiteralsFirst(
@@ -685,51 +689,18 @@ function readListHead(listPath: string): string | null {
   }
 }
 
-function scanFile(filePath: string, allowTags: Set<string>): void {
-  // What every message below calls the file; `filePath` is what is opened.
-  const shown = shownPath(filePath);
-  if (shouldBlockEnvFile(filePath)) {
-    // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
-    // secret category is on — so the tag that lifts it has to be one that allows
-    // secrets. Asking only whether any tag was present let `[allow-banana]` and
-    // a mistyped `[allow-pi]` turn it off.
-    //
-    // Lifting the name guard is not permission to skip the file: `[allow-secret]`
-    // says nothing about the PII in it, and returning here skipped the content
-    // scan along with the name. So this falls through, and `applyAllowTags`
-    // below drops the findings the tag really covers.
-    if (!allowTags.has("secret") && !allowTags.has("all")) {
-      block(
-        shown,
-        [ENV_BLOCK_REASON],
-        buildAllowHints(`please read ${forOutput(shown)}`, [], true),
-      );
-    }
-  }
+// What one read of a file yields for scanning: the head of the file, and for a
+// file past the cap also its tail, each as the text the rules are run over.
+interface ScanWindows {
+  content: string;
+  tailContent: string;
+  // Whether the read stopped short of the end of the file, or of its text.
+  readWasPartial: boolean;
+}
 
-  // The name guard above runs first and on the name alone, so `cat .env.missing`
-  // is still blocked. Everything past here opens the file.
-  //
-  // Each of these is a way of not reading it: something that is not a regular
-  // file, a budget already spent, a deadline already passed. For a `.env` name
-  // the contents were what the template exemption relied on, so when they are
-  // not going to be read the name decides — otherwise naming enough large files
-  // first was a way past the guard, and so was a FIFO called `.env.x.example`.
-  if (!isRegularFile(filePath)) {
-    blockUnreadEnvFile(filePath, allowTags);
-    return;
-  }
-  if (scanned.has(filePath)) return;
-  scanned.add(filePath);
-  if (bytesScanned >= MAX_TOTAL_SCAN_BYTES) {
-    blockUnreadEnvFile(filePath, allowTags);
-    return;
-  }
-  if (Date.now() > DEADLINE) {
-    blockUnreadEnvFile(filePath, allowTags);
-    return;
-  }
-
+// Reads the windows a file is scanned through. Null when the file cannot be read,
+// and then there is nothing to scan or to judge.
+function readScanWindows(filePath: string): ScanWindows | null {
   let content: string;
   let tailContent = "";
   let readWasPartial = false;
@@ -751,11 +722,11 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     try {
       const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
       raw = buf.subarray(0, bytesRead);
-      // The end as well as the beginning, when there is more than the cap
-      // between them. `tail -2 app.log` prints the last two lines and the cap
-      // reads the first megabyte, so on a large log the scan looked at exactly
-      // the part that was not shown — and the last lines of a log are where a
-      // failure has just printed a connection string.
+      // The end as well as the beginning, when the file is larger than the cap.
+      // The head window holds the start of the file; the tail window holds its
+      // last megabyte, because the last lines of a log are the ones shown by
+      // `tail -2 app.log`, and a failure has just printed its connection string
+      // there. A file of exactly the cap is its own head, so it has no tail.
       const size = fs.fstatSync(fd).size;
       if (size > MAX_FILE_SCAN_BYTES) {
         const end = Buffer.alloc(MAX_FILE_SCAN_BYTES);
@@ -806,6 +777,9 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     // is one in the text, not one in the bytes — UTF-16 is half NUL by
     // construction, and reading those bytes directly makes every UTF-16 file
     // partial.
+    // A read that fills the buffer counts as cut, since it cannot be told from a
+    // longer file. The cost is a file of exactly the cap, which is judged on its
+    // name when it is a template.
     const hitTheCut = raw.length >= MAX_FILE_SCAN_BYTES;
     if (utf16 === null) {
       readWasPartial = raw.indexOf(0) !== -1 || hitTheCut;
@@ -828,9 +802,19 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
       content = utf16.fromBom ? decoded : `${decoded}\n${utf8Runs(raw)}`;
     }
   } catch {
-    return;
+    return null;
   }
+  return { content, tailContent, readWasPartial };
+}
 
+// Judges the windows of one read: the `.env` template exemption, then each window
+// against the rules, then the text for pii-sentinel.
+function judgeScanWindows(
+  filePath: string,
+  shown: string,
+  { content, tailContent, readWasPartial }: ScanWindows,
+  allowTags: Set<string>,
+): void {
   // Exempting a template name from the guard assumed the contents would be read
   // instead. A NUL byte and the per-file cut both stop that, and a file named
   // `.env.something.example` carrying either was passing on its name after all.
@@ -839,8 +823,7 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
     readWasPartial &&
     isEnvNameOrTarget(filePath) &&
     ENABLED_CATEGORIES.has("secret") &&
-    !allowTags.has("secret") &&
-    !allowTags.has("all")
+    !allowTags.has("secret")
   ) {
     block(
       shown,
@@ -877,63 +860,159 @@ function scanFile(filePath: string, allowTags: Set<string>): void {
   modelTexts.push({ source: shown, text: content });
 }
 
+function scanFile(filePath: string, allowTags: Set<string>): void {
+  // What every message below calls the file; `filePath` is what is opened.
+  const shown = shownPath(filePath);
+  if (shouldBlockEnvFile(filePath)) {
+    // The guard is a secret guard — `shouldBlockEnvFile` already asks whether the
+    // secret category is on — so the tag that lifts it has to be one that allows
+    // secrets. Asking only whether any tag was present let `[allow-banana]` and
+    // a mistyped `[allow-pi]` turn it off.
+    //
+    // Lifting the name guard is not permission to skip the file: `[allow-secret]`
+    // says nothing about the PII in it, and returning here skipped the content
+    // scan along with the name. So this falls through, and `applyAllowTags`
+    // below drops the findings the tag really covers.
+    if (!allowTags.has("secret")) {
+      block(
+        shown,
+        [ENV_BLOCK_REASON],
+        buildAllowHints(`please read ${forOutput(shown)}`, [], true),
+      );
+    }
+  }
+
+  // The name guard above runs first and on the name alone, so `cat .env.missing`
+  // is still blocked. Everything past here opens the file.
+  //
+  // Each of these is a way of not reading it: something that is not a regular
+  // file, a budget already spent, a read window already closed. For a `.env` name
+  // the contents were what the template exemption relied on, so when they are
+  // not going to be read the name decides — otherwise naming enough large files
+  // first was a way past the guard, and so was a FIFO called `.env.x.example`.
+  if (!isRegularFile(filePath)) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
+  if (scanned.has(filePath)) return;
+  scanned.add(filePath);
+  if (bytesScanned >= MAX_TOTAL_SCAN_BYTES) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
+  if (scanBudgetElapsed() > READ_WINDOW_MS) {
+    blockUnreadEnvFile(filePath, allowTags);
+    return;
+  }
+  const windows = readScanWindows(filePath);
+  if (windows === null) return;
+  judgeScanWindows(filePath, shown, windows, allowTags);
+}
+
+// Follows a `cd` that opens a command line, so the relative paths after it are
+// resolved where the command will run. Moves `baseDirectory` in place.
+function followLeadingCd(command: string): void {
+  // `cd build && cat secrets` runs the read somewhere else, and the payload's
+  // cwd is where the command starts rather than where it ends up.
+  //
+  // Only the `cd` before the first other command is followed. A later `cd` takes
+  // effect after the reads that come before it, so following it would resolve
+  // those reads against the wrong directory. A `cd` inside a subshell is undone
+  // when the subshell exits, and the tokenizer does not tell it apart once the
+  // line is split at the paren, so a command that opens with a subshell keeps
+  // the payload's cwd.
+  //
+  // Comments are blanked first: the tokenizer reads a comment's words as a
+  // command, so a quote in one hid the `cd` after it and a `;` in one started
+  // a `cd` the shell never runs.
+  const uncommented = blankComments(command);
+  if (!uncommented.trimStart().startsWith("(")) {
+    for (const segment of tokenizeCommand(uncommented)) {
+      const [head, target] = segment;
+      // `head.redirect` is defensive rather than reachable: the tokenizer
+      // marks a token as a redirect only when it built it from `<` or `>`, so
+      // no input produces one whose value is `cd`. Kept because the guard
+      // costs nothing and the tokenizer is free to change.
+      if (head?.value !== "cd" || head.redirect) break;
+      if (target === undefined || target.redirect) break;
+      // `cd -`, `cd b*ld` and a `cd` into an unset variable name a directory
+      // this cannot work out. Following one anyway moves the base somewhere
+      // the command will not read, and every relative path after it resolves
+      // against the wrong directory.
+      const destination = expandPath(target.value);
+      if (
+        target.value === "-" ||
+        target.value === "--" ||
+        destination.includes("$") ||
+        GLOB_METACHARACTERS.test(destination)
+      ) {
+        break;
+      }
+      // A `cd` the shell will fail is a `cd` that does not happen. Following
+      // it moved the base somewhere neither the command nor this will read.
+      const moved = path.resolve(baseDirectory, destination);
+      if (!isDirectory(moved)) break;
+      baseDirectory = moved;
+    }
+  }
+}
+
 // ── pii-sentinel ──────────────────────────────────────────────────────────────
 
-// Ask the user's pii-sentinel server about the files read, after every rule has
-// passed them. Nothing happens unless the config has a `piiSentinel` entry and
-// the PII category is on, and `[allow-pii]` lifts it as it lifts the PII rules.
-// A server that does not answer blocks unless the entry says otherwise: the user
-// asked for the check, and a check that silently did not run is a pass.
-// A socket another user could have put in place blocks whatever the entry
-// says, since the server behind it may well be running.
-async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
-  if (modelTexts.length === 0 || !ENABLED_CATEGORIES.has("pii")) return;
-  if (allowTags.has("pii") || allowTags.has("all")) return;
-  const config = readPiiSentinelConfig();
-  if (config === null) return;
+// The files read this run go to the pii-sentinel server after every rule has
+// passed them. Whether they are sent, and what the answer blocks on, is decided
+// in lib/pii-sentinel.ts; only the wording of each block is this hook's.
+async function blockOnPiiSentinel(allowTags: Set<string>): Promise<void> {
+  const decision = await consultPiiSentinel(
+    modelTexts,
+    allowTags,
+    ENABLED_CATEGORIES,
+    "this file",
+  );
+  if (decision.kind === "pass") return;
   const first = modelTexts[0]?.source ?? "file";
   const hints = buildAllowHints(`please read ${forOutput(first)}`, [], false);
-  if (typeof config === "string") {
+  if (decision.kind === "settings") {
     block(
       "pii-sentinel settings",
       [
-        `🚫 Blocked: the "piiSentinel" entry in the sensitive-canary config (${USER_CONFIG_PATH}) cannot be used: ${config}`,
+        `🚫 Blocked: the "piiSentinel" entry in the sensitive-canary config (${USER_CONFIG_PATH}) cannot be used: ${decision.problem}`,
         "",
         "Fix the entry, or remove it to stop asking pii-sentinel.",
       ],
       hints,
     );
   }
-  const { verdicts, unavailable, refused } = await judge(modelTexts, config);
-  if (refused !== null) {
+  if (decision.kind === "refused") {
     block(
       "pii-sentinel",
       [
-        `🚫 Blocked: the pii-sentinel socket at ${forOutput(connectionTarget(config))} was refused: ${forOutput(refused)}`,
+        `🚫 Blocked: the pii-sentinel socket at ${forOutput(decision.target)} was refused: ${forOutput(decision.reason)}`,
         "",
         REFUSED_SOCKET_NOTE,
       ],
       hints,
     );
   }
-  for (const verdict of verdicts) {
-    if (!reachesBlockLevel(verdict.level, config)) continue;
-    const findings = verdictFindings(verdict);
+  if (decision.kind === "judged") {
     block(
-      verdict.source,
+      decision.verdict.source,
       [
-        `🚫 Blocked: pii-sentinel judged this file ${verdict.level} sensitivity`,
+        `🚫 Blocked: pii-sentinel ${decision.phrase}`,
         "",
-        ...findingsToLines(findings),
+        ...findingsToLines(decision.findings),
       ],
-      buildAllowHints(`please read ${forOutput(verdict.source)}`, findings),
+      buildAllowHints(
+        `please read ${forOutput(decision.verdict.source)}`,
+        decision.findings,
+      ),
     );
   }
-  if (unavailable !== null && config.onUnavailable === "block") {
+  if (decision.kind === "unavailable") {
     block(
       "pii-sentinel",
       [
-        `🚫 Blocked: pii-sentinel did not answer at ${forOutput(connectionTarget(config))}: ${forOutput(unavailable)}`,
+        `🚫 Blocked: pii-sentinel did not answer at ${forOutput(decision.target)}: ${forOutput(decision.reason)}`,
         "",
         'Start it with `pii-sentinel serve`, or set "onUnavailable": "allow" in the "piiSentinel" entry to fall back on the rules alone.',
       ],
@@ -942,39 +1021,24 @@ async function consultPiiSentinel(allowTags: Set<string>): Promise<void> {
   }
 }
 
+// The end of every path that found nothing by the rules. The pii-sentinel server
+// still has its say, and it can block here with exit 2. Otherwise the process
+// exits 0. It never returns to the caller, hence `Promise<never>`.
+async function finishWithoutFindings(allowTags: Set<string>): Promise<never> {
+  await blockOnPiiSentinel(allowTags);
+  process.exit(0);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-let raw = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk: string) => (raw += chunk));
-// The handler is async because the pii-sentinel server is asked over a socket.
-// An async listener's throw is a rejected promise, not an uncaught exception,
-// and on Node 24 a rejection here ended the process with 0 — a scan that could
-// not finish passed the call. Caught explicitly so it stops the call instead.
-process.stdin.on("end", () => {
-  main().catch(failClosed);
-});
+readStdin(main);
 
-async function main(): Promise<void> {
-  startTheClock();
-  let data: HookInput;
-  try {
-    // Empty stdin is nothing to check. Bytes that do not parse are a check that
-    // could not read its input, which is not the same as safe: two characters
-    // missing from the end of a payload are enough to hide a key.
-    if (raw.trim().length === 0) process.exit(0);
-    const parsed: unknown = JSON.parse(raw);
-    // `JSON.parse("null")` succeeds and returns null, which then threw on the
-    // first field read. A payload that is not an object names nothing, so
-    // there is nothing to scan and nothing to stop.
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
-      process.exit(0);
-    data = parsed as HookInput;
-  } catch (error) {
-    // The check never started, so it vouches for nothing. Everything else that
-    // cannot finish stops the call; input that will not parse is the same case.
-    failClosed(error);
-  }
+async function main(raw: string): Promise<void> {
+  // One budget for the whole invocation rather than one per `scan()` call: a
+  // call is made per environment variable and per end of each file, so the
+  // payload sets how many there are.
+  beginScanBudget();
+  const data = parsePayload(raw) as HookInput;
 
   const tool = typeof data.tool_name === "string" ? data.tool_name : "";
   // Before anything resolves a path: a relative path in a command is relative to
@@ -1001,8 +1065,7 @@ async function main(): Promise<void> {
         scanFile(candidate, allowTags);
       }
     }
-    await consultPiiSentinel(allowTags);
-    process.exit(0);
+    await finishWithoutFindings(allowTags);
   }
 
   if (tool === "Bash") {
@@ -1016,49 +1079,7 @@ async function main(): Promise<void> {
       : typeof input.command === "string"
         ? input.command
         : "";
-    // `cd build && cat secrets` runs the read somewhere else, and the payload's
-    // cwd is where the command starts rather than where it ends up.
-    //
-    // Only a `cd` before the first other command counts. Folding every `cd` in
-    // the line moved the base for reads that happen earlier — `cat secrets && cd
-    // /tmp` resolved against `/tmp` and found nothing — and for a `cd` inside a
-    // subshell, which the shell undoes on the way out. The tokenizer ends a
-    // segment at a paren, so a subshell's `cd` is not distinguishable once split;
-    // a command that opens with one is left resolving against the payload's cwd.
-    //
-    // Comments are blanked first: the tokenizer reads a comment's words as a
-    // command, so a quote in one hid the `cd` after it and a `;` in one started
-    // a `cd` the shell never runs.
-    const uncommented = blankComments(command);
-    if (!uncommented.trimStart().startsWith("(")) {
-      for (const segment of tokenizeCommand(uncommented)) {
-        const [head, target] = segment;
-        // `head.redirect` is defensive rather than reachable: the tokenizer
-        // marks a token as a redirect only when it built it from `<` or `>`, so
-        // no input produces one whose value is `cd`. Kept because the guard
-        // costs nothing and the tokenizer is free to change.
-        if (head?.value !== "cd" || head.redirect) break;
-        if (target === undefined || target.redirect) break;
-        // `cd -`, `cd b*ld` and a `cd` into an unset variable name a directory
-        // this cannot work out. Following one anyway moves the base somewhere
-        // the command will not read, and every relative path after it resolves
-        // against the wrong directory.
-        const destination = expandPath(target.value);
-        if (
-          target.value === "-" ||
-          target.value === "--" ||
-          destination.includes("$") ||
-          GLOB_METACHARACTERS.test(destination)
-        ) {
-          break;
-        }
-        // A `cd` the shell will fail is a `cd` that does not happen. Following
-        // it moved the base somewhere neither the command nor this will read.
-        const moved = path.resolve(baseDirectory, destination);
-        if (!isDirectory(moved)) break;
-        baseDirectory = moved;
-      }
-    }
+    followLeadingCd(command);
     const refs = extractCommandRefs(command);
 
     scanEnvironment(environmentNamed(command, refs), allowTags);
@@ -1082,8 +1103,7 @@ async function main(): Promise<void> {
       scanIfRegularFile(baseDirectory, allowTags, { namesOnly: true });
     }
 
-    await consultPiiSentinel(allowTags);
-    process.exit(0);
+    await finishWithoutFindings(allowTags);
   }
 
   // Every other tool, Grep and the MCP tools included: those can return file
@@ -1158,6 +1178,5 @@ async function main(): Promise<void> {
     }
   }
 
-  await consultPiiSentinel(allowTags);
-  process.exit(0);
+  await finishWithoutFindings(allowTags);
 }

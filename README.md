@@ -306,7 +306,8 @@ expanded there (replace `/Users/you` with your home directory):
 | Key | Default | Meaning |
 |---|---|---|
 | `socket` | | The server's Unix socket, as an absolute path. |
-| `blockOn` | `"high"` | Block at this level or above (`"high"` or `"low"`). |
+| `blockOn` | `"high"` | Block at this level or above (`"high"` or `"low"`). `"identifiable"` (experimental) blocks at `"high"`, and also when an identifier or attribute reaches its `identifiableThresholds` value. Switching from `"low"` drops the level block at `low`. With pii-sentinel 0.5.0 it also blocks on `date_of_birth` and `postal_address` findings marked `pii: true`. Opt-in, see [pii-sentinel](https://coo-quack.github.io/sensitive-canary/pii-sentinel). |
+| `identifiableThresholds` | `0.5` for each | Under `"identifiable"`, the probability (0 to 1) at which each category blocks, by name: `email_or_phone`, `government_id`, `financial_account`, `sns_handle`, `ip_address_of_a_person`, `postal_address`, `date_of_birth`, `employment_info`, `precise_location`. Other names are refused. A threshold of 1 in effect turns a category off, and 0 blocks whenever the server reports it. A category the server does not report never blocks, and an answer without `categories` is unavailable under `"identifiable"`. The defaults are provisional. |
 | `timeoutMs` | `3000` | How long one hook call waits for the server, in total. |
 | `maxChars` | `20000` | How much of each file or prompt is sent; the model judges the beginning. |
 | `onUnavailable` | `"block"` | What to do when the server does not answer: `"block"`, or `"allow"` to rely on the rules alone. A refused socket blocks either way. |
@@ -600,6 +601,10 @@ The `/` is what separates a path from a word, and it is there so that a search p
 Values are found up to four levels down and inside arrays, both of strings and of objects, so `{ "path": "…" }`, `{ "paths": ["…"] }`, `{ "args": ["/abs/…"] }` and `{ "args": { "paths": [{ "path": "…" }] } }` are all covered. A field naming a directory is left alone.
 
 Which tools reach the hook at all is the matcher's business, and the default (`Read|NotebookRead|Bash|Grep|mcp__.*`) sends it `Read`, `NotebookRead`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives.
+
+What the matcher leaves out is not scanned. `WebFetch` and `WebSearch` are not in the default matcher, so the hook never runs for them and a URL carrying a key (`https://example.com/api?key=…`) goes out unchecked. The default matcher does include `mcp__.*`, but for an MCP tool the hook reads only the fields that name an existing file (a value containing `/` counts as a path) and the text of its command fields. A body, a message or a query argument is not scanned, so `mcp__x__post_message` with a key in `body` is allowed.
+
+Widening the matcher to `WebFetch|WebSearch` would start the hook for those calls and still scan nothing in them: both are among the tools without file output, and the hook reads no input from those calls. Scanning URLs or free-text arguments takes a change to what the hook reads, in `src/lib/tool-inputs.ts`, as well as to the matcher. Widening it to every tool (`.*`) starts the hook for all of them, under the same reading.
 
 Commands that only measure a file (`wc`, `cksum`, `sha256sum`) are not treated as reads, whether the file is named or fed in over `<`: they print counts and digests, never the bytes. Neither are the tools that surface no file contents — `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `TodoWrite`, `Glob`, `WebFetch`, `WebSearch`, `ExitPlanMode`, `AskUserQuestion` — nor any tool whose name leads with a write verb, such as `mcp__fs__write_file` or `createPage`.
 

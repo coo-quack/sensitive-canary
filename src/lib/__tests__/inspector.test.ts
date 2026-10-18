@@ -136,7 +136,6 @@ describe("applyAllowTags", () => {
       category: "secret",
       matchRedacted: "AKIA****",
       secretValue: "AKIATEST",
-      score: 1,
     },
     {
       ruleId: "pii-email",
@@ -144,7 +143,6 @@ describe("applyAllowTags", () => {
       category: "pii",
       matchRedacted: "user****",
       secretValue: "ada@analytical-engines.org",
-      score: 1,
     },
   ];
 
@@ -189,7 +187,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST",
-        score: 1,
       },
       {
         ruleId: "aws-access-key",
@@ -197,7 +194,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST",
-        score: 1,
       },
     ];
     expect(dedupeFindings(findings)).toHaveLength(1);
@@ -211,7 +207,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST1",
-        score: 1,
       },
       {
         ruleId: "aws-access-key",
@@ -219,7 +214,6 @@ describe("dedupeFindings", () => {
         category: "secret",
         matchRedacted: "AKIA****",
         secretValue: "AKIATEST2",
-        score: 1,
       },
     ];
     expect(dedupeFindings(findings)).toHaveLength(2);
@@ -276,7 +270,6 @@ describe("findingsToLines", () => {
         category: "secret",
         matchRedacted: "AKIA****MPLE",
         secretValue: `${AWS_KEY}`,
-        score: 1,
       },
     ];
     const lines = findingsToLines(findings);
@@ -293,7 +286,6 @@ describe("findingsToLines", () => {
         category: "pii",
         matchRedacted: "user****",
         secretValue: "ada@analytical-engines.org",
-        score: 1,
       },
     ];
     const lines = findingsToLines(findings);
