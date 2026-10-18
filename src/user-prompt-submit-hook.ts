@@ -82,7 +82,12 @@ async function blockOnPiiSentinel(
   // be looked at, and a refused socket would block a prompt with nothing in it.
   const texts =
     prompt.trim() === "" ? [] : [{ source: "prompt", text: prompt }];
-  const decision = await consultPiiSentinel(texts, allow, ENABLED_CATEGORIES);
+  const decision = await consultPiiSentinel(
+    texts,
+    allow,
+    ENABLED_CATEGORIES,
+    "this prompt",
+  );
   if (decision.kind === "pass") return;
   if (decision.kind === "settings") {
     blockPrompt([
@@ -103,7 +108,7 @@ async function blockOnPiiSentinel(
   }
   if (decision.kind === "judged") {
     blockPrompt([
-      `pii-sentinel judged this prompt ${decision.verdict.level} sensitivity — blocked`,
+      `pii-sentinel ${decision.phrase} — blocked`,
       ...findingsToLines(decision.findings),
       "",
       "To allow, add a tag to your prompt:",

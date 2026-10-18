@@ -967,6 +967,7 @@ async function blockOnPiiSentinel(allowTags: Set<string>): Promise<void> {
     modelTexts,
     allowTags,
     ENABLED_CATEGORIES,
+    "this file",
   );
   if (decision.kind === "pass") return;
   const first = modelTexts[0]?.source ?? "file";
@@ -997,7 +998,7 @@ async function blockOnPiiSentinel(allowTags: Set<string>): Promise<void> {
     block(
       decision.verdict.source,
       [
-        `🚫 Blocked: pii-sentinel judged this file ${decision.verdict.level} sensitivity`,
+        `🚫 Blocked: pii-sentinel ${decision.phrase}`,
         "",
         ...findingsToLines(decision.findings),
       ],
