@@ -864,7 +864,7 @@ describe("pre-tool-use-hook — UTF-16", () => {
   });
 });
 
-// The five-second deadline, which nothing reached.
+// The deadline between files, which nothing reached.
 //
 // Two clocks bound one invocation: a ten-second scan budget, which throws, and
 // this one, which stops reading between files. Only the budget had a case, so
@@ -875,15 +875,27 @@ describe("pre-tool-use-hook — UTF-16", () => {
 // What makes it observable is the `.env` fallback. A file skipped for time is
 // silently not scanned, which reads the same as a file that was clean; an
 // `.env` reached after the deadline is blocked on its name instead.
+//
+// The window is shortened through `SENSITIVE_CANARY_DEADLINE_MS`, a seam that
+// the hook honours only under vitest (see `readWindowMs` in the hook), so these
+// cases do not wait for the real five seconds.
 describe("pre-tool-use-hook — the deadline between files", () => {
   const writeFixture = useFixtureDir("deadline");
 
-  // A rule that backtracks, so a modest file costs seconds rather than
-  // milliseconds. Several files rather than one big one: the deadline is
-  // checked between files, and a single file long enough to pass it also runs
-  // past the scan budget, which throws first and proves the wrong guard.
-  it("an .env reached after the deadline is blocked on its name", () => {
-    const slowConfig = writeFixture(
+  const WINDOW_MS = 150;
+  const SEAM = {
+    VITEST: "true",
+    SENSITIVE_CANARY_DEADLINE_MS: String(WINDOW_MS),
+  };
+
+  // A rule that backtracks, so a file of the size below costs more than the
+  // window. Measured
+  // on this machine, scanning one of the 1 MiB files takes about 0.9 s, six
+  // times the window, with 15 to 35 ms of start-up before the first file. So
+  // the window is spent on the first file on any machine at least a fifth as
+  // fast; load only widens that margin.
+  const writeSlowConfig = () =>
+    writeFixture(
       "slow.json",
       JSON.stringify({
         rules: Array.from({ length: 8 }, (_, i) => ({
@@ -895,9 +907,20 @@ describe("pre-tool-use-hook — the deadline between files", () => {
         })),
       }),
     );
-    const slow = [1, 2, 3].map((n) =>
-      writeFixture(`slow-${n}.txt`, "eyJ".repeat(7_000)),
-    );
+
+  // Benign text with no dots and no secret: only the scan's cost matters. One
+  // megabyte is the per-file cut, so each file is read whole.
+  const MiB = 1_048_576;
+  const slowUnit = `${"eyJ".repeat(60)} `;
+  const slowText = slowUnit
+    .repeat(Math.ceil(MiB / slowUnit.length))
+    .slice(0, MiB);
+
+  // Several files rather than one: the window is checked between files, and
+  // the first file alone exhausts it, so the rest are passed over.
+  it("an .env reached after the deadline is blocked on its name", () => {
+    const config = writeSlowConfig();
+    const slow = [1, 2, 3].map((n) => writeFixture(`slow-${n}.txt`, slowText));
     // A template name, so the plain `.env` guard does not decide it: this one
     // is exempt while its contents can be read, and blocked on its name when
     // they cannot. That is what makes the deadline observable.
@@ -906,10 +929,10 @@ describe("pre-tool-use-hook — the deadline between files", () => {
       "TOKEN=your-token-here\n",
     );
 
-    // Named in order, which `scanPathsLiteralsFirst` keeps, so the deadline is
-    // spent before the `.env` is reached.
+    // Named in order, which `scanPathsLiteralsFirst` keeps, so the window is
+    // spent on the slow files before the `.env` is reached.
     const result = runBashHook(`cat ${slow.join(" ")} ${env}`, {
-      env: { SENSITIVE_CANARY_CONFIG: slowConfig },
+      env: { SENSITIVE_CANARY_CONFIG: config, ...SEAM },
     });
 
     expect(result.exitCode).toBe(2);
@@ -917,6 +940,59 @@ describe("pre-tool-use-hook — the deadline between files", () => {
       "the scan for this call had already stopped",
     );
   }, 30_000);
+
+  // The control for the case above: the same window, with the template read
+  // before any slow file. If start-up alone spent the window, this `.env` would
+  // be blocked on its name with the same reason, so the reason above comes from
+  // the slow files.
+  it("the same .env read before the slow files is not stopped by the window", () => {
+    const config = writeSlowConfig();
+    const slow = [1, 2, 3].map((n) => writeFixture(`slow-${n}.txt`, slowText));
+    const env = writeFixture(
+      ".env.before-slow.example",
+      "TOKEN=your-token-here\n",
+    );
+
+    const result = runBashHook(`cat ${env} ${slow.join(" ")}`, {
+      env: { SENSITIVE_CANARY_CONFIG: config, ...SEAM },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("already stopped");
+  }, 30_000);
+
+  // A plain `.env` first is blocked by the ordinary name guard before anything
+  // is read, so the window plays no part and the reason is not the window's.
+  it("a plain .env first is blocked by the name guard, not the window", () => {
+    const config = writeSlowConfig();
+    const slow = [1, 2, 3].map((n) => writeFixture(`slow-${n}.txt`, slowText));
+    const plain = writeFixture(".env", "TOKEN=your-token-here\n");
+
+    const result = runBashHook(`cat ${plain} ${slow.join(" ")}`, {
+      env: { SENSITIVE_CANARY_CONFIG: config, ...SEAM },
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).not.toContain("already stopped");
+  }, 30_000);
+
+  // Outside vitest the seam is off: with a one-millisecond value that would
+  // pass before the template is reached, the five-second window still applies,
+  // so the template is read and allowed.
+  it("the window seam is ignored outside vitest", () => {
+    const env = writeFixture(".env.no-seam.example", "TOKEN=your-token-here\n");
+
+    const result = runBashHook(`cat ${env}`, {
+      replaceEnv: true,
+      env: {
+        PATH: process.env["PATH"] ?? "",
+        SENSITIVE_CANARY_CONFIG: "/nonexistent/config.json",
+        SENSITIVE_CANARY_DEADLINE_MS: "1",
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+  });
 
   // The other direction, so the case above is not passing on the `.env` name
   // alone: given time to read it, a template of placeholders is allowed.

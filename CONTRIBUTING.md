@@ -124,6 +124,10 @@ SENSITIVE_CANARY_INTEGRATION=1 pnpm test src/__tests__/pre-tool-use-hook.integra
 
 Run it by hand whenever the way a block is returned changes — the exit code, the channel the reason is written to, or the shape of the payload.
 
+## Test seams
+
+`SENSITIVE_CANARY_DEADLINE_MS` shortens the hook's five-second window between files, so a test can pass it in a fraction of a second. The hook reads it only when `VITEST` is set, which vitest does in the processes it runs, and it is not a setting for users: it is not in the README. A value that is not a positive integer is ignored, and the window stays at five seconds.
+
 ## Pull Requests
 
 - Follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `hotfix:`, etc.)
