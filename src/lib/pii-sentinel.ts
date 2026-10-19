@@ -21,64 +21,55 @@ import { redact, userConfigFromCache } from "./rules.ts";
 
 type Level = "none" | "low" | "high";
 
-// The categories `blockOn: "identifiable"` consults. An identifier reaches a
+// The categories `blockOn: "identifiable"` knows. An identifier reaches a
 // person on its own; an attribute does so once it is linked to a name. The
-// noun is what a block reason calls the category. The threshold is a
-// placeholder: the measured thresholds from coo-quack/pii-sentinel#46 replace
-// these 0.5s before the option is recommended.
+// noun is what a block reason calls the category. A category blocks on its
+// probability only when the user names it in `identifiableThresholds`; the
+// finding types flagged `blocksAsFinding` block on their own.
 const CATEGORY = {
   email_or_phone: {
     kind: "identifier",
     noun: "an e-mail address or phone number",
-    threshold: 0.5,
     blocksAsFinding: false,
   },
   government_id: {
     kind: "identifier",
     noun: "a government ID",
-    threshold: 0.5,
     blocksAsFinding: false,
   },
   financial_account: {
     kind: "identifier",
     noun: "a financial account",
-    threshold: 0.5,
     blocksAsFinding: false,
   },
   sns_handle: {
     kind: "identifier",
     noun: "a social media handle",
-    threshold: 0.5,
     blocksAsFinding: false,
   },
   ip_address_of_a_person: {
     kind: "identifier",
     noun: "an IP address",
-    threshold: 0.5,
     blocksAsFinding: false,
   },
   postal_address: {
     kind: "attribute",
     noun: "a postal address",
-    threshold: 0.5,
     blocksAsFinding: true,
   },
   date_of_birth: {
     kind: "attribute",
     noun: "a date of birth",
-    threshold: 0.5,
     blocksAsFinding: true,
   },
   employment_info: {
     kind: "attribute",
     noun: "a workplace",
-    threshold: 0.5,
     blocksAsFinding: false,
   },
   precise_location: {
     kind: "attribute",
     noun: "a precise location",
-    threshold: 0.5,
     blocksAsFinding: false,
   },
 } satisfies Record<
@@ -86,12 +77,13 @@ const CATEGORY = {
   {
     kind: "identifier" | "attribute";
     noun: string;
-    threshold: number;
     blocksAsFinding: boolean;
   }
 >;
 type IdentifiableCategory = keyof typeof CATEGORY;
-type Thresholds = Record<IdentifiableCategory, number>;
+// The probability each category blocks at, for the categories the user named.
+// A category left out does not block on its probability.
+type Thresholds = Partial<Record<IdentifiableCategory, number>>;
 const IDENTIFIABLE_CATEGORIES = Object.keys(CATEGORY) as IdentifiableCategory[];
 
 // The finding types that block on their own under "identifiable" when the
@@ -100,15 +92,6 @@ const IDENTIFIABLE_CATEGORIES = Object.keys(CATEGORY) as IdentifiableCategory[];
 const BLOCKING_FINDING_TYPES = new Set<string>(
   IDENTIFIABLE_CATEGORIES.filter((c) => CATEGORY[c].blocksAsFinding),
 );
-
-function defaultThresholds(): Thresholds {
-  return Object.fromEntries(
-    IDENTIFIABLE_CATEGORIES.map((category) => [
-      category,
-      CATEGORY[category].threshold,
-    ]),
-  ) as Thresholds;
-}
 
 export interface PiiSentinelConfig {
   socket: string;
@@ -179,7 +162,7 @@ export function readPiiSentinelConfig(
   const config: PiiSentinelConfig = {
     ...DEFAULTS,
     socket,
-    identifiableThresholds: defaultThresholds(),
+    identifiableThresholds: {},
   };
   for (const [key, min, max] of [
     ["timeoutMs", 100, 60_000],
@@ -223,11 +206,11 @@ export function readPiiSentinelConfig(
 // A map from category name to a probability from 0 to 1. Only the identifier
 // and attribute categories are accepted: a threshold set on another category
 // is refused rather than ignored, since it would look as if it applied.
-function readThresholds(raw: unknown): Partial<Thresholds> | string {
+function readThresholds(raw: unknown): Thresholds | string {
   const names = IDENTIFIABLE_CATEGORIES.join(", ");
   if (typeof raw !== "object" || raw === null || Array.isArray(raw))
     return `"identifiableThresholds" must be an object from category name to a number from 0 to 1 (${names})`;
-  const thresholds: Partial<Thresholds> = {};
+  const thresholds: Thresholds = {};
   for (const [name, value] of Object.entries(raw)) {
     if (!(IDENTIFIABLE_CATEGORIES as readonly string[]).includes(name))
       return `"identifiableThresholds" names "${name}", which is not an identifier or attribute category: use one of ${names}`;
@@ -587,7 +570,7 @@ const FINDING_TYPE = /^[a-z0-9_]{1,40}$/i;
 function toVerdict(
   source: string,
   report: unknown,
-  blockOn: PiiSentinelConfig["blockOn"],
+  config: PiiSentinelConfig,
 ): Verdict {
   const r = report as {
     sensitivity?: { level?: unknown };
@@ -599,15 +582,14 @@ function toVerdict(
     throw new Error("answered without a sensitivity level");
   const probabilities: Record<string, number> = {};
   const reported = r.categories;
-  if (blockOn === "identifiable") {
-    // The categories decide the block under this setting, so an answer that
-    // leaves them out or garbles one is unavailable, not a pass.
-    if (
-      reported === null ||
-      typeof reported !== "object" ||
-      Array.isArray(reported)
-    )
-      throw new Error("answered without categories");
+  const isMap =
+    reported !== null &&
+    typeof reported === "object" &&
+    !Array.isArray(reported);
+  // Under "identifiable" the categories are always required, whether or not a
+  // threshold is set: a malformed answer is unavailable, not a pass.
+  if (config.blockOn === "identifiable") {
+    if (!isMap) throw new Error("answered without categories");
     for (const [name, p] of Object.entries(reported)) {
       if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1)
         throw new Error(
@@ -615,8 +597,8 @@ function toVerdict(
         );
       probabilities[name] = p;
     }
-  } else if (reported && typeof reported === "object")
-    for (const [name, p] of Object.entries(reported as Record<string, unknown>))
+  } else if (isMap)
+    for (const [name, p] of Object.entries(reported))
       if (typeof p === "number") probabilities[name] = p;
   const categories = Object.entries(probabilities)
     .filter(([, p]) => p >= 0.5)
@@ -624,7 +606,7 @@ function toVerdict(
   // Under "identifiable" a finding of a blocking type must carry a string value
   // and a boolean pii. One that does not is a malformed answer, so it is
   // unavailable rather than dropped, which would pass the text unchecked.
-  if (blockOn === "identifiable" && Array.isArray(r.findings))
+  if (config.blockOn === "identifiable" && Array.isArray(r.findings))
     for (const f of r.findings as {
       type?: unknown;
       value?: unknown;
@@ -689,7 +671,7 @@ export async function judge(
         toVerdict(
           source,
           await post(config, text.slice(0, config.maxChars), left),
-          config.blockOn,
+          config,
         ),
       );
     } catch (e) {
@@ -704,7 +686,7 @@ export async function judge(
 }
 
 // Whether the level blocks. Under "identifiable" only "high" does: the
-// identifiers and attributes are judged by their own thresholds instead.
+// identifiers and attributes are judged by the thresholds the user names.
 function reachesBlockLevel(level: Level, config: PiiSentinelConfig): boolean {
   const blockLevel =
     config.blockOn === "identifiable" ? "high" : config.blockOn;
@@ -712,18 +694,20 @@ function reachesBlockLevel(level: Level, config: PiiSentinelConfig): boolean {
 }
 
 // The identifier and attribute categories at or above their thresholds. Only
-// under "identifiable", and only for a category the server answered: an absent
-// one is not treated as zero, so a threshold of 0 cannot block on it.
+// for a category the user named, and only for a category the server answered:
+// an absent one is not treated as zero, so a threshold of 0 cannot block on it.
 function identifiableHits(
   verdict: Verdict,
   config: PiiSentinelConfig,
 ): IdentifiableCategory[] {
   if (config.blockOn !== "identifiable") return [];
   return IDENTIFIABLE_CATEGORIES.filter((category) => {
+    const threshold = config.identifiableThresholds[category];
     const probability = verdict.probabilities[category];
     return (
+      threshold !== undefined &&
       probability !== undefined &&
-      probability >= config.identifiableThresholds[category]
+      probability >= threshold
     );
   });
 }
