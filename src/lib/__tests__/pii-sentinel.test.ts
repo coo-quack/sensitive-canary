@@ -166,22 +166,12 @@ describe("readPiiSentinelConfig", () => {
       timeoutMs: 3000,
       maxChars: 20000,
       blockOn: "high",
-      identifiableThresholds: {
-        email_or_phone: 0.5,
-        government_id: 0.5,
-        financial_account: 0.5,
-        sns_handle: 0.5,
-        ip_address_of_a_person: 0.5,
-        postal_address: 0.5,
-        date_of_birth: 0.5,
-        employment_info: 0.5,
-        precise_location: 0.5,
-      },
+      identifiableThresholds: {},
       onUnavailable: "block",
     });
   });
 
-  it("accepts blockOn identifiable and a threshold map that overrides only what it names", () => {
+  it("accepts blockOn identifiable with thresholds for the categories it names, and no others", () => {
     const config = readPiiSentinelConfig({
       socket: "/a",
       blockOn: "identifiable",
@@ -189,8 +179,9 @@ describe("readPiiSentinelConfig", () => {
     });
     expect(config).toMatchObject({
       blockOn: "identifiable",
-      identifiableThresholds: { date_of_birth: 0.7, postal_address: 0.5 },
+      identifiableThresholds: { date_of_birth: 0.7 },
     });
+    expect(config).not.toHaveProperty("identifiableThresholds.postal_address");
   });
 
   it("accepts thresholds of exactly 0 and 1", () => {
@@ -396,10 +387,17 @@ describe("blockOn identifiable", () => {
     return verdicts[0] as Verdict;
   }
 
-  it("blocks a date of birth at 0.8 under identifiable at level low, and not under high", async () => {
+  it("blocks a date of birth at 0.8 under identifiable at level low, with its threshold set, and not under high", async () => {
     const verdict = await judgeOne("low", { date_of_birth: 0.8 });
     expect(
-      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+      verdictBlocks(
+        verdict,
+        configOf({
+          socket,
+          blockOn: "identifiable",
+          identifiableThresholds: { date_of_birth: 0.5 },
+        }),
+      ),
     ).toBe(true);
     expect(verdictBlocks(verdict, configOf({ socket, blockOn: "high" }))).toBe(
       false,
@@ -460,7 +458,11 @@ describe("blockOn identifiable", () => {
 
   it("gives a date of birth reason that says it identifies a person once linked to a name", async () => {
     const verdict = await judgeOne("low", { date_of_birth: 0.8 });
-    const config = configOf({ socket, blockOn: "identifiable" });
+    const config = configOf({
+      socket,
+      blockOn: "identifiable",
+      identifiableThresholds: { date_of_birth: 0.5 },
+    });
     const descriptions = verdictFindings(verdict, config).map(
       (f) => f.description,
     );
@@ -470,7 +472,11 @@ describe("blockOn identifiable", () => {
   });
 
   it("adds a note that a name is present when person_name is at or above 0.5", async () => {
-    const config = configOf({ socket, blockOn: "identifiable" });
+    const config = configOf({
+      socket,
+      blockOn: "identifiable",
+      identifiableThresholds: { date_of_birth: 0.5 },
+    });
     const named = await judgeOne("low", {
       date_of_birth: 0.8,
       person_name: 0.6,
@@ -489,7 +495,11 @@ describe("blockOn identifiable", () => {
 
   it("names an identifier as identifying a person on its own, with a secret value of the shape the others use", async () => {
     const verdict = await judgeOne("none", { email_or_phone: 0.7 });
-    const config = configOf({ socket, blockOn: "identifiable" });
+    const config = configOf({
+      socket,
+      blockOn: "identifiable",
+      identifiableThresholds: { email_or_phone: 0.5 },
+    });
     expect(verdictBlocks(verdict, config)).toBe(true);
     const [finding] = verdictFindings(verdict, config);
     expect(finding?.description).toBe(
@@ -526,8 +536,12 @@ describe("blockOn identifiable", () => {
     });
   });
 
-  it("blocks a probability exactly at its default threshold, and not one just below it", async () => {
-    const config = configOf({ socket, blockOn: "identifiable" });
+  it("blocks a probability exactly at its threshold, and not one just below it", async () => {
+    const config = configOf({
+      socket,
+      blockOn: "identifiable",
+      identifiableThresholds: { postal_address: 0.5 },
+    });
     expect(
       verdictBlocks(await judgeOne("low", { postal_address: 0.5 }), config),
     ).toBe(true);
@@ -539,16 +553,24 @@ describe("blockOn identifiable", () => {
   // Under "identifiable" the categories decide the block, so an answer that
   // leaves them out or garbles one is unavailable. Under "high" it parses as
   // before, with the garbled value dropped.
-  async function answerUnder(body: unknown, blockOn: string) {
+  async function answerUnder(
+    body: unknown,
+    blockOn: string,
+    identifiableThresholds: Record<string, number> = {},
+  ) {
     answer = () => ({ status: 200, body });
     return judge(
       [{ source: "a.txt", text: MEDICAL }],
-      configOf({ socket, blockOn }),
+      configOf({ socket, blockOn, identifiableThresholds }),
     );
   }
 
-  it("treats an answer without categories as unavailable under identifiable, and parses it under high", async () => {
+  it("treats an answer without categories as unavailable under identifiable, with or without a threshold, and parses it under high", async () => {
     const body = { sensitivity: { level: "low" }, findings: [] };
+    expect(
+      (await answerUnder(body, "identifiable", { date_of_birth: 0.5 }))
+        .unavailable,
+    ).toContain("answered without categories");
     expect((await answerUnder(body, "identifiable")).unavailable).toContain(
       "answered without categories",
     );
@@ -584,6 +606,18 @@ describe("blockOn identifiable", () => {
       });
     },
   );
+  // The categories are required under "identifiable" whatever the thresholds,
+  // so a malformed answer is unavailable even when its findings would block.
+  it("treats an answer without categories as unavailable under identifiable with no threshold set, though its findings would block", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      findings: [{ type: "date_of_birth", value: "1990-05-06", pii: true }],
+    };
+    const result = await answerUnder(body, "identifiable");
+    expect(result.unavailable).toContain("answered without categories");
+    expect(result.verdicts).toEqual([]);
+  });
+
   // A finding of a blocking type that the server marks pii: true blocks under
   // "identifiable" whatever the level and the probabilities; under "high" it
   // does not, as the level is what that setting reads.
@@ -702,12 +736,90 @@ describe("blockOn identifiable", () => {
       categories: { date_of_birth: 0.9 },
       findings: [{ type: "date_of_birth", value: "1990-05-06", pii: true }],
     };
-    const verdict = (await answerUnder(body, "identifiable"))
-      .verdicts[0] as Verdict;
-    const config = configOf({ socket, blockOn: "identifiable" });
+    const verdict = (
+      await answerUnder(body, "identifiable", { date_of_birth: 0.5 })
+    ).verdicts[0] as Verdict;
+    const config = configOf({
+      socket,
+      blockOn: "identifiable",
+      identifiableThresholds: { date_of_birth: 0.5 },
+    });
     expect(verdictFindings(verdict, config).map((f) => f.description)).toEqual([
       DATE_OF_BIRTH_REASON,
     ]);
+  });
+
+  it("does not block a date of birth at 0.99 with no finding, unless its threshold is set", async () => {
+    const verdict = await judgeOne("low", { date_of_birth: 0.99 });
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(false);
+    expect(
+      verdictBlocks(
+        verdict,
+        configOf({
+          socket,
+          blockOn: "identifiable",
+          identifiableThresholds: { date_of_birth: 0.5 },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("blocks a date_of_birth finding marked pii true by default, whatever the probability", async () => {
+    const body = {
+      sensitivity: { level: "low" },
+      categories: { date_of_birth: 0.99 },
+      findings: [{ type: "date_of_birth", value: "1990-05-06", pii: true }],
+    };
+    const verdict = (await answerUnder(body, "identifiable"))
+      .verdicts[0] as Verdict;
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(true);
+  });
+
+  it("restores the 0.14.0 blocking when all nine categories are named at 0.5, and blocks nothing below 0.5", async () => {
+    const nineAtHalf = {
+      email_or_phone: 0.5,
+      government_id: 0.5,
+      financial_account: 0.5,
+      sns_handle: 0.5,
+      ip_address_of_a_person: 0.5,
+      postal_address: 0.5,
+      date_of_birth: 0.5,
+      employment_info: 0.5,
+      precise_location: 0.5,
+    };
+    const config = configOf({
+      socket,
+      blockOn: "identifiable",
+      identifiableThresholds: nineAtHalf,
+    });
+    expect(
+      verdictBlocks(await judgeOne("low", { sns_handle: 0.9 }), config),
+    ).toBe(true);
+    const below = Object.fromEntries(
+      Object.keys(nineAtHalf).map((name) => [name, 0.49]),
+    );
+    expect(verdictBlocks(await judgeOne("low", below), config)).toBe(false);
+  });
+
+  it("does not block sns_handle at 0.99 by default, and blocks it once identifiableThresholds names it at 0.5", async () => {
+    const verdict = await judgeOne("low", { sns_handle: 0.99 });
+    expect(
+      verdictBlocks(verdict, configOf({ socket, blockOn: "identifiable" })),
+    ).toBe(false);
+    expect(
+      verdictBlocks(
+        verdict,
+        configOf({
+          socket,
+          blockOn: "identifiable",
+          identifiableThresholds: { sns_handle: 0.5 },
+        }),
+      ),
+    ).toBe(true);
   });
 
   // A pii that is not a boolean is a malformed answer under "identifiable", so
@@ -979,6 +1091,7 @@ describe("PreToolUse hook with pii-sentinel", () => {
       SENSITIVE_CANARY_CONFIG: writeConfig("c9.json", {
         socket,
         blockOn: "identifiable",
+        identifiableThresholds: { date_of_birth: 0.5 },
       }),
     };
     const blocked = await readFile(file, env);
@@ -999,6 +1112,13 @@ describe("PreToolUse hook with pii-sentinel", () => {
       SENSITIVE_CANARY_CONFIG: writeConfig("c10.json", { socket }),
     });
     expect(byDefault.code).toBe(0);
+    const noThreshold = await readFile(file, {
+      SENSITIVE_CANARY_CONFIG: writeConfig("c16.json", {
+        socket,
+        blockOn: "identifiable",
+      }),
+    });
+    expect(noThreshold.code).toBe(0);
   });
 
   it("blocks a file on a date_of_birth finding marked pii true under identifiable, not under the default", async () => {
@@ -1027,7 +1147,7 @@ describe("PreToolUse hook with pii-sentinel", () => {
     expect(byDefault.code).toBe(0);
   });
 
-  it("blocks a file whose answer has no categories under identifiable, unless onUnavailable allows it", async () => {
+  it("blocks a file whose answer has no categories under identifiable with a threshold set, unless onUnavailable allows it", async () => {
     answer = () => ({
       status: 200,
       body: { sensitivity: { level: "none" }, findings: [] },
@@ -1036,6 +1156,7 @@ describe("PreToolUse hook with pii-sentinel", () => {
       SENSITIVE_CANARY_CONFIG: writeConfig("c11.json", {
         socket,
         blockOn: "identifiable",
+        identifiableThresholds: { date_of_birth: 0.5 },
       }),
     });
     expect(blocked.code).toBe(2);
@@ -1045,10 +1166,26 @@ describe("PreToolUse hook with pii-sentinel", () => {
       SENSITIVE_CANARY_CONFIG: writeConfig("c12.json", {
         socket,
         blockOn: "identifiable",
+        identifiableThresholds: { date_of_birth: 0.5 },
         onUnavailable: "allow",
       }),
     });
     expect(allowed.code).toBe(0);
+  });
+
+  it("blocks a file whose answer has no categories under identifiable with no threshold set", async () => {
+    answer = () => ({
+      status: 200,
+      body: { sensitivity: { level: "none" }, findings: [] },
+    });
+    const result = await readFile(file, {
+      SENSITIVE_CANARY_CONFIG: writeConfig("c17.json", {
+        socket,
+        blockOn: "identifiable",
+      }),
+    });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("answered without categories");
   });
 
   it("blocks on an entry it cannot use and names the config file", async () => {
@@ -1099,6 +1236,7 @@ describe("UserPromptSubmit hook with pii-sentinel", () => {
       SENSITIVE_CANARY_CONFIG: writeConfig("p5.json", {
         socket,
         blockOn: "identifiable",
+        identifiableThresholds: { date_of_birth: 0.5 },
       }),
     };
     const blocked = await runHook(

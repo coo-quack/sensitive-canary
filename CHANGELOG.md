@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- `"blockOn": "identifiable"` blocked files that `high` did not, on the probabilities of nine categories, each at a placeholder threshold of 0.5 that had not been measured. On 600 local source files, pii-sentinel 0.5.1 blocked 64 files that `high` did not, and 49 of those were false positives. No category is named by default now, so the probabilities block nothing until a category is named in `identifiableThresholds`. The level at `high`, and a `date_of_birth` or `postal_address` finding marked `pii: true`, still block under `"identifiable"`. To get the old blocking back, set `identifiableThresholds` to `0.5` for each of the nine categories, or for only the ones you need, such as `{ "sns_handle": 0.5 }`.
+
+  A company's address that pii-sentinel 0.5.0 or later reports with `pii: false` does not block through `"identifiable"`. The `pii-address-jp` rule still blocks a Japanese postal address by its shape, a company's included.
+
 ## v0.14.0 (2026-10-18)
 
 ### Features
