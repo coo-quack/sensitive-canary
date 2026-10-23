@@ -146,7 +146,7 @@ const DEFAULTS = {
 // the user asked for the check, and quietly not running it is the silent pass
 // this tool exists to prevent.
 export function readPiiSentinelConfig(
-  raw: unknown = userConfigFromCache()?.piiSentinel,
+  raw: unknown,
 ): PiiSentinelConfig | null | string {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== "object" || Array.isArray(raw))
@@ -865,7 +865,7 @@ export async function consultPiiSentinel(
 ): Promise<PiiSentinelDecision> {
   if (texts.length === 0 || !enabledCategories.has("pii")) return PASS;
   if (allowTags.has("pii")) return PASS;
-  const config = readPiiSentinelConfig();
+  const config = readPiiSentinelConfig(userConfigFromCache()?.piiSentinel);
   if (config === null) return PASS;
   if (typeof config === "string") return { kind: "settings", problem: config };
   const { verdicts, unavailable, refused } = await judge(texts, config);
