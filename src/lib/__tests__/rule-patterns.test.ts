@@ -171,6 +171,523 @@ describe("a member, customer or account number after a label", () => {
   });
 });
 
+// The six localized date-of-birth rules. Each has its own label list, its own
+// month names and the numeric forms, so each table below is one language: the
+// labels it must reach and the near misses it must not. A value is checked
+// where the capture is what matters.
+const capturedBy = (line: string, ruleId: string): string | undefined =>
+  scan(line).find((f) => f.ruleId === ruleId)?.secretValue;
+
+describe("a date of birth after a German label", () => {
+  it.each([
+    ["Geburtsdatum: 12.03.1985", "dot form"],
+    ["Geb.-Datum 12. März 1985", "abbreviated label, written month"],
+    ["geb. am 1. Maerz 1985", "unaccented month"],
+    ["geb. 12.03.1985", "short label, date at once"],
+    ["geboren am 3. Mrz. 1985", "DIN abbreviation of März"],
+    ["GEBURTSDATUM 1985-03-12", "upper case, ISO"],
+    ["geburts_datum = '1985-03-12'", "snake_case"],
+    ['"geburtsdatum": "1985/03/12"', "JSON key"],
+    ["Geb.Dat.: 12.3.1985", "no padding"],
+    ["user_geburtsdatum: 1985-03-12", "underscore before the label"],
+    ["Geb.: 15.10.1983", "abbreviation with a colon"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-date-of-birth-de");
+  });
+
+  it("the captured value is the date", () => {
+    expect(capturedBy("Geburtsdatum: 12.03.1985", "pii-date-of-birth-de")).toBe(
+      "12.03.1985",
+    );
+    expect(capturedBy("Geb.-Datum 12. März 1985", "pii-date-of-birth-de")).toBe(
+      "12. März 1985",
+    );
+  });
+
+  it.each([
+    [
+      "Anna Vogt, geb. Schmidt, Mitglied seit 2020-01-01",
+      "geb. is a maiden name here, and the date is not at once",
+    ],
+    ["Geburtstag am 12.03.2026", "an event"],
+    ["Geburtstagsfeier 12.03.2026", "a party"],
+    ["kundeGeburtsdatum: 1985-03-12", "a letter before the label"],
+    ["Geburtsdatum: 12 March 1985", "English month, not this rule's language"],
+    ["Geburtsdatum 01.01.1970", "the epoch default"],
+    ["Geburtsdatum: 1900-01-01", "the 1900 default"],
+    ["Geburtsdatum 12.03.2099", "a future date"],
+    ["Geburtsdatum 31.02.1985", "no such day"],
+    ["Geburtsdatum v1.2.3", "a version"],
+    ["Geburtsdatum 12.03.85", "a two-digit year is not covered"],
+    [
+      "Geburtsdaten vom 12.03.2024 geprüft",
+      "plural runs into the letter boundary",
+    ],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-date-of-birth-de");
+  });
+});
+
+describe("a date of birth after a French label", () => {
+  it.each([
+    ["Date de naissance : 12/03/1985", "slash form, space before the colon"],
+    ["né(e) le 1er mars 1985", "ordinal day"],
+    ["Née le 12 janv. 1985", "feminine, abbreviated month"],
+    ["né le 12 décembre 1985", "accented month"],
+    ["NÉ LE 12/03/1985", "upper case"],
+    ["date_de_naissance: 1985-03-12", "snake_case"],
+    ['dateDeNaissance = "12.03.1985"', "camelCase"],
+    ["DDN: 1985-03-12", "abbreviation"],
+    ['"date de naissance": "12-03-1985"', "JSON key"],
+    ["né le 1er août 1985", "accented August"],
+    ["date_naissance: 1964-09-05", "snake_case without de"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-date-of-birth-fr");
+  });
+
+  it("the captured value is the date, the day with its ordinal included", () => {
+    expect(capturedBy("né(e) le 1er mars 1985", "pii-date-of-birth-fr")).toBe(
+      "1er mars 1985",
+    );
+  });
+
+  it.each([
+    ["ne le fais pas avant le 12/03/2024", "unaccented ne le is the negation"],
+    ["naissance du projet le 12/03/2024", "naissance alone names any birth"],
+    ["date de naissance : 01/01/1970", "the epoch default"],
+    ["DDN 1900-01-01", "the 1900 default"],
+    ["date de naissance 12/03/2099", "a future date"],
+    ["date de naissance 30/02/1985", "no such day"],
+    ["anniversaire le 12/03/2026", "an event"],
+    ["date de naissance: March 12, 1985", "English month"],
+    ["maddn: 1985-03-12", "a letter before ddn, so it is inside a word"],
+    ["date de naissance 12/03/85", "a two-digit year"],
+    ["release notes 2024-01-15", "a date with no label"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-date-of-birth-fr");
+  });
+});
+
+describe("a date of birth after an Italian label", () => {
+  it.each([
+    ["Data di nascita: 12/03/1985", "slash form"],
+    ["nato a Roma il 12 marzo 1985", "place, then il and a written month"],
+    ["nata il 1º marzo 1985", "feminine, ordinal day"],
+    ["nato/a il 12.03.1985", "nato/a, dot form"],
+    ["nata a Sesto San Giovanni il 1985-03-12", "a place with several words"],
+    ["dataDiNascita: 1985-03-12", "camelCase"],
+    ["data_nascita = '12/03/1985'", "snake_case"],
+    ["DATA DI NASCITA 12 SETT. 1985", "upper case, abbreviated month"],
+    ["nato il 31 dic 1985", "abbreviated month"],
+    ["D.N.: 12 luglio 1961", "D.N. abbreviation with a written month"],
+    ["DN: 15.10.1983", "DN abbreviation"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-date-of-birth-it");
+  });
+
+  it("the captured value is the date, the ordinal sign included", () => {
+    expect(
+      capturedBy("nato a Roma il 12 marzo 1985", "pii-date-of-birth-it"),
+    ).toBe("12 marzo 1985");
+    expect(capturedBy("nata il 1º marzo 1985", "pii-date-of-birth-it")).toBe(
+      "1º marzo 1985",
+    );
+  });
+
+  it.each([
+    ["la NATO il 12 marzo 2024 ha deciso", "the alliance after its article"],
+    ["alla NATO il 12 marzo 2024", "the alliance after its article"],
+    ["nato nel 1985", "a year is not a date"],
+    ["nascita del progetto il 12/03/2024", "nascita alone"],
+    ["data di nascita 01/01/1970", "the epoch default"],
+    ["data di nascita: 1900-01-01", "the 1900 default"],
+    ["data di nascita 12/03/2099", "a future date"],
+    ["data di nascita 31/04/1985", "no such day"],
+    ["compleanno il 12/03/2026", "an event"],
+    ["data di nascita 12 March 1985", "English month"],
+    ["nato a Milano il giorno dopo", "no date"],
+    ["data di nascita 12/03/85", "a two-digit year"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-date-of-birth-it");
+  });
+});
+
+describe("a date of birth after a Spanish label", () => {
+  it.each([
+    ["Fecha de nacimiento: 12 de marzo de 1985", "written form with de"],
+    ["nacido en Madrid el 12/03/1985", "place, then el and a slash date"],
+    ["nacida el 1 de enero de 1985", "feminine, written form"],
+    ["nacido/a el 12-03-1985", "nacido/a, dash form"],
+    [
+      "F. Nac.: 12-mar-1985",
+      "abbreviated label and day-month-year with dashes",
+    ],
+    ["fechaNacimiento = '1985-03-12'", "camelCase"],
+    ["fecha_de_nacimiento: 1985/03/12", "snake_case"],
+    ["FECHA NAC. 12/03/1985", "upper case abbreviation"],
+    ["fecha de nacimiento 12 sept 1985", "abbreviated month"],
+    ["fec. nac. 31 dic. 1985", "abbreviated label and month"],
+    ["F.N.: 15.10.1983", "F.N. abbreviation with a dotted date"],
+    ["nací el 3 de marzo de 1992", "first person, written form"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-date-of-birth-es");
+  });
+
+  it("the captured value is the date", () => {
+    expect(
+      capturedBy(
+        "Fecha de nacimiento: 12 de marzo de 1985",
+        "pii-date-of-birth-es",
+      ),
+    ).toBe("12 de marzo de 1985");
+    expect(capturedBy("F. Nac.: 12-mar-1985", "pii-date-of-birth-es")).toBe(
+      "12-mar-1985",
+    );
+  });
+
+  it.each([
+    ["compré en Fnac. 12/03/2024", "the retailer is not f. nac."],
+    ["nacido en 1985", "a year alone"],
+    ["nacimiento del proyecto el 12/03/2024", "nacimiento alone"],
+    ["fecha de nacimiento 01/01/1970", "the epoch default"],
+    ["fecha de nacimiento: 1900-01-01", "the 1900 default"],
+    ["fecha de nacimiento 12/03/2099", "a future date"],
+    ["fecha de nacimiento 30/02/1985", "no such day"],
+    ["cumpleaños el 12/03/2026", "an event"],
+    ["fecha de nacimiento March 12, 1985", "English month"],
+    ["fecha de nacimiento 12/03/85", "a two-digit year"],
+    ["fecha de pago 12/03/2024", "another date label"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-date-of-birth-es");
+  });
+});
+
+describe("a date of birth after a Chinese label", () => {
+  it.each([
+    ["出生日期：1985年3月12日", "full-width colon"],
+    ["出生年月日 1985-03-12", "出生年月日 with a dash date"],
+    ["出生于1985年3月12号", "出生于 with 号 as the day counter"],
+    ["出生年月：1985/3/12", "出生年月 with a slash date"],
+    ["出生日期 1985.03.12", "dot form"],
+    [
+      "出生日期（公历）1985年03月12日",
+      "a parenthesis between the label and the date",
+    ],
+    ['"出生日期": "1985-03-12"', "JSON key"],
+    ["出生日期为1985年3月12日", "为 between the label and the date"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-date-of-birth-zh");
+  });
+
+  it("the captured value is the date, 号 included", () => {
+    expect(capturedBy("出生于1985年3月12号", "pii-date-of-birth-zh")).toBe(
+      "1985年3月12号",
+    );
+  });
+
+  it.each([
+    ["生日快乐！2026年3月12日", "生日 is not a label, and ！ ends the reach"],
+    [
+      "发生于2024年3月1日",
+      "happened on: 生于 is inside 发生于 and is not a label",
+    ],
+    ["出生人口在2024年3月1日公布", "出生 alone is not a label"],
+    ["出生日期 1970-01-01", "the epoch default"],
+    ["出生日期：1900年1月1日", "the 1900 default"],
+    ["出生日期 2099-01-01", "a future date"],
+    ["出生日期 1985年2月30日", "no such day"],
+    ["出生年月 1985年3月", "month only, not covered"],
+    ["出生日期 85-03-12", "a two-digit year"],
+    ["出生日期。2024年3月1日", "。 ends the reach"],
+    ["出生日期 v1.2.3", "a version"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-date-of-birth-zh");
+  });
+});
+
+describe("a date of birth after a Korean label", () => {
+  it.each([
+    ["생년월일은 1985년 3월 12일", "written form, after a particle"],
+    ["생년월일: 1985. 3. 12.", "official numeric form"],
+    ["출생일자 1985.03.12", "dot form"],
+    ["생년월일 1985년3월12일", "written form without spaces"],
+    ["출생연월일：1985-03-12", "a full-width colon after the label"],
+    ["출생일 1985/03/12", "slash form"],
+    ['"생년월일": "1985-03-12"', "JSON key"],
+    ["생년월일이 1985. 03. 12.", "zero-padded official form"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-date-of-birth-ko");
+  });
+
+  it("the captured value is the date, the final dot included", () => {
+    expect(capturedBy("생년월일: 1985. 3. 12.", "pii-date-of-birth-ko")).toBe(
+      "1985. 3. 12.",
+    );
+  });
+
+  it.each([
+    ["생일 파티 2026. 3. 12.", "생일 is not a label"],
+    ["생년월일 1970. 1. 1.", "the epoch default"],
+    ["생년월일 1900년 1월 1일", "the 1900 default"],
+    ["생년월일 2099-01-01", "a future date"],
+    ["생년월일 1985. 13. 12.", "no such month"],
+    ["생년월일 85. 3. 12.", "a two-digit year"],
+    ["발행일 2024. 3. 12.", "another date label"],
+    ["생년월일! 2024년 3월 12일", "! ends the reach"],
+    ["생년월일 v1.2.3", "a version"],
+    ["출생률 2024. 3. 12.", "출생 alone is not a label"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-date-of-birth-ko");
+  });
+});
+
+describe("a member, customer or account number after a German label", () => {
+  it.each([
+    ["Kundennummer: 1234567", "plain"],
+    ["Kd.-Nr. KD-4471-8820", "abbreviation with a hyphen, and a dashed value"],
+    [
+      "Meine Mitgliedsnummer lautet M-20419",
+      "lautet between the label and the value",
+    ],
+    ["Kto.-Nr.: 123456789", "Kontonummer abbreviated"],
+    ["Kunden-Nr 10023456", "hyphen before the abbreviation"],
+    ['kundennummer = "C-0001234"', "assignment in quotes"],
+    ["Mitgl.-Nr. 20419", "Mitgliedsnummer abbreviated"],
+    ["Kontonummer 000123456789", "bank account number"],
+    ["Kunden-ID 10023456", "customer ID"],
+    ["Ihre Kundennummer ist 12345", "ist between the label and the value"],
+    ["kundenNr: 1234567", "camelCase"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-customer-number-de");
+  });
+
+  it("the captured value is the number, the dashes included", () => {
+    expect(capturedBy("Kd.-Nr. KD-4471-8820", "pii-customer-number-de")).toBe(
+      "KD-4471-8820",
+    );
+  });
+
+  it.each([
+    ["Konto-ID 123456789", "account ID, the infrastructure sense"],
+    ["billing_kundennummer: 1234567", "the tail of a longer key"],
+    ["Kundennummern ab 10000", "plural runs into the letter boundary"],
+    ["Kundennummer: 1000", "four characters"],
+    ["Kundennummer: ABCDEF", "no digits"],
+    ["Bestellnummer 12345678", "order number"],
+    ["Rechnungsnummer 2024-0012", "invoice number"],
+    ["Kundennummer v1.2.3", "a version"],
+    ["Kundennummer: integer", "a word, not a number"],
+    ["kundennummer_length = 10", "a longer key after the label"],
+    ["Kundennummer: ABCDEFGHIJKLMNOPQRSTUVW12", "twenty-five characters"],
+    ["Kundennummer: 00000000", "an all-zero placeholder"],
+    ["Kontonummer: 0000000000000000", "an all-zero placeholder"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-customer-number-de");
+  });
+});
+
+describe("a member, customer or account number after a French label", () => {
+  it.each([
+    ["N° client : 4471882", "abbreviated label with a degree sign"],
+    ["numéro d'adhérent 20419-A", "adhérent with a dash in the value"],
+    ["Numéro de compte: 00123456789", "bank account"],
+    ["code client ABC-12345", "invoice vocabulary"],
+    ["numero client 1002345", "unaccented"],
+    ["N° d’adhérent 20419", "typographic apostrophe"],
+    ["identifiant client : CL-0001234", "identifiant client"],
+    ["Nº de membre 123456", "membre with the masculine ordinal sign"],
+    ['numeroClient = "1002345"', "camelCase"],
+    ["Mon numéro de client est 4471882", "est between the label and the value"],
+    ['"numero_client": "C-0001234"', "snake_case key"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-customer-number-fr");
+  });
+
+  it("the captured value is the number, the dash included", () => {
+    expect(
+      capturedBy("numéro d'adhérent 20419-A", "pii-customer-number-fr"),
+    ).toBe("20419-A");
+  });
+
+  it.each([
+    ["ID de compte 123456789012", "account ID, the infrastructure sense"],
+    [
+      "there is no client 12345",
+      "no client without a degree sign or dot is English",
+    ],
+    ["organization_numero_client: 1002345", "the tail of a longer key"],
+    ["numéro de commande 12345678", "order number"],
+    ["numéro de facture 2024-0012", "invoice number"],
+    ["numéro client: 1000", "four characters"],
+    ["numéro client: abcdef", "no digits"],
+    ["Numéro de compte : 0000000000000000", "an all-zero placeholder"],
+    ["Nº de membre : 00000000", "an all-zero placeholder"],
+    ["numéro de client v1.2.3", "a version"],
+    ["référence client 12345678", "a reference names contracts and orders too"],
+    ["numéro de clients 12345", "plural"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-customer-number-fr");
+  });
+});
+
+describe("a member, customer or account number after an Italian label", () => {
+  it.each([
+    ["Numero cliente: 123456789", "plain"],
+    ["n. socio 20419", "socio, abbreviated"],
+    ["Cliente N. 12345678", "label with the number after it"],
+    ["numero di conto 000123456", "bank account"],
+    ["codice cliente CL-0001234", "invoice vocabulary"],
+    ["n° tessera 20419", "membership card"],
+    ["Il mio numero cliente è 123456789", "è between the label and the value"],
+    ['numeroCliente = "123456789"', "camelCase"],
+    ['"numero_cliente": "C-0001234"', "snake_case key"],
+    ["cod. cliente 1002345", "abbreviated codice"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-customer-number-it");
+  });
+
+  it.each([
+    ["ID account 123456789", "account ID, the infrastructure sense"],
+    ["id conto 123456789", "account ID, the infrastructure sense"],
+    ["numero ordine 12345678", "order number"],
+    ["numero fattura 2024-0012", "invoice number"],
+    ["org_numero_cliente: 1002345", "the tail of a longer key"],
+    ["numero cliente: 1000", "four characters"],
+    ["numero cliente: abcdef", "no digits"],
+    ["Numero socio: 00000000", "an all-zero placeholder"],
+    ["Numero di conto: 0000000000000000", "an all-zero placeholder"],
+    ["numero cliente v1.2.3", "a version"],
+    ["numero clienti 12345", "plural"],
+    ["numero di telefono 0612345678", "another number"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-customer-number-it");
+  });
+});
+
+describe("a member, customer or account number after a Spanish label", () => {
+  it.each([
+    ["Número de cliente: 4471882", "accented"],
+    ["n.º de socio/a 20419", "socio/a with the ordinal sign"],
+    ["núm. cliente ES-00123", "abbreviated, with a dash in the value"],
+    ["Nro. de cliente 1002345", "nro abbreviation"],
+    ["número de cuenta 00123456789", "bank account"],
+    ["código de cliente CL-0001234", "invoice vocabulary"],
+    ["nº socio 20419", "abbreviated socio"],
+    ["numero cliente 1002345", "unaccented"],
+    ["Mi número de cliente es 4471882", "es between the label and the value"],
+    ['numeroCliente = "4471882"', "camelCase"],
+    ['"numero_de_cliente": "C-0001234"', "snake_case key with de"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-customer-number-es");
+  });
+
+  it("the captured value is the number, the dash included", () => {
+    expect(capturedBy("núm. cliente ES-00123", "pii-customer-number-es")).toBe(
+      "ES-00123",
+    );
+  });
+
+  it.each([
+    ["ID de cuenta 123456789012", "account ID, the infrastructure sense"],
+    ["no de cliente 12345", "no without a dot is the negation"],
+    ["número de pedido 12345678", "order number"],
+    ["número de factura 2024-0012", "invoice number"],
+    ["org_numero_cliente: 1002345", "the tail of a longer key"],
+    ["número de cliente: 1000", "four characters"],
+    ["número de cliente: abcdef", "no digits"],
+    ["Número de socio: 00000000", "an all-zero placeholder"],
+    ["Número de cuenta: 0000000000000000", "an all-zero placeholder"],
+    ["número de cliente v1.2.3", "a version"],
+    ["número de clientes 12345", "plural"],
+    [
+      "código de cuenta 0049-1500-05-1234567890",
+      "an accounting chart code, dropped",
+    ],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-customer-number-es");
+  });
+});
+
+describe("a member, customer or account number after a Chinese label", () => {
+  it.each([
+    ["客户编号：10023456", "full-width colon"],
+    ["客户编号：00012300", "zeros with other digits are still a number"],
+    ["会员卡号 6222-0012-3456", "member card number with dashes"],
+    ["会员号是 A12345", "是 between the label and the value"],
+    ["客户号码：C-0001234", "客户号码"],
+    ["客户号 10023456", "客户号"],
+    ["会员编号MBR-20419", "no boundary after a Chinese label"],
+    ["银行账号：6222001234567890", "bank account"],
+    ["账户号码 000123456", "account number"],
+    ["客户ID：10023456", "customer ID"],
+    ['"会员编号": "１２３４５６７８"', "full-width digits"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-customer-number-zh");
+  });
+
+  it("the captured value is the number, the dashes included", () => {
+    expect(
+      capturedBy("会员卡号 6222-0012-3456", "pii-customer-number-zh"),
+    ).toBe("6222-0012-3456");
+  });
+
+  it.each([
+    ["账号：alice_01", "a login account, and no two digits in a run"],
+    ["账户ID 123456789", "account ID, the infrastructure sense"],
+    ["用户ID 123456789", "user ID is infrastructure"],
+    ["订单编号 2024031200123", "order number"],
+    ["客户编号：1000", "four characters"],
+    ["客户编号：ABCDEF", "no digits"],
+    ["会员编号 v1.2.3", "a version"],
+    ["客户数 12345", "a count"],
+    ["产品编号 P-0001234", "product number"],
+    ["客户编号: ABCDEFGHIJKLMNOPQRSTUVW12", "twenty-five characters"],
+    ["会员号：00000000", "an all-zero placeholder"],
+    ["银行账号：0000000000000000", "an all-zero placeholder"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-customer-number-zh");
+  });
+});
+
+describe("a member, customer or account number after a Korean label", () => {
+  it.each([
+    ["고객번호: 0123456789", "plain"],
+    ["회원 번호는 MBR-20419", "space in the compound, a particle after it"],
+    ["계좌번호 110-123-456789", "bank account with dashes"],
+    ["회원번호가 20419", "가 after the label"],
+    ["고객 ID: C-0001234", "customer ID with a space"],
+    ["회원ID MBR-20419", "member ID without a space"],
+    ["계좌 번호: 1002345678", "bank account with a space"],
+    ['"회원번호": "12345678"', "JSON key"],
+    ["고객번호 １２３４５６７８", "full-width digits"],
+  ])("%s is found (%s)", (line) => {
+    expect(ruleIds(line)).toContain("pii-customer-number-ko");
+  });
+
+  it("the captured value is the number, the dashes included", () => {
+    expect(capturedBy("회원 번호는 MBR-20419", "pii-customer-number-ko")).toBe(
+      "MBR-20419",
+    );
+  });
+
+  it.each([
+    ["계정 ID 123456789", "login-account sense"],
+    ["아이디: alice01", "a login ID"],
+    ["주문번호 2024031200123", "order number"],
+    ["고객번호: 1000", "four characters"],
+    ["고객번호: ABCDEF", "no digits"],
+    ["회원번호 v1.2.3", "a version"],
+    ["고객수 12345", "a count"],
+    ["사업자번호 123-45-67890", "business registration number, another rule's"],
+    ["고객번호: ABCDEFGHIJKLMNOPQRSTUVW12", "twenty-five characters"],
+    ["회원번호: 00000000", "an all-zero placeholder"],
+    ["계좌번호: 0000000000000000", "an all-zero placeholder"],
+    ["송장번호 INV-20240312", "invoice number"],
+  ])("%s is not found (%s)", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-customer-number-ko");
+  });
+});
+
 describe("a Japanese postal address", () => {
   it.each([
     ["東京都渋谷区神宮前5-28-11", "prefecture, ward and block with hyphens"],
@@ -293,6 +810,48 @@ describe("a value under a labelled column", () => {
       1,
     ],
     ["id\tdob\n7\t1990-05-06", "TSV", "pii-date-of-birth", 1],
+    [
+      "Name,Geburtsdatum,Ort\nAnna Vogt,12.03.1985,Berlin",
+      "CSV with a German header",
+      "pii-date-of-birth-de",
+      1,
+    ],
+    [
+      "| 이름 | 생년월일 |\n|---|---|\n| 김서연 | 1985. 3. 12. |",
+      "Markdown table with a Korean header and the official form",
+      "pii-date-of-birth-ko",
+      1,
+    ],
+    [
+      "nombre,fecha de nacimiento\nLucía Ortega,12 de marzo de 1985",
+      "CSV with a Spanish header and the written form",
+      "pii-date-of-birth-es",
+      1,
+    ],
+    [
+      "INSERT INTO clientes (nombre, numero_client) VALUES ('Claire Petit', '4471882'), ('Léa Roux', '1002345')",
+      "SQL INSERT with a French column name, two tuples",
+      "pii-customer-number-fr",
+      2,
+    ],
+    [
+      "INSERT INTO cuentas (codigo_cliente, nombre) VALUES ('CUS-77130', 'Lucas Herrera')",
+      "SQL INSERT with an unaccented Spanish column name",
+      "pii-customer-number-es",
+      1,
+    ],
+    [
+      "姓名\t会员编号\n李华\tMBR-20419",
+      "TSV with a Chinese header",
+      "pii-customer-number-zh",
+      1,
+    ],
+    [
+      "Name,Kd.-Nr.\nAnna Vogt,KD-4471-8820",
+      "CSV with a German abbreviated header, its dot and hyphen normalised",
+      "pii-customer-number-de",
+      1,
+    ],
     [
       '"Name","DOB"\n"Lee, Ann","1990-05-06"',
       "quoted CSV with a comma in a cell",
@@ -701,6 +1260,18 @@ describe("every rule catches something", () => {
     "pii-date-of-birth": "DOB: 1990-05-06",
     "pii-customer-number": "会員番号：ABC-12345678",
     "pii-address-jp": "東京都渋谷区神宮前5-28-11",
+    "pii-date-of-birth-zh": "出生日期：1985年3月12日",
+    "pii-date-of-birth-ko": "생년월일: 1985. 3. 12.",
+    "pii-date-of-birth-fr": "Date de naissance : 12/03/1985",
+    "pii-date-of-birth-it": "Data di nascita: 12 marzo 1985",
+    "pii-date-of-birth-de": "Geburtsdatum: 12.03.1985",
+    "pii-date-of-birth-es": "Fecha de nacimiento: 12 de marzo de 1985",
+    "pii-customer-number-zh": "客户编号：10023456",
+    "pii-customer-number-ko": "고객번호: 0123456789",
+    "pii-customer-number-fr": "N° client : 4471882",
+    "pii-customer-number-it": "Numero cliente: 123456789",
+    "pii-customer-number-de": "Kundennummer: 1234567",
+    "pii-customer-number-es": "Número de cliente: 4471882",
   };
 
   it("has an example for every shipped rule", () => {
@@ -766,6 +1337,18 @@ describe("every rule catches something", () => {
       "a run longer than twenty-four characters is a hash or a token, not a number anyone types",
     "pii-date-of-birth":
       "a date has a fixed number of digits; one more is not a date",
+    "pii-customer-number-zh":
+      "a run longer than twenty-four characters is a hash or a token, not a number anyone types",
+    "pii-customer-number-ko":
+      "a run longer than twenty-four characters is a hash or a token, not a number anyone types",
+    "pii-customer-number-fr":
+      "a run longer than twenty-four characters is a hash or a token, not a number anyone types",
+    "pii-customer-number-it":
+      "a run longer than twenty-four characters is a hash or a token, not a number anyone types",
+    "pii-customer-number-de":
+      "a run longer than twenty-four characters is a hash or a token, not a number anyone types",
+    "pii-customer-number-es":
+      "a run longer than twenty-four characters is a hash or a token, not a number anyone types",
   };
 
   // The list above is a list, so it is held to the rules that exist: an id left

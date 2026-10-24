@@ -726,6 +726,34 @@ describe("scan — adversarial inputs", () => {
       "birth labels with a broken date": "DOB x: 1990-05-".repeat(15_000),
       // pii-customer-number: the separator class after each label is walked, then the value fails
       "customer labels with no number": "customer id ".repeat(20_000),
+      // pii-date-of-birth-de: the gap after each label is walked to its limit, with no date to end on
+      "german birth labels with no date": "Geburtsdatum ".repeat(15_400),
+      // pii-date-of-birth-fr: the day is found after each né le, then the month alternation fails
+      "french birth phrases with a day and no month": "né le 12 ".repeat(
+        22_000,
+      ),
+      // pii-date-of-birth-it: the lazy place name is walked to il, then the date fails
+      "italian birth phrases with a place and no date": "nato a x il ".repeat(
+        16_700,
+      ),
+      // pii-date-of-birth-es: after one label, "12 de " repeats and each day backs off its de
+      "spanish day and de with no month": `fecha nac. ${"12 de ".repeat(33_000)}`,
+      // pii-date-of-birth-ko: a dotted year and month, and the day never comes
+      "korean birth labels with a broken dotted date":
+        "출생일 1985. 3. ".repeat(13_300),
+      // pii-date-of-birth-zh: the gap after each label is walked, with no date
+      "chinese birth labels with no date": "出生日期 ".repeat(40_000),
+      // pii-customer-number-de/fr/it/es/zh/ko: the separator class after each label is walked, then the value fails
+      "german customer labels with no number": "Kundennummer ".repeat(15_400),
+      "french customer labels with no number": "n° client ".repeat(20_000),
+      "italian customer labels with no number": "numero cliente ".repeat(
+        13_300,
+      ),
+      "spanish customer labels with no number": "número de cliente ".repeat(
+        11_100,
+      ),
+      "chinese customer labels with no number": "会员编号 ".repeat(40_000),
+      "korean customer labels with no number": "회원 번호 ".repeat(33_000),
       // pii-email: the ssh exemption walks back over each run of spaces, bounded at sixteen
       spaces: " ".repeat(200_000),
       // pii-email: the same walk over a run of tabs
