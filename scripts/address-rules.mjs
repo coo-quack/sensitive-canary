@@ -17,19 +17,27 @@ import { fileURLToPath } from "node:url";
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 const cap = (w) => w[0].toUpperCase() + w.slice(1);
-const variants = (words) => [...new Set(words.flatMap((w) => [w, cap(w), w.toUpperCase()]))];
+const variants = (words) => [
+  ...new Set(words.flatMap((w) => [w, cap(w), w.toUpperCase()])),
+];
 // The variants as a trie on the first character: each letter is tried once,
 // not once per word (a flat list of 40 words costs 40 tries at every capital).
 const trie = (words) => {
   const groups = new Map();
   let empty = false;
   for (const w of new Set(words)) {
-    if (w === "") { empty = true; continue; }
+    if (w === "") {
+      empty = true;
+      continue;
+    }
     const c = [...w][0];
     if (!groups.has(c)) groups.set(c, []);
     groups.get(c).push(w.slice(c.length));
   }
-  const alts = [...groups].map(([c, tails]) => esc(c) + (tails.length === 1 ? esc(tails[0]) : `(?:${trie(tails)})`));
+  const alts = [...groups].map(
+    ([c, tails]) =>
+      esc(c) + (tails.length === 1 ? esc(tails[0]) : `(?:${trie(tails)})`),
+  );
   if (empty) alts.push("");
   return alts.join("|");
 };
@@ -59,7 +67,8 @@ const NOT_CURRENCY =
 // may be joined by a lower-case particle (`Frankfurt am Main`, `Monte di Procida`,
 // `Reggio d'Emilia`), and `Cedex` may carry its number (`Paris Cedex 08`). A lower-case
 // word that is not a particle ends the town, so `75001 Paris pour le concert` is `Paris`.
-const TOWN_PARTICLE = "(?:am|an der|an|sur|sous|de|du|des|di|del|della|los|las|la|le|les|im|vor|auf)";
+const TOWN_PARTICLE =
+  "(?:am|an der|an|sur|sous|de|du|des|di|del|della|los|las|la|le|les|im|vor|auf)";
 const TOWN_WORD = "\\p{Lu}[\\p{L}'’.()-]*";
 const TOWN_TAIL =
   `(?:[ \\t]+[Cc]edex(?:[ \\t]+\\d{1,2}(?![\\p{L}\\d]))?` +
@@ -82,16 +91,43 @@ const nameWords = (excluded = "\\s,;|\\d") =>
 
 // ── France ───────────────────────────────────────────────────────────────────
 const FR_TYPES = cases([
-  "rue", "avenue", "av.", "boulevard", "bd", "bd.", "bvd", "chemin", "ch.",
-  "place", "pl.", "allée", "allee", "impasse", "imp.", "quai", "cours",
-  "passage", "chaussée", "faubourg", "sentier", "promenade", "esplanade",
-  "lotissement", "hameau", "résidence", "parvis", "rond-point", "cité",
+  "rue",
+  "avenue",
+  "av.",
+  "boulevard",
+  "bd",
+  "bd.",
+  "bvd",
+  "chemin",
+  "ch.",
+  "place",
+  "pl.",
+  "allée",
+  "allee",
+  "impasse",
+  "imp.",
+  "quai",
+  "cours",
+  "passage",
+  "chaussée",
+  "faubourg",
+  "sentier",
+  "promenade",
+  "esplanade",
+  "lotissement",
+  "hameau",
+  "résidence",
+  "parvis",
+  "rond-point",
+  "cité",
 ]);
 // The street name is a run of words that are capitalised, digits (`8 Mai 1945`) or
 // a particle (`de`, `la`, `d'`). Any other lower-case word (`coûte`, `settings`)
 // ends the name, so a sentence after a number is not read as a street.
-const FR_START_NAME = "(?=\\s(?:\\p{Lu}|d[eu]\\s|des\\s|d['’]|l[ae]s?\\s|l['’]|aux?\\s))";
-const FR_ROUTE_NAME = "(?=\\s(?:de\\s|du\\s|des\\s|d['’]|nationale|départementale|[ND]\\s?\\d|DE\\s|DU\\s|DES\\s|D['’]|NATIONALE|DÉPARTEMENTALE))";
+const FR_START_NAME =
+  "(?=\\s(?:\\p{Lu}|d[eu]\\s|des\\s|d['’]|l[ae]s?\\s|l['’]|aux?\\s))";
+const FR_ROUTE_NAME =
+  "(?=\\s(?:de\\s|du\\s|des\\s|d['’]|nationale|départementale|[ND]\\s?\\d|DE\\s|DU\\s|DES\\s|D['’]|NATIONALE|DÉPARTEMENTALE))";
 const FR_WORD =
   "(?:\\p{Lu}[\\p{L}'’.-]{0,30}|[0-9]{1,4}(?!\\d)|de|du|des|d['’]\\p{L}{1,30}|la|le|les|l['’]\\p{L}{1,30}|et|sur|sous|en|au|aux|à|lès|lez|nationale|départementale)";
 // What may stand between the street name and the postal code: separators, and the
@@ -109,14 +145,39 @@ export const fr =
 
 // ── Italy ────────────────────────────────────────────────────────────────────
 const IT_TYPES_NOT_VIA = cases([
-  "viale", "v.le", "piazza", "p.zza", "p.za", "piazzale", "p.le", "piazzetta",
-  "corso", "c.so", "largo", "vicolo", "strada", "borgo", "contrada", "c.da",
-  "lungomare", "lungarno", "lungotevere", "galleria", "salita", "calata",
-  "traversa", "vico", "località", "loc.", "frazione", "fraz.",
+  "viale",
+  "v.le",
+  "piazza",
+  "p.zza",
+  "p.za",
+  "piazzale",
+  "p.le",
+  "piazzetta",
+  "corso",
+  "c.so",
+  "largo",
+  "vicolo",
+  "strada",
+  "borgo",
+  "contrada",
+  "c.da",
+  "lungomare",
+  "lungarno",
+  "lungotevere",
+  "galleria",
+  "salita",
+  "calata",
+  "traversa",
+  "vico",
+  "località",
+  "loc.",
+  "frazione",
+  "fraz.",
   "circonvallazione",
 ]);
 const IT_NAME =
-  "(?:\\d{1,2}[º°]?\\s(?=\\p{Lu}))?(?=\\p{Lu}|de[il]\\s|dell[ae]\\s|degli\\s|di\\s|d['’]|dell['’])" + nameWords();
+  "(?:\\d{1,2}[º°]?\\s(?=\\p{Lu}))?(?=\\p{Lu}|de[il]\\s|dell[ae]\\s|degli\\s|di\\s|d['’]|dell['’])" +
+  nameWords();
 const IT_NO = "(?:n\\.|N\\.|n[°º]|N[°º]|num\\.)?\\s{0,2}";
 const IT_POSTAL = "(?:[0-8]\\d|9[0-8])\\d{3}";
 // Between the civic number and the CAP: separators, and an internal number, a
@@ -156,28 +217,82 @@ const DE_PIECES = {
 const DE_STREET = `(?:${Object.values(DE_PIECES).join("|")})`;
 const DE_DELIM = "[ \\t]{0,3}(?:[,;|–—\\n]|-\\s|[ \\t]{2,})";
 const DE_POSTAL = "(?:D-)?(?:0[1-9]|[1-9]\\d)\\d{3}";
-export const de =
-  `(?=[A-ZÄÖÜẞ])${START}${DE_STREET}(?![\\p{L}])\\s{1,2}${HOUSE_NO}${DE_DELIM}${DE_GAP}${postal(DE_POSTAL)}${TOWN}`;
+export const de = `(?=[A-ZÄÖÜẞ])${START}${DE_STREET}(?![\\p{L}])\\s{1,2}${HOUSE_NO}${DE_DELIM}${DE_GAP}${postal(DE_POSTAL)}${TOWN}`;
 
 // ── Spain ────────────────────────────────────────────────────────────────────
 const ES_TYPES = cases([
-  "calle", "c/", "avenida", "avda.", "avda", "av.", "plaza", "pza.", "pza",
-  "plza.", "pl.", "paseo", "pº", "p.º", "p°", "carretera", "ctra.", "ctra",
-  "camino", "cno.", "ronda", "rda.", "travesía", "travesia", "trav.",
-  "glorieta", "gta.", "urbanización", "urbanizacion", "urb.", "polígono",
-  "poligono", "pol.", "rambla", "bulevar", "vía", "pasaje", "cuesta",
-  "plazuela", "callejón", "callejon", "paraje",
+  "calle",
+  "c/",
+  "avenida",
+  "avda.",
+  "avda",
+  "av.",
+  "plaza",
+  "pza.",
+  "pza",
+  "plza.",
+  "pl.",
+  "paseo",
+  "pº",
+  "p.º",
+  "p°",
+  "carretera",
+  "ctra.",
+  "ctra",
+  "camino",
+  "cno.",
+  "ronda",
+  "rda.",
+  "travesía",
+  "travesia",
+  "trav.",
+  "glorieta",
+  "gta.",
+  "urbanización",
+  "urbanizacion",
+  "urb.",
+  "polígono",
+  "poligono",
+  "pol.",
+  "rambla",
+  "bulevar",
+  "vía",
+  "pasaje",
+  "cuesta",
+  "plazuela",
+  "callejón",
+  "callejon",
+  "paraje",
 ]);
 const ES_NAME =
   "(?:\\d{1,2}\\s(?=\\p{Lu}|de\\s))?(?=\\p{Lu}|de\\s|del\\s|l[ao]s?\\s|el\\s|d['’])" +
   `${atomic("\\p{L}[^\\s,;|\\d/]{0,20}")}(?:\\s${atomic("\\p{L}[^\\s,;|\\d/]{0,20}")}){0,4}`;
-const ES_NO = "(?:n[º°]\\.?|N[º°]\\.?|n\\.[º°]|N\\.[º°]|n[úu]m\\.?|N[úu]m\\.?|número|Número|[kK]m\\.?)?\\s{0,2}";
+const ES_NO =
+  "(?:n[º°]\\.?|N[º°]\\.?|n\\.[º°]|N\\.[º°]|n[úu]m\\.?|N[úu]m\\.?|número|Número|[kK]m\\.?)?\\s{0,2}";
 const ES_POSTAL = "(?:0[1-9]|[1-4]\\d|5[0-2])\\d{3}";
 // Between the number and the postal code: separators, and the floor, door and
 // staircase forms a Spanish address writes (`3.º izda.`, `2º B`, `puerta B`, `bajo`).
-const ES_KW = variants(["piso", "planta", "puerta", "bajo", "izda.", "izq.", "izquierda", "dcha.", "dch.", "derecha", "escalera", "esc.", "portal", "ático", "entresuelo", "letra"]).map(esc).join("|");
-const ES_TOKEN =
-  `(?:\\d{1,2}\\.?\\s?[ºª°]\\.?(?:\\s?[A-Za-z](?![\\p{L}]))?|(?:${ES_KW})(?![\\p{L}])(?:\\s?[0-9A-Za-zºª]{1,4}(?![\\p{L}]))?)`;
+const ES_KW = variants([
+  "piso",
+  "planta",
+  "puerta",
+  "bajo",
+  "izda.",
+  "izq.",
+  "izquierda",
+  "dcha.",
+  "dch.",
+  "derecha",
+  "escalera",
+  "esc.",
+  "portal",
+  "ático",
+  "entresuelo",
+  "letra",
+])
+  .map(esc)
+  .join("|");
+const ES_TOKEN = `(?:\\d{1,2}\\.?\\s?[ºª°]\\.?(?:\\s?[A-Za-z](?![\\p{L}]))?|(?:${ES_KW})(?![\\p{L}])(?:\\s?[0-9A-Za-zºª]{1,4}(?![\\p{L}]))?)`;
 const ES_GAP = `(?:[\\s,;/\\n–-]|${ES_TOKEN}|(?:CP|C\\.P\\.|Código postal|Cód\\. postal)\\s?:\\s?){0,12}?`;
 export const es =
   `${START}${ES_TYPES}(?![\\p{L}])\\s{0,2}${ES_NAME},?\\s{0,2}${ES_NO}` +
@@ -191,7 +306,8 @@ export const es =
 // 从). Gated, the unit start costs ~4 ms on 200k Han characters; ungated it cost
 // ~40 ms (`海区` repeated, each start walks a unit pair and a road).
 const HAN = "\\p{sc=Han}";
-const CN_PROV_FIRST = "[北天上重河山辽吉黑江浙安福湖广海四贵云陕甘青台内西宁新香澳]";
+const CN_PROV_FIRST =
+  "[北天上重河山辽吉黑江浙安福湖广海四贵云陕甘青台内西宁新香澳]";
 // The province-level names, without their suffix. The suffix is optional in the
 // address (`北京`, `广东省`), and required wherever a unit run must not start inside
 // a province name (`CN_PROV_NAMED`).
@@ -209,10 +325,13 @@ const CN_PROV_NAMED = `${CN_PROV_NAMES}${CN_PROV_SUFFIX}`;
 // at a place particle (在, 到, 为, 至, 往): no place name holds one, and a sentence
 // `我在北京市...` must not carry 我在 into the value. A unit start reads 于 as a
 // particle too (`位于海淀区`), but a unit after a province still reads 于洪区.
-const cnUnit = (startOfValue = false) => atomic(
-  `(?:(?![市区县旗盟镇乡在到为至往${startOfValue ? "于" : ""}]|街道|${CN_PROV_NAMED})${HAN}){1,7}`) +
-  "(?:市|(?<![小社校景])(?<!(?<!工业)园)区|县|旗|盟|镇|乡|街道)";
-const cnRoad = () => atomic(`(?:(?![路街道巷弄]|胡同)${HAN}){1,6}`) + "(?:路|街|道|胡同|巷|弄)(?:[东南西北中]{0,2}[一二三四五六七八九十0-9]{0,2}段)?";
+const cnUnit = (startOfValue = false) =>
+  atomic(
+    `(?:(?![市区县旗盟镇乡在到为至往${startOfValue ? "于" : ""}]|街道|${CN_PROV_NAMED})${HAN}){1,7}`,
+  ) + "(?:市|(?<![小社校景])(?<!(?<!工业)园)区|县|旗|盟|镇|乡|街道)";
+const cnRoad = () =>
+  atomic(`(?:(?![路街道巷弄]|胡同)${HAN}){1,6}`) +
+  "(?:路|街|道|胡同|巷|弄)(?:[东南西北中]{0,2}[一二三四五六七八九十0-9]{0,2}段)?";
 // A space is allowed before the number (`南京路 35号`) and before 号 (`35 号`).
 const CN_NUM =
   "\\s?(?:[0-9０-９]{1,5}弄)?[0-9０-９]{1,5}(?:[-－][0-9０-９]{1,4})?\\s?号(?![线码])" +
@@ -231,49 +350,108 @@ const KR_SIDO =
 const HANGUL = "[가-힣]";
 const KR_UNIT = `(?:${atomic(`${HANGUL}{2,9}`)}(?<=[시군구])\\s)`;
 const KR_EUPMYEON = `(?:${atomic(`${HANGUL}{2,9}`)}(?<=[읍면])\\s)?`;
-const KR_ADMIN =
-  `(?:${KR_SIDO}\\s${KR_UNIT}{0,3}|(?:${atomic(`${HANGUL}{2,9}`)}(?<=시)\\s)?${atomic(`${HANGUL}{2,9}`)}(?<=[구군])\\s)`;
+const KR_ADMIN = `(?:${KR_SIDO}\\s${KR_UNIT}{0,3}|(?:${atomic(`${HANGUL}{2,9}`)}(?<=시)\\s)?${atomic(`${HANGUL}{2,9}`)}(?<=[구군])\\s)`;
 // The number ends the address unless a counter word follows it (a counter is a
 // whole word: `주소` is not `주`), and a particle may be attached (`대학로 99에`).
 const KR_NOT_COUNTER =
   "(?:(?![0-9가-힣])|(?=(?:에서|에|의|는|은|도|을|를|과|와|로|부터|까지|가|이)(?![가-힣])))" +
   "(?!\\s?(?:번(?!지)|호선|명|개|년|월|일|시간|분|초|원|층|호|회|대|차|배|개월|주)(?![가-힣]))";
-const KR_ROAD =
-  `${atomic(`${HANGUL}{2,11}`)}(?<=로|길)(?:\\s?[0-9]{1,3}(?:번|안)?길)?\\s?[0-9]{1,4}(?:-[0-9]{1,3})?${KR_NOT_COUNTER}`;
-const KR_LOT =
-  `${atomic(`${HANGUL}{2,9}`)}(?<=[동리가])\\s?(?:산\\s?)?[0-9]{1,4}(?:-[0-9]{1,4})?(?:번지)?${KR_NOT_COUNTER}`;
+const KR_ROAD = `${atomic(`${HANGUL}{2,11}`)}(?<=로|길)(?:\\s?[0-9]{1,3}(?:번|안)?길)?\\s?[0-9]{1,4}(?:-[0-9]{1,3})?${KR_NOT_COUNTER}`;
+const KR_LOT = `${atomic(`${HANGUL}{2,9}`)}(?<=[동리가])\\s?(?:산\\s?)?[0-9]{1,4}(?:-[0-9]{1,4})?(?:번지)?${KR_NOT_COUNTER}`;
 export const kr = `${KR_START}${KR_ADMIN}${KR_EUPMYEON}(?:${KR_ROAD}|${KR_LOT})`;
 
 export const RULES = [
-  { id: "pii-address-cn", description: "Chinese postal address: a province, city or district, a road and a number with 号 in sequence", regex: cn, flags: "gu", category: "pii" },
-  { id: "pii-address-kr", description: "Korean postal address: a 시/도 or 구/군, then a road name (로/길) and a building number, or a 동/리 and a lot number", regex: kr, flags: "gu", category: "pii" },
-  { id: "pii-address-fr", description: "French postal address: a number, a street type and name, then a postal code and a town", regex: fr, flags: "gu", category: "pii" },
-  { id: "pii-address-it", description: "Italian postal address: a street type and name, a civic number, then a CAP and a town", regex: it, flags: "gu", category: "pii" },
-  { id: "pii-address-de", description: "German postal address: a street and house number, then a postal code and a town", regex: de, flags: "gu", category: "pii" },
-  { id: "pii-address-es", description: "Spanish postal address: a street type and name, a number, then a postal code and a town", regex: es, flags: "gu", category: "pii" },
+  {
+    id: "pii-address-cn",
+    description:
+      "Chinese postal address: a province, city or district, a road and a number with 号 in sequence",
+    regex: cn,
+    flags: "gu",
+    category: "pii",
+  },
+  {
+    id: "pii-address-kr",
+    description:
+      "Korean postal address: a 시/도 or 구/군, then a road name (로/길) and a building number, or a 동/리 and a lot number",
+    regex: kr,
+    flags: "gu",
+    category: "pii",
+  },
+  {
+    id: "pii-address-fr",
+    description:
+      "French postal address: a number, a street type and name, then a postal code and a town",
+    regex: fr,
+    flags: "gu",
+    category: "pii",
+  },
+  {
+    id: "pii-address-it",
+    description:
+      "Italian postal address: a street type and name, a civic number, then a CAP and a town",
+    regex: it,
+    flags: "gu",
+    category: "pii",
+  },
+  {
+    id: "pii-address-de",
+    description:
+      "German postal address: a street and house number, then a postal code and a town",
+    regex: de,
+    flags: "gu",
+    category: "pii",
+  },
+  {
+    id: "pii-address-es",
+    description:
+      "Spanish postal address: a street type and name, a number, then a postal code and a town",
+    regex: es,
+    flags: "gu",
+    category: "pii",
+  },
 ];
 
-const CONFIG = resolve(dirname(fileURLToPath(import.meta.url)), "../src/lib/default-config.json");
+const CONFIG = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../src/lib/default-config.json",
+);
 
 // The block layout the config uses: four spaces for the object, six for its fields.
 const block = (r) =>
-  ["    {", `      "id": ${JSON.stringify(r.id)},`, `      "description": ${JSON.stringify(r.description)},`,
-   `      "regex": ${JSON.stringify(r.regex)},`, `      "flags": ${JSON.stringify(r.flags)},`,
-   `      "category": ${JSON.stringify(r.category)}`, "    }"].join("\n");
+  [
+    "    {",
+    `      "id": ${JSON.stringify(r.id)},`,
+    `      "description": ${JSON.stringify(r.description)},`,
+    `      "regex": ${JSON.stringify(r.regex)},`,
+    `      "flags": ${JSON.stringify(r.flags)},`,
+    `      "category": ${JSON.stringify(r.category)}`,
+    "    }",
+  ].join("\n");
 
 function write() {
   const text = readFileSync(CONFIG, "utf8");
   const rules = JSON.parse(text).rules;
   const ids = RULES.map((r) => r.id);
-  if (JSON.stringify(rules.slice(-ids.length).map((r) => r.id)) !== JSON.stringify(ids)) {
-    throw new Error("the six address rules must be the last entries of default-config.json");
+  if (
+    JSON.stringify(rules.slice(-ids.length).map((r) => r.id)) !==
+    JSON.stringify(ids)
+  ) {
+    throw new Error(
+      "the six address rules must be the last entries of default-config.json",
+    );
   }
   const first = text.indexOf(`    {\n      "id": "${ids[0]}"`);
   const end = text.indexOf("\n  ]\n}", first);
-  writeFileSync(CONFIG, text.slice(0, first) + RULES.map(block).join(",\n") + text.slice(end));
+  writeFileSync(
+    CONFIG,
+    text.slice(0, first) + RULES.map(block).join(",\n") + text.slice(end),
+  );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   if (process.argv.includes("--write")) {
     write();
   } else {
