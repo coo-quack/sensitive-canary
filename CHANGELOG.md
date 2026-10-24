@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Dates of birth and member, customer and account numbers after a label are found in the six other languages pii-sentinel covers, one rule per language and kind: `pii-date-of-birth-{zh,ko,fr,it,de,es}` and `pii-customer-number-{zh,ko,fr,it,de,es}`. Each rule carries its own language's labels (`Geburtsdatum`, `Geb.-Datum`, `geboren am`; `date de naissance`, `né(e) le`; `data di nascita`, `nato/a il`; `fecha de nacimiento`, `nacido/a el`; `出生日期`, `出生年月日`; `생년월일`, `출생일`; `Kundennummer`, `Kd.-Nr.`, `Mitgliedsnummer`, `Kontonummer`; `numéro de client`, `N° d'adhérent`, `numéro de compte`; `numero cliente`, `codice cliente`, `numero socio`; `número de cliente`, `n.º de socio`, `número de cuenta`; `客户编号`, `会员号`, `会员卡号`, `银行账号`; `고객번호`, `회원번호`, `계좌번호`), its month names with and without accents (`12. März 1985`, `1er mars 1985`, `1º marzo 1985`, `12 de marzo de 1985`), and the numeric forms, including `1985年3月12日`, `1985년 3월 12일` and the Korean `1985. 3. 12.`. The existing English and Japanese rules are unchanged. A label that names an event or a login account as often as a person's attribute (`Geburtstag`, `生日`, `생일`, `账号`, `Konto-ID`, `ID de compte`) is not taken, and a label that is the tail of a longer key (`billing_kundennummer`) is not a label, as in English. The `birth-date` validator reads the new forms; two-digit years are still not read. A member number of nothing but zeros (`00000000`) is a form's placeholder, and the six member-number rules do not read it. Each rule reads a table column under its labels, as the English rules do (#338)
+
 ## v0.15.0 (2026-10-20)
 
 ### Breaking changes
