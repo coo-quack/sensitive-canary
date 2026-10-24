@@ -65,6 +65,7 @@ If the backport PR has conflicts, resolve them manually before merging.
    - Add the rule to the `EXAMPLES` table in `src/lib/__tests__/rule-patterns.test.ts`. Every rule needs one value it must find, or the id list proves only that a name is present: four rules shipped with patterns that could be disabled in silence because nothing asked them to match anything
    - The same file pads every example and requires the rule to still match, so a length you guessed too tight fails there rather than in a release. If the format really is exact — a checksum, a fixed-width field — add the id to `LONGER_IS_A_DIFFERENT_THING` with the reason
    - If the pattern carries a `*`, `+` or `{n,}` on a character class, work out what input makes it backtrack and add that shape to `no rule is quadratic` in `src/lib/__tests__/rules.test.ts`. A pattern that does not return is a way past the hook, not a slow scan — see the note in `docs/rules.md`
+   - The six postal-address rules (`pii-address-cn` to `pii-address-es`) are generated: edit `scripts/address-rules.mjs` and run `node scripts/address-rules.mjs --write`. `src/lib/__tests__/address-rules.test.ts` fails when the config and the generator disagree, so do not edit those six entries by hand.
 3. Update `README.md` — add to the detection rules table
 4. Update `docs/rules.md` — add full reference entry
 5. Update `CHANGELOG.md` — add the rule under `## Unreleased` (see [Changelog](#changelog))
