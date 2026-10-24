@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { normaliseLabel, scanColumns } from "./columns.ts";
+import { type ColumnSpec, normaliseLabel, scanColumns } from "./columns.ts";
 import {
   entropy,
   isNotSecretShaped,
@@ -548,6 +548,39 @@ export function scan(
   );
 }
 
+// The values under the labelled columns of every enabled column rule, read from
+// the text in one pass. Each rule's cells are the same as a pass of its own would
+// give, and they are read where the scan reaches the first column rule, so the
+// budget checks and their throw point are the ones the per-rule loop always had.
+function readColumnCells(
+  text: string,
+  categories: ReadonlySet<Category>,
+): Map<Rule, string[]> {
+  const reads: { rule: Rule; spec: ColumnSpec }[] = [];
+  for (const rule of RULES) {
+    if (!categories.has(rule.category)) continue;
+    const { columnLabels, cellRegex, validate } = rule;
+    if (!columnLabels || !cellRegex) continue;
+    reads.push({
+      rule,
+      spec: {
+        labels: columnLabels,
+        accept: (cell) =>
+          cellRegex.test(cell) && (validate == null || validate(cell)),
+      },
+    });
+  }
+  const cells = scanColumns(
+    text,
+    reads.map((read) => read.spec),
+  );
+  const byRule = new Map<Rule, string[]>();
+  reads.forEach((read, i) => {
+    byRule.set(read.rule, cells[i] ?? []);
+  });
+  return byRule;
+}
+
 function scanUninterrupted(
   text: string,
   categories: ReadonlySet<Category>,
@@ -555,6 +588,7 @@ function scanUninterrupted(
 ): Finding[] {
   const findings: Finding[] = [];
   const startedAt = Date.now();
+  let columnCells: Map<Rule, string[]> | undefined;
 
   for (const rule of RULES) {
     if (!categories.has(rule.category)) continue;
@@ -640,18 +674,12 @@ function scanUninterrupted(
     }
 
     if (rule.columnLabels && rule.cellRegex) {
-      const cellRegex = rule.cellRegex;
-      const validate = rule.validate;
+      columnCells ??= readColumnCells(text, categories);
       // A value that the regex also found is one finding, not two.
       const found = new Set(
         findings.filter((f) => f.ruleId === rule.id).map((f) => f.secretValue),
       );
-      const cells = scanColumns(
-        text,
-        rule.columnLabels,
-        (cell) => cellRegex.test(cell) && (validate == null || validate(cell)),
-      );
-      for (const cell of cells) {
+      for (const cell of columnCells.get(rule) ?? []) {
         if (found.has(cell)) continue;
         findings.push({
           ruleId: rule.id,

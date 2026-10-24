@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { type ColumnSpec, normaliseLabel, scanColumns } from "../columns.ts";
 import { scan } from "../rules.ts";
 import {
   AWS_KEY,
@@ -985,6 +986,88 @@ describe("a value under a labelled column", () => {
 
   it("a header with no delimiter is not a row, so its value is not read", () => {
     expect(count("dob\n1990-05-06", "pii-date-of-birth")).toBe(0);
+  });
+});
+
+// Several column rules read the same table in one pass (see scanColumns in
+// columns.ts). Each rule must get the cells it gets alone, in the same order,
+// and the findings must come out in the order the rules run. Before the pass
+// was shared, each rule walked every line of the text itself.
+describe("several column rules read one table", () => {
+  const TABLE = [
+    "name,Geburtsdatum,dob,Kundennummer,customer id",
+    "Lena Vogt,12.03.1985,18.07.1961,KD-4471-8820,C-0007710",
+    "Marco Bellini,03.11.1979,27/03/1973,K-20391,C-0008821",
+  ].join("\n");
+  const MIXED = [
+    "| Kd.-Nr. | 生年月日 | customer_id |",
+    "|---|---|---|",
+    "| KD-1001-22 | 1985年3月12日 | C-0001234 |",
+    "| KD-1002-23 | 1979/11/03 | C-0001235 |",
+  ].join("\n");
+  const SQL =
+    "INSERT INTO clientes (nombre, numero_cliente, dob) VALUES ('Ana', '4471882', '1990-05-06'), ('Luis', '1002345', '1979-11-03')";
+  const COMBINED = `${TABLE}\n\n${MIXED}\n${SQL}`;
+  const spec = (labels: string[]): ColumnSpec => ({
+    labels: new Set(labels.map(normaliseLabel)),
+    accept: (cell) => cell !== "",
+  });
+
+  it("each spec reads the cells it reads alone, in the same order", () => {
+    const specs = [
+      spec(["geburtsdatum"]),
+      spec(["dob", "kundennummer"]),
+      spec(["customer id", "dob"]),
+      spec(["numero cliente", "dob"]),
+    ];
+    const together = scanColumns(COMBINED, specs);
+    expect(together).toEqual(
+      specs.map((one) => scanColumns(COMBINED, [one])[0]),
+    );
+    expect(together[0]).toEqual(["12.03.1985", "03.11.1979"]);
+    expect(together[1]).toEqual([
+      "18.07.1961",
+      "KD-4471-8820",
+      "27/03/1973",
+      "K-20391",
+      "1990-05-06",
+      "1979-11-03",
+    ]);
+  });
+
+  it("the findings of a table with several column rules keep the rules' order", () => {
+    expect(scan(TABLE).map((f) => [f.ruleId, f.secretValue])).toEqual([
+      ["pii-date-of-birth", "18.07.1961"],
+      ["pii-date-of-birth", "27/03/1973"],
+      ["pii-customer-number", "C-0007710"],
+      ["pii-customer-number", "C-0008821"],
+      ["pii-date-of-birth-de", "12.03.1985"],
+      ["pii-date-of-birth-de", "03.11.1979"],
+      ["pii-customer-number-de", "KD-4471-8820"],
+      ["pii-customer-number-de", "K-20391"],
+    ]);
+    expect(scan(COMBINED).map((f) => [f.ruleId, f.secretValue])).toEqual([
+      ["pii-date-of-birth", "18.07.1961"],
+      ["pii-date-of-birth", "27/03/1973"],
+      ["pii-date-of-birth", "1985年3月12日"],
+      ["pii-date-of-birth", "1979/11/03"],
+      ["pii-date-of-birth", "1990-05-06"],
+      ["pii-date-of-birth", "1979-11-03"],
+      ["pii-customer-number", "C-0007710"],
+      ["pii-customer-number", "C-0008821"],
+      ["pii-customer-number", "C-0001234"],
+      ["pii-customer-number", "C-0001235"],
+      ["pii-date-of-birth-de", "12.03.1985"],
+      ["pii-date-of-birth-de", "03.11.1979"],
+      ["pii-customer-number-it", "4471882"],
+      ["pii-customer-number-it", "1002345"],
+      ["pii-customer-number-de", "KD-4471-8820"],
+      ["pii-customer-number-de", "K-20391"],
+      ["pii-customer-number-de", "KD-1001-22"],
+      ["pii-customer-number-de", "KD-1002-23"],
+      ["pii-customer-number-es", "4471882"],
+      ["pii-customer-number-es", "1002345"],
+    ]);
   });
 });
 
