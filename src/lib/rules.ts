@@ -549,9 +549,11 @@ export function scan(
 }
 
 // The values under the labelled columns of every enabled column rule, read from
-// the text in one pass. Each rule's cells are the same as a pass of its own would
-// give, and they are read where the scan reaches the first column rule, so the
-// budget checks and their throw point are the ones the per-rule loop always had.
+// the text in one pass (see scanColumns). The work is done when the scan reaches
+// the first column rule, for all of them together. So the budget checks of the
+// rules after that one run after this work, and a budget throw can come later
+// than it would in the per-rule loop. runInterruptibly still bounds the whole
+// scan, so a scan that runs out of time still fails closed.
 function readColumnCells(
   text: string,
   categories: ReadonlySet<Category>,

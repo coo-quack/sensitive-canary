@@ -744,7 +744,7 @@
     {
       "id": "pii-date-of-birth-fr",
       "description": "Date of birth after a French label (date de naissance, né(e) le, DDN)",
-      "regex": "(?<![\\p{L}])(?:(?:date[\\s_-]?(?:de[\\s_-]?)?naissance|ddn)(?![\\p{L}])[^0-9\\n]{0,24}|née?(?:\\(e\\))?\\s+le\\s+[^0-9\\n]{0,8})((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])(?:er)?[\\s-]{1,3}(?:janv(?:ier)?|f[ée]vr(?:ier)?|mars|avr(?:il)?|mai|juin|juil(?:let|l)?|ao[uû]t|sept(?:embre)?|oct(?:obre)?|nov(?:embre)?|d[ée]c(?:embre)?)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
+      "regex": "(?<![\\p{L}])(?:(?:date[\\s_-]?(?:de[\\s_-]?)?naissance|ddn)(?![\\p{L}])[^0-9\\n]{0,24}|née?(?:\\(e\\))?\\s+le\\s+[^0-9\\n]{0,8})((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])(?:er)?[\\s-]{1,3}(?:janv|janvier|févr|fevr|février|fevrier|mars|avr|avril|mai|juin|juil|juill|juillet|août|aout|sept|septembre|oct|octobre|nov|novembre|déc|dec|décembre|decembre)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
       "columnLabels": [
         "date de naissance",
         "date naissance",
@@ -753,7 +753,7 @@
         "née le",
         "né(e) le"
       ],
-      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])(?:er)?[\\s-]{1,3}(?:janv(?:ier)?|f[ée]vr(?:ier)?|mars|avr(?:il)?|mai|juin|juil(?:let|l)?|ao[uû]t|sept(?:embre)?|oct(?:obre)?|nov(?:embre)?|d[ée]c(?:embre)?)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2}",
+      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])(?:er)?[\\s-]{1,3}(?:janv|janvier|févr|fevr|février|fevrier|mars|avr|avril|mai|juin|juil|juill|juillet|août|aout|sept|septembre|oct|octobre|nov|novembre|déc|dec|décembre|decembre)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2}",
       "flags": "giu",
       "secretGroup": 1,
       "category": "pii",
@@ -762,7 +762,7 @@
     {
       "id": "pii-date-of-birth-it",
       "description": "Date of birth after an Italian label (data di nascita, nato/a il)",
-      "regex": "(?<![\\p{L}])(?:(?:data[\\s_-]?(?:di[\\s_-]?)?nascita|d\\.n\\.|dn)(?![\\p{L}])[^0-9\\n]{0,24}|(?<!(?:la|della|alla|dalla|nella|sulla)\\s{1,2})nat[oa](?:/a)?\\s+(?:a\\s+[^0-9\\n,;]{1,24}?\\s+)?il\\s+[^0-9\\n]{0,4})((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?[\\s-]{1,3}(?:genn?(?:aio)?|febb?(?:raio)?|mar(?:zo)?|apr(?:ile)?|mag(?:gio)?|giu(?:gno)?|lug(?:lio)?|ago(?:sto)?|sett?(?:embre)?|ott(?:obre)?|nov(?:embre)?|dic(?:embre)?)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
+      "regex": "(?<![\\p{L}])(?:(?:data[\\s_-]?(?:di[\\s_-]?)?nascita|d\\.n\\.|dn)(?![\\p{L}])[^0-9\\n]{0,24}|(?<!(?:la|della|alla|dalla|nella|sulla)\\s{1,2})nat[oa](?:/a)?\\s+(?:a\\s+[^0-9\\n,;]{1,24}?\\s+)?il\\s+[^0-9\\n]{0,4})((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?[\\s-]{1,3}(?:gen|genn|gennaio|feb|febb|febbraio|mar|marzo|apr|aprile|mag|maggio|giu|giugno|lug|luglio|ago|agosto|set|sett|settembre|ott|ottobre|nov|novembre|dic|dicembre)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
       "columnLabels": [
         "data di nascita",
         "data nascita",
@@ -770,7 +770,7 @@
         "nata il",
         "nato/a il"
       ],
-      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?[\\s-]{1,3}(?:genn?(?:aio)?|febb?(?:raio)?|mar(?:zo)?|apr(?:ile)?|mag(?:gio)?|giu(?:gno)?|lug(?:lio)?|ago(?:sto)?|sett?(?:embre)?|ott(?:obre)?|nov(?:embre)?|dic(?:embre)?)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2}",
+      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?[\\s-]{1,3}(?:gen|genn|gennaio|feb|febb|febbraio|mar|marzo|apr|aprile|mag|maggio|giu|giugno|lug|luglio|ago|agosto|set|sett|settembre|ott|ottobre|nov|novembre|dic|dicembre)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2}",
       "flags": "giu",
       "secretGroup": 1,
       "category": "pii",
@@ -779,7 +779,7 @@
     {
       "id": "pii-date-of-birth-de",
       "description": "Date of birth after a German label (Geburtsdatum, Geb.-Datum, geboren am)",
-      "regex": "(?<![\\p{L}])(?:(?:geburts[\\s_-]?datum|geb\\.?[\\s_-]?dat(?:um|\\.))(?![\\p{L}])[^0-9\\n]{0,24}|geboren\\s+am\\s+[^0-9\\n]{0,8}|geb\\.[\\s:]{0,2}(?:am\\s+)?)((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])\\.?[\\s-]{1,3}(?:jan(?:uar)?|feb(?:ruar|r)?|m(?:ä|ae)rz|m(?:ä|ae)r|mrz|apr(?:il)?|mai|juni?|juli?|aug(?:ust)?|sep(?:tember|t)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
+      "regex": "(?<![\\p{L}])(?:(?:geburts[\\s_-]?datum|geb\\.?[\\s_-]?dat(?:um|\\.))(?![\\p{L}])[^0-9\\n]{0,24}|geboren\\s+am\\s+[^0-9\\n]{0,8}|geb\\.[\\s:]{0,2}(?:am\\s+)?)((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])\\.?[\\s-]{1,3}(?:jan|januar|feb|febr|februar|märz|mär|maerz|maer|mrz|apr|april|mai|jun|juni|jul|juli|aug|august|sep|sept|september|okt|oktober|nov|november|dez|dezember)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
       "columnLabels": [
         "geburtsdatum",
         "geb. datum",
@@ -789,7 +789,7 @@
         "geb",
         "geboren am"
       ],
-      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])\\.?[\\s-]{1,3}(?:jan(?:uar)?|feb(?:ruar|r)?|m(?:ä|ae)rz|m(?:ä|ae)r|mrz|apr(?:il)?|mai|juni?|juli?|aug(?:ust)?|sep(?:tember|t)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2}",
+      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])\\.?[\\s-]{1,3}(?:jan|januar|feb|febr|februar|märz|mär|maerz|maer|mrz|apr|april|mai|jun|juni|jul|juli|aug|august|sep|sept|september|okt|oktober|nov|november|dez|dezember)\\.?[\\s-]{1,3}(?:19|20)[0-9]{2}",
       "flags": "giu",
       "secretGroup": 1,
       "category": "pii",
@@ -798,7 +798,7 @@
     {
       "id": "pii-date-of-birth-es",
       "description": "Date of birth after a Spanish label (fecha de nacimiento, F. Nac., nacido/a el)",
-      "regex": "(?<![\\p{L}])(?:(?:(?:fecha|fec\\.?|f\\.)[\\s_-]?(?:de[\\s_-]?)?nac(?:imiento|\\.)|f\\.\\s?n\\.)(?![\\p{L}])[^0-9\\n]{0,24}|(?:nacid[oa](?:/a)?|nací)\\s+(?:en\\s+[^0-9\\n,;]{1,24}?\\s+)?el\\s+[^0-9\\n]{0,4})((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?(?:\\s{1,3}de)?[\\s-]{1,3}(?:ene(?:ro)?|feb(?:rero|r)?|mar(?:zo)?|abr(?:il)?|mayo?|jun(?:io)?|jul(?:io)?|ago(?:sto)?|agto|sep(?:tiembre|t)?|set(?:iembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?)\\.?(?:\\s{1,3}de)?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
+      "regex": "(?<![\\p{L}])(?:(?:(?:fecha|fec\\.?|f\\.)[\\s_-]?(?:de[\\s_-]?)?nac(?:imiento|\\.)|f\\.\\s?n\\.)(?![\\p{L}])[^0-9\\n]{0,24}|(?:nacid[oa](?:/a)?|nací)\\s+(?:en\\s+[^0-9\\n,;]{1,24}?\\s+)?el\\s+[^0-9\\n]{0,4})((?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?(?:\\s{1,3}de)?[\\s-]{1,3}(?:ene|enero|feb|febr|febrero|mar|marzo|abr|abril|may|mayo|jun|junio|jul|julio|ago|agto|agosto|sep|sept|set|septiembre|setiembre|oct|octubre|nov|noviembre|dic|diciembre)\\.?(?:\\s{1,3}de)?[\\s-]{1,3}(?:19|20)[0-9]{2})(?![0-9])",
       "columnLabels": [
         "fecha de nacimiento",
         "fecha nacimiento",
@@ -810,7 +810,7 @@
         "nacida el",
         "nacido/a el"
       ],
-      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?(?:\\s{1,3}de)?[\\s-]{1,3}(?:ene(?:ro)?|feb(?:rero|r)?|mar(?:zo)?|abr(?:il)?|mayo?|jun(?:io)?|jul(?:io)?|ago(?:sto)?|agto|sep(?:tiembre|t)?|set(?:iembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?)\\.?(?:\\s{1,3}de)?[\\s-]{1,3}(?:19|20)[0-9]{2}",
+      "cellRegex": "(?:19|20)[0-9]{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12][0-9]|3[01])|(?:0?[1-9]|[12][0-9]|3[01])[-/.](?:0?[1-9]|[12][0-9]|3[01])[-/.](?:19|20)[0-9]{2}|(?:0?[1-9]|[12][0-9]|3[01])[º°]?(?:\\s{1,3}de)?[\\s-]{1,3}(?:ene|enero|feb|febr|febrero|mar|marzo|abr|abril|may|mayo|jun|junio|jul|julio|ago|agto|agosto|sep|sept|set|septiembre|setiembre|oct|octubre|nov|noviembre|dic|diciembre)\\.?(?:\\s{1,3}de)?[\\s-]{1,3}(?:19|20)[0-9]{2}",
       "flags": "giu",
       "secretGroup": 1,
       "category": "pii",

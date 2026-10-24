@@ -741,6 +741,11 @@ describe("isBirthDate", () => {
     ["1970년 1월 1일", "the Korean form of the epoch default"],
     ["1. Januar 1900", "the 1900 default in German"],
     ["12 de marzo de 2099", "a future date in the Spanish form"],
+    [
+      "1985 - 03 - 12",
+      "a space before each separator is not a form the rules capture",
+    ],
+    ["1985 -03-12", "a space before the first separator"],
   ])("%s is not a birth date (%s)", (text) => {
     expect(isBirthDate(text)).toBe(false);
   });

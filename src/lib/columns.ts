@@ -276,37 +276,47 @@ export interface ColumnSpec {
   accept: (cell: string) => boolean;
 }
 
-// The values that every spec reads from the text, one array per spec and in the
-// order that spec would read them alone. The text is read once for all of them,
-// not once per rule: a rule that walked every line on its own made the column
-// pass cost about as much again for each column rule, which is what the scan
-// budget and the full-scan timing measure. Only the header parse and the label
-// normalisation are shared; each spec keeps its own place in the text, so a
-// header that one spec reads as a table does not change what another spec sees.
+// The cells that each spec reads from the text, one array per spec, in the order
+// that spec would read them alone. Three things are shared by every spec: the
+// parse of each header line, the normalisation of its names, and the search for
+// INSERT statements. Each spec keeps its own reading of the rows under its
+// columns and of the tuples under an INSERT's columns, since which cells those
+// are depends on the spec's labels. So a row of a table is read once for each
+// spec whose label heads one of its columns, and a tuple once for each spec
+// whose label names one of the INSERT's columns.
+//
+// The shared pass exists because each column rule walking every line of the text
+// on its own made the column pass cost about as much again for every column
+// rule, and the full scan grew with the number of rules.
 export function scanColumns(
   text: string,
   specs: readonly ColumnSpec[],
 ): string[][] {
-  const buckets: string[][] = specs.map(() => []);
-  const takers = specs.map((spec, s) => {
-    const bucket = buckets[s] ?? [];
-    return (raw: string): void => {
-      const cell = cellValue(raw);
-      if (spec.accept(cell)) bucket.push(cell);
+  // One reading of the text per spec: where that spec has got to, the cells it
+  // has taken, and the function that takes one raw cell.
+  const states = specs.map((spec) => {
+    const cells: string[] = [];
+    return {
+      spec,
+      cursor: 0,
+      cells,
+      take: (raw: string): void => {
+        const cell = cellValue(raw);
+        if (spec.accept(cell)) cells.push(cell);
+      },
     };
   });
 
   // A table needs a newline: a single line has a header and no rows.
-  if (specs.length > 0 && text.includes("\n")) {
-    // Where each spec's walk of the lines has got to. Each is at the start of a
-    // line, and the lowest one is read next, so every line is parsed once for
-    // all of them.
-    const at: number[] = specs.map(() => 0);
+  if (states.length > 0 && text.includes("\n")) {
+    // Each spec's cursor is at the start of a line. The lowest one is read next,
+    // so a line is parsed once, when the first spec reaches it, and every spec
+    // that is on it uses that parse.
     let parsedAt = -1;
     let header: { delimiter: Delimiter; names: string[] } | undefined;
     for (;;) {
       let pos = text.length;
-      for (const q of at) if (q < pos) pos = q;
+      for (const state of states) if (state.cursor < pos) pos = state.cursor;
       if (pos >= text.length) break;
       const end = lineEnd(text, pos);
       const next = Math.min(end + 1, text.length);
@@ -318,31 +328,31 @@ export function scanColumns(
         };
         parsedAt = pos;
       }
-      specs.forEach((spec, s) => {
-        if (at[s] !== pos) return;
+      for (const state of states) {
+        if (state.cursor !== pos) continue;
         const indices = header
           ? header.names.flatMap((name, k) =>
-              spec.labels.has(name) ? [k] : [],
+              state.spec.labels.has(name) ? [k] : [],
             )
           : [];
         if (!header || indices.length === 0) {
-          at[s] = next;
-          return;
+          state.cursor = next;
+          continue;
         }
-        at[s] = readRows(
+        state.cursor = readRows(
           text,
           next,
           header.delimiter,
           indices,
-          takers[s] ?? (() => {}),
+          state.take,
         );
-      });
+      }
     }
   }
 
   // An INSERT has VALUES; a text without the word has no tuples to read. The
-  // INSERTs and their column names are found once, for every spec.
-  if (specs.length > 0 && /values/i.test(text)) {
+  // INSERTs and the normalised names of their columns are found once, here.
+  if (states.length > 0 && /values/i.test(text)) {
     const inserts = [...text.matchAll(SQL_INSERT)];
     const starts = inserts.map((m) => m.index ?? 0);
     const columnNames = inserts.map((insert) =>
@@ -351,10 +361,10 @@ export function scanColumns(
         return normaliseLabel(bare?.[1] ?? name);
       }),
     );
-    specs.forEach((spec, s) => {
+    for (const state of states) {
       inserts.forEach((insert, n) => {
         const indices = (columnNames[n] ?? []).flatMap((name, k) =>
-          spec.labels.has(name) ? [k] : [],
+          state.spec.labels.has(name) ? [k] : [],
         );
         if (indices.length === 0) return;
         readTuples(
@@ -363,11 +373,11 @@ export function scanColumns(
           starts,
           { s: n + 1 },
           indices,
-          takers[s] ?? (() => {}),
+          state.take,
         );
       });
-    });
+    }
   }
 
-  return buckets;
+  return states.map((state) => state.cells);
 }

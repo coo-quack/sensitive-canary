@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isBirthDate, LOCAL_MONTH_WORDS } from "../birth-date.ts";
 import { type ColumnSpec, normaliseLabel, scanColumns } from "../columns.ts";
 import { scan } from "../rules.ts";
 import {
@@ -987,6 +988,42 @@ describe("a value under a labelled column", () => {
   it("a header with no delimiter is not a row, so its value is not read", () => {
     expect(count("dob\n1990-05-06", "pii-date-of-birth")).toBe(0);
   });
+});
+
+// The month words of the four European date-of-birth rules live twice: in
+// LOCAL_MONTH_WORDS, which the validator reads, and in each rule's regex. Each
+// word of each language must be captured by that language's rule after its
+// label, and accepted by the validator; and each rule's month group must spell
+// exactly the words of its list, so neither can hold a word the other lacks.
+describe("the month words of a localized date-of-birth rule", () => {
+  const LABELS = {
+    de: "Geburtsdatum:",
+    fr: "Date de naissance :",
+    it: "Data di nascita:",
+    es: "Fecha de nacimiento:",
+  } as const;
+
+  for (const language of ["de", "fr", "it", "es"] as const) {
+    const ruleId = `pii-date-of-birth-${language}`;
+    const words = LOCAL_MONTH_WORDS[language].flat();
+
+    it(`${ruleId} spells exactly the words of its list`, () => {
+      const rule = DEFAULT_RULES.find((r) => r.id === ruleId);
+      expect(rule?.regex).toContain(`(?:${words.join("|")})`);
+    });
+
+    it.each(words.map((word) => [word]))(
+      `${ruleId} finds %s after its label, and the validator accepts it`,
+      (word) => {
+        const date = `12 ${word} 1985`;
+        const finding = scan(`${LABELS[language]} ${date}`).find(
+          (f) => f.ruleId === ruleId,
+        );
+        expect(finding?.secretValue).toBe(date);
+        expect(isBirthDate(date)).toBe(true);
+      },
+    );
+  }
 });
 
 // Several column rules read the same table in one pass (see scanColumns in
