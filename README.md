@@ -26,7 +26,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 | `cat docker-compose.yml` with `POSTGRES_PASSWORD:` ❌ | Assignment detected in YAML and JSON too ✅ |
 
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
-- **103 detection rules** — sourced from gitleaks and TruffleHog detector definitions
+- **109 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Checksum validation** — credit cards (Luhn) and national ID numbers (JP My Number, FR NIR, IT Codice Fiscale, DE Steuer-IdNr., ES DNI/NIE, KR RRN/BRN, CN Resident ID)
 - **Context gating** — the noisiest rules only fire when a label is nearby: non-US/JP phone numbers, ZIP, EU/KR and Chinese postal codes, public IPv4 and IPv6, and the Korean resident and business numbers. US and Japanese phone numbers and Japanese postal codes are matched without a label, since their shapes are specific enough. RFC 1918 private addresses are not matched at all — they are non-routable, they identify nothing outside the network they belong to, and they fill the inventories, manifests and ssh configs this tool is most often pointed at
 - **Not everything that looks like a secret is one** — published test card numbers, RFC 2606 domains (`example.com`), a value that is a variable reference (`PASSWORD: ${VAR}`), an ssh or scp target (`git@github.com`, `deploy@host`, `user@host:path`), and `.env.example` and its siblings are left alone. Each was blocking ordinary work. A template is exempt only when its contents can be read whole. One holding a NUL byte, running past the per-file cut, reached after the call's budget or deadline, or that is not a regular file at all is blocked on its name, since the contents are what the exemption relies on. A template name that exists on no disk is not blocked — there is nothing to read and nothing to leak
@@ -489,7 +489,7 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `password-json-key` | JSON value under a key that ends in `pass`, `passwd`, `password` or `pwd` |
 | `redis-auth` | Redis `AUTH` command, or `redis-cli -a` |
 
-### PII (42 rules)
+### PII (48 rules)
 
 | Rule ID | Description | Validation |
 |---|---|---|
@@ -535,6 +535,12 @@ Invalid rules (bad regex, wrong types, missing required fields) are skipped with
 | `pii-customer-number-it` | Member, customer or account number after an Italian label (`numero cliente`, `codice cliente`, `numero socio`) | Five to twenty-four characters with at least two digits, not all zeros, after a label |
 | `pii-customer-number-de` | Member, customer or account number after a German label (`Kundennummer`, `Kd.-Nr.`, `Mitgliedsnummer`, `Kontonummer`) | Five to twenty-four characters with at least two digits, not all zeros, after a label |
 | `pii-customer-number-es` | Member, customer or account number after a Spanish label (`número de cliente`, `n.º de socio`, `número de cuenta`) | Five to twenty-four characters with at least two digits, not all zeros, after a label |
+| `pii-address-cn` | Chinese postal address (province, 市/区/县 unit, road and 号 number) | A unit ending in 市, 区, 县, 旗 or 盟 starts an address only after a non-Han character or after 在, 到, 于, 为, 至, 往 or 从; a road alone, a metro line, a date or a count is not matched |
+| `pii-address-kr` | Korean postal address (시/도 or 구/군, then a road name and building number, or 동/리 and lot number) | A unit followed by a space, then 로 or 길 with a building number, or 동/리 with a lot number; a counter after the number (`명`, `번 출구`) is not a building number |
+| `pii-address-fr` | French postal address (number, street, postal code and town) | The postal code and a capitalised town are required within 60 characters of the street |
+| `pii-address-it` | Italian postal address (street, civic number, CAP and town) | The CAP and a capitalised town are required within 60 characters of the number |
+| `pii-address-de` | German postal address (street, house number, postal code and town) | The postal code and a capitalised town are required, set off from the number by a comma, a dash, a newline, two spaces or ` in ` |
+| `pii-address-es` | Spanish postal address (street, number, postal code and town) | The postal code and a capitalised town are required within 60 characters of the number |
 
 Detection patterns are based on rule definitions from [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog).
 
