@@ -751,6 +751,448 @@ describe("a Japanese postal address", () => {
   });
 });
 
+// A postal address in a European country needs a street, a house number, a
+// five-digit postal code and a capitalised town within a short distance. The
+// tables are the shapes a letter, a label, a CSV row and a sentence take, and
+// the near misses that share their words.
+describe("a postal address in France", () => {
+  it.each([
+    "12 rue de la Paix, 75002 Paris",
+    "12 rue de la Paix\n75002 Paris",
+    "12 rue de la Paix 75002 Paris",
+    "12 bis avenue Victor Hugo, 69002 Lyon",
+    "3 ter boulevard Saint-Germain 75006 PARIS",
+    "5 av. de la Gare - 13001 Marseille",
+    "7, place Bellecour, 69002 Lyon",
+    "1 allée des Tilleuls, Bât. B, Apt 12, 31000 Toulouse",
+    "2 impasse du Moulin, 44000 Nantes Cedex",
+    "10 route de Lyon, 38000 Grenoble",
+    "12 Rue de la Paix\n75002 PARIS",
+    "8 chemin du Lac, 74000 Annecy",
+    "4 quai des Belges, 13001 Marseille",
+    "Siège : 1 cours Lafayette, 69003 Lyon",
+    "Adresse : 22 avenue du 8 Mai 1945, 69500 Bron",
+    "15 rue Lepic\n75018 Paris\nFrance",
+    "12 rue de la Paix (bât. 1990, lot 2024) 75002 Paris",
+    "12 rue la Boétie, 75008 Paris",
+    "12 rue de la Paix, BP 123 75002 Paris",
+    "66 avenue Jean Jaurès\nCode postal : 35000 Rennes",
+  ])("%s is found", (line) => {
+    expect(ruleIds(line)).toContain("pii-address-fr");
+  });
+
+  it.each([
+    ["15 rue Lepic\n75018 Paris\nFrance", "15 rue Lepic\n75018 Paris"],
+    ["Siège : 1 cours Lafayette, 69003 Lyon", "1 cours Lafayette, 69003 Lyon"],
+  ])("%s is found as %s", (line, value) => {
+    expect(capturedBy(line, "pii-address-fr")).toBe(value);
+  });
+
+  it.each([
+    "12 rue de la Paix",
+    "75002 Paris",
+    "rue de la Paix, 75002 Paris",
+    "12 rue de la Paix, 7500 Paris",
+    "12 rue de la Paix, 750020 Paris",
+    "12 rue de la Paix, 75002 paris",
+    "12 rue de la Paix, 99999 Paris",
+    "404 route not found, 10000 Requests",
+    "12 routes, 10000 Requests",
+    "v12 rue de la Paix, 75002 Paris",
+    "2024-12 rue de la Paix, 75002 Paris",
+    "12 rue de la Paix coûte 12000 euros",
+    "street: 'rue de la Paix', zip: 75002, city: 'Paris'",
+    "12 square meters, 10000 Users",
+    "Le 12 place settings sold out at 10000 Guests",
+    "port 8080 rue",
+    "Je vends 12 rue de la Paix pour 10000 Euros Paris",
+    "Il a acheté 12 rue Lepic avec 10000 Euros Paris",
+    "Le 12 rue Lepic coûte 10000 Euros Paris",
+    "Nous avons 12 place Vendôme pour 10000 Clients Lyon",
+  ])("%s is not found", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-address-fr");
+  });
+});
+
+describe("a postal address in Italy", () => {
+  it.each([
+    "Via Roma 12, 00100 Roma",
+    "Via Roma, 12 - 00100 Roma",
+    "Via Monte Napoleone 16/A, 20121 Milano MI",
+    "via Garibaldi 5\n10122 Torino",
+    "Piazza Cavour 3, 00193 Roma (RM)",
+    "Corso Vittorio Emanuele II, 45 – 10123 Torino",
+    "C.so Italia 7, 20122 Milano",
+    "Viale dei Promontori 485, 00122 Roma",
+    "Largo dell'Olgiata 15, 00123 Roma",
+    "Via 4 Novembre 12, 37121 Verona",
+    "Via Mar Rosso n. 5, 00122 Roma",
+    "Sede legale: Via Dante 2, 20121 Milano",
+    "VIA ALDO MORO 17\n65121 PESCARA",
+    "Vicolo Stretto 1, 50122 Firenze",
+    "Via Roma 12 bis, 00100 Roma",
+    "Corso di Porta Romana 10, 20122 Milano",
+    "via Roma 12 00100 Roma",
+    "VIA APPIA NUOVA 12, INTERNO 27 / 00183 ROMA RM",
+    "Via Garibaldi 5, scala B, piano 2, 10122 Torino",
+    "Via Cavour, 102\nCAP: 40123 Bologna",
+  ])("%s is found", (line) => {
+    expect(ruleIds(line)).toContain("pii-address-it");
+  });
+
+  it.each([
+    ["Sede legale: Via Dante 2, 20121 Milano", "Via Dante 2, 20121 Milano"],
+    [
+      "Via Monte Napoleone 16/A, 20121 Milano MI",
+      "Via Monte Napoleone 16/A, 20121 Milano MI",
+    ],
+  ])("%s is found as %s", (line, value) => {
+    expect(capturedBy(line, "pii-address-it")).toBe(value);
+  });
+
+  it.each([
+    "Via Roma 12",
+    "00100 Roma",
+    "Via Roma, 00100 Roma",
+    "connected via SSH, 12 hosts, 10000 Users",
+    "sent via email to 12 users, 10000 Items",
+    "via SSH 12 hosts, 10000 Users",
+    "via email 12 users, 10000 Items",
+    "Via Roma 12, 0010 Roma",
+    "Via Roma 12, 00100 roma",
+    "Via Roma 12, 99100 Roma",
+    "class Via { }",
+    "via: 12, cap: 00100, city: Roma",
+    "Via Roma 12 costa 12000 euro",
+    "HTTP 404 via /api/v1, 10000 Requests",
+    "Corso di laurea 2024, 10000 Studenti",
+    "deployed via Jenkins 12 times, 10000 Builds",
+    "We shipped via Docker 3 times, 20000 Users were affected",
+    "routed via Cloudflare 4 hops, 10000 Requests",
+    "The build ran via Maven 3 times, 20000 Tests passed",
+    "requests were proxied via Nginx 2 times, 30000 Users",
+    "the job was retried via Celery 5 times, 40000 Messages",
+    "pushed via Terraform 7 modules, 50000 Resources",
+    "served via Redis 2 replicas, 10000 Keys",
+    "sent via Slack 6 channels, 20000 Members",
+    "deployed via Helm 3 charts, 10000 Pods",
+    "fetched via Kafka 9 partitions, 10000 Records",
+    "forwarded via Envoy 2 filters, 90000 Connections",
+    "ran via Gradle 8 tasks, 10000 Tests",
+  ])("%s is not found", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-address-it");
+  });
+});
+
+describe("a postal address in Germany", () => {
+  it.each([
+    "Hauptstraße 12\n10115 Berlin",
+    "Hauptstraße 12, 10115 Berlin",
+    "Hauptstr. 12a, 10115 Berlin",
+    "Berliner Straße 5, 60311 Frankfurt am Main",
+    "Schönhauser Allee 36-39, 10435 Berlin",
+    "Straße des 17. Juni 135, 10623 Berlin",
+    "Unter den Linden 77, 10117 Berlin",
+    "Am Markt 3\n28195 Bremen",
+    "Kaiser-Wilhelm-Straße 5, 20355 Hamburg",
+    "Lindenweg 7, 3. OG, 80331 München",
+    "Marktplatz 1 | 70173 Stuttgart",
+    "Hermannstraße 64\nD-53225 Bonn",
+    "Neuer Wall 10, 20354 Hamburg",
+    "Bahnhofstrasse 2, 04109 Leipzig",
+    "Firmensitz: Platz der Republik 1, 11011 Berlin",
+    "Musterweg 3  12345 Musterstadt",
+    "Bahnhofstraße 86, 43408 Hamburg\nTelefon +49 030 1234567",
+    "Dorfstraße 27\nPLZ: 24937 Flensburg",
+  ])("%s is found", (line) => {
+    expect(ruleIds(line)).toContain("pii-address-de");
+  });
+
+  it.each([
+    [
+      "Firmensitz: Platz der Republik 1, 11011 Berlin",
+      "Platz der Republik 1, 11011 Berlin",
+    ],
+    [
+      "Bahnhofstraße 86, 43408 Hamburg\nTelefon +49 030 1234567",
+      "Bahnhofstraße 86, 43408 Hamburg",
+    ],
+  ])("%s is found as %s", (line, value) => {
+    expect(capturedBy(line, "pii-address-de")).toBe(value);
+  });
+
+  it.each([
+    "Hauptstraße 12",
+    "10115 Berlin",
+    "Hauptstraße, 10115 Berlin",
+    "Musterweg 3 kostet 12000 Euro",
+    "Hauptstraße 12 hat 65536 Bytes",
+    "class Strasse { }",
+    'street: "Hauptstraße", zip: 10115, city: "Berlin"',
+    "Hauptstraße 12, 1011 Berlin",
+    "Hauptstraße 12, 101150 Berlin",
+    "Hauptstraße 12, 10115 berlin",
+    "Hauptstraße 12, 00115 Berlin",
+    "Ring 2, 12345 Foo",
+    "Weg 1, 12345 Foo",
+    "Port 8080, 12345 Requests",
+    "Hauptstraße 12 10115 Berlin",
+    "Am Montag 12, 10000 Anrufe Berlin",
+    "Am Abend 8, 10000 Besucher Berlin",
+    "Im Mai 3, 10000 Gäste Hamburg",
+    "Am Freitag 5, 20000 Nutzer Hamburg",
+    "Die Bahnhofstraße 5 in 10000 Euro verkauft",
+  ])("%s is not found", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-address-de");
+  });
+});
+
+describe("a postal address in Spain", () => {
+  it.each([
+    "Calle Gran Vía, 10, 28013 Madrid",
+    "C/ Florida, 19, 3.º izda., 01008 Vitoria-Gasteiz",
+    "Av. Gasteiz, 10, 2.º A\n01008 Vitoria-Gasteiz",
+    "Avda. de la Constitución nº 5, 41001 Sevilla",
+    "Plaza Mayor 1, 37002 Salamanca",
+    "Paseo de la Castellana 100, 28046 Madrid",
+    "Ctra. Gasteiz-Irun, km 5, 01192 Arkaute",
+    "Calle Real s/n, 15001 A Coruña",
+    "Camino Viejo 23, 2º B, 46001 Valencia",
+    "Ronda de Sant Pere 17, 08010 Barcelona",
+    "Calle 2 de Mayo 7, 28004 Madrid",
+    "Domicilio social: Calle Serrano 12, 28001 Madrid",
+    "CALLE MAYOR 3\n28013 MADRID",
+    "Pza. de España 4, 50001 Zaragoza",
+    "Rambla de Catalunya 12 - 08007 Barcelona",
+    "Calle Real 3, piso 2, puerta B, 28013 Madrid",
+    "Calle Velázquez 88\nCódigo postal: 28001 Madrid",
+  ])("%s is found", (line) => {
+    expect(ruleIds(line)).toContain("pii-address-es");
+  });
+
+  it.each([
+    [
+      "Domicilio social: Calle Serrano 12, 28001 Madrid",
+      "Calle Serrano 12, 28001 Madrid",
+    ],
+  ])("%s is found as %s", (line, value) => {
+    expect(capturedBy(line, "pii-address-es")).toBe(value);
+  });
+
+  it.each([
+    "Calle Gran Vía 10",
+    "28013 Madrid",
+    "Calle Gran Vía, 28013 Madrid",
+    "Calle Gran Vía 10, 2801 Madrid",
+    "Calle Gran Vía 10, 28013 madrid",
+    "Calle Gran Vía 10, 60000 Madrid",
+    "calle: 'Gran Vía', numero: 10, cp: 28013, ciudad: 'Madrid'",
+    "Calle Gran Vía 10 cuesta 12000 euros",
+    "src/c/main.c 12, 28013 Madrid",
+    "class Calle { }",
+    "Camino 2024, 10000 Pasos",
+    "calle mayor 3, 28013 Madrid",
+    "HTTP 500 en la ronda 3, 10000 Requests",
+    "Calle Mayor 3 con 10000 Euros Madrid",
+    "Plaza Mayor 3 con 10000 Euros Madrid",
+    "Calle Mayor 3 tiene 10000 Clientes Madrid",
+    "Avenida 5 con 12000 Visitas Sevilla",
+    "Calle Mayor 3 cuesta 10000 Euros Madrid",
+  ])("%s is not found", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-address-es");
+  });
+});
+
+describe("a postal address in China", () => {
+  it.each([
+    "北京市海淀区中关村大街1号",
+    "上海市虹口区西康南路125弄34号201室",
+    "山东省青岛市市南区香港中路12号",
+    "杭州市西湖区文三路90号东部软件园",
+    "宝山区南京路12号3号楼201室",
+    "广东省深圳市南山区科技园南区高新南一道9号",
+    "北京市东城区东长安街6号",
+    "北京市西城区牛街105号",
+    "河南省南阳市中州路42号",
+    "江苏省扬州市宝应县泰山路102号",
+    "地址：成都市武侯区天府大道1号",
+    "北京市朝阳区建国门外大街1号国贸大厦",
+    "天津市和平区南京路189号",
+    "北京市东城区史家胡同24号",
+    "公司地址：深圳市福田区深南大道6008号",
+    "内蒙古呼和浩特市新城区新华大街1号",
+    "南京市玄武区中山路1-3号",
+    "山东省济南市市中区经一路1号",
+    "江苏省苏州市苏州工业园区星湖街1号",
+    "浙江省温州市鹿城区县前街5号",
+    "北京市朝阳区三里屯街道工体北路8号",
+    "我的快递寄到深圳市南山区科苑路15号",
+    "成都市武侯区天府大道北段1700号",
+    "天津市和平区南京路 35号",
+  ])("%s is found", (line) => {
+    expect(ruleIds(line)).toContain("pii-address-cn");
+  });
+
+  it.each([
+    ["杭州市西湖区文三路90号东部软件园", "杭州市西湖区文三路90号"],
+    ["地址：成都市武侯区天府大道1号", "成都市武侯区天府大道1号"],
+    ["我的快递寄到深圳市南山区科苑路15号", "深圳市南山区科苑路15号"],
+  ])("%s is found as %s", (line, value) => {
+    expect(capturedBy(line, "pii-address-cn")).toBe(value);
+  });
+
+  it.each([
+    "北京市海淀区",
+    "中关村大街1号",
+    "北京市海淀区中关村大街",
+    "地铁3号线",
+    "北京市海淀区中关村大街3号线",
+    "3月12号",
+    "北京市海淀区3月12号开会",
+    "1号楼3单元402室",
+    "北京市海淀区1号楼",
+    "小区内道路5号楼",
+    "北京市海淀区有3个公园",
+    "上海市黄浦区人口100万",
+    "北京市海淀区中关村大街第1号文件",
+    "北京市朝阳区建国路上的3号楼",
+    "手机号13800138000",
+    "客户号12345",
+    "北京市海淀区中关村大街1号码",
+  ])("%s is not found", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-address-cn");
+  });
+});
+
+describe("a postal address in Korea", () => {
+  it.each([
+    "서울특별시 강남구 테헤란로 123",
+    "서울시 강남구 테헤란로 123",
+    "서울 강남구 테헤란로 123",
+    "강남구 테헤란로 123",
+    "서울특별시 금천구 시흥대로73길 70 (시흥동)",
+    "서울특별시 강남구 강남대로 45길 6",
+    "서울특별시 금천구 금하로 793, 151동 105호 (시흥동, 벽산아파트)",
+    "서울특별시 서초구 반포대로23길6(서초동)",
+    "경기도 성남시 분당구 판교역로 166",
+    "성남시 분당구 판교역로 166",
+    "서울특별시 서초구 서초동 1540-5",
+    "강남구 역삼동 123-4번지",
+    "경기도 가평군 청평면 대성리 산 123",
+    "부산광역시 해운대구 센텀중앙로 55",
+    "제주특별자치도 제주시 첨단로 242",
+    "주소: 세종특별자치시 한누리대로 2130",
+    "전북 전주시 완산구 효자로 225",
+    "서울특별시 종로구 세종대로 209",
+    "서울특별시 구로구 디지털로 26",
+    "경기도 시흥시 정왕동 123-4",
+    "서울특별시 영등포구 여의대로 108",
+    "경기도 성남시 분당구 판교역로 235 주소로 발송했습니다.",
+    "민지: 택배 대전광역시 유성구 대학로 99에 도착했대요",
+  ])("%s is found", (line) => {
+    expect(ruleIds(line)).toContain("pii-address-kr");
+  });
+
+  it.each([
+    [
+      "서울특별시 금천구 금하로 793, 151동 105호 (시흥동, 벽산아파트)",
+      "서울특별시 금천구 금하로 793",
+    ],
+    ["주소: 세종특별자치시 한누리대로 2130", "세종특별자치시 한누리대로 2130"],
+    [
+      "민지: 택배 대전광역시 유성구 대학로 99에 도착했대요",
+      "대전광역시 유성구 대학로 99",
+    ],
+  ])("%s is found as %s", (line, value) => {
+    expect(capturedBy(line, "pii-address-kr")).toBe(value);
+  });
+
+  it.each([
+    "서울특별시 강남구",
+    "테헤란로 123",
+    "서울특별시 강남구 테헤란로",
+    "서울로 갑니다",
+    "강남구로 이사했다",
+    "강남구 테헤란로 123명",
+    "강남구 테헤란로 2024년",
+    "강남구 역삼동 2차",
+    "서울시 중구 명동 2번 출구",
+    "강남구 지하철 2호선",
+    "강남구 테헤란로 3 명",
+    "강남구 테헤란로 123 번 버스",
+    "서울시 인구 1000만",
+    "강남구에 10개",
+    "출구로 3명이",
+    "강남구 역삼동 2010 년",
+  ])("%s is not found", (line) => {
+    expect(ruleIds(line)).not.toContain("pii-address-kr");
+  });
+});
+
+// Each rule finds its own country's addresses. A line one rule finds must not
+// also be found by another address rule, since the two would both block it.
+describe("each address rule finds only its own country", () => {
+  const FOUND: Record<string, string[]> = {
+    "pii-address-fr": [
+      "12 rue de la Paix, 75002 Paris",
+      "5 av. de la Gare - 13001 Marseille",
+    ],
+    "pii-address-it": [
+      "Via Roma 12, 00100 Roma",
+      "Piazza Cavour 3, 00193 Roma (RM)",
+    ],
+    "pii-address-de": [
+      "Hauptstraße 12, 10115 Berlin",
+      "Marktplatz 1 | 70173 Stuttgart",
+    ],
+    "pii-address-es": [
+      "Calle Gran Vía, 10, 28013 Madrid",
+      "Plaza Mayor 1, 37002 Salamanca",
+    ],
+    "pii-address-cn": [
+      "北京市海淀区中关村大街1号",
+      "江苏省扬州市宝应县泰山路102号",
+    ],
+    "pii-address-kr": [
+      "서울특별시 강남구 테헤란로 123",
+      "경기도 성남시 분당구 판교역로 166",
+    ],
+  };
+  const OTHER_ADDRESS_RULES = [
+    "pii-address-jp",
+    "pii-address-fr",
+    "pii-address-it",
+    "pii-address-de",
+    "pii-address-es",
+    "pii-address-cn",
+    "pii-address-kr",
+  ];
+  it.each(
+    Object.entries(FOUND).flatMap(([id, lines]) =>
+      lines.map((line) => [id, line]),
+    ),
+  )("%s finds %s and no other address rule", (id, line) => {
+    expect(ruleIds(line)).toContain(id);
+    const others = OTHER_ADDRESS_RULES.filter((other) => other !== id);
+    expect(ruleIds(line).filter((hit) => others.includes(hit))).toEqual([]);
+  });
+});
+
+// A registered office or a company's address is read as a person's is, as the
+// Japanese rule reads it.
+describe("a company's registered office is found, as a person's address would be", () => {
+  it.each([
+    ["Siège : 1 cours Lafayette, 69003 Lyon", "pii-address-fr"],
+    ["Sede legale: Via Dante 2, 20121 Milano", "pii-address-it"],
+    ["Firmensitz: Platz der Republik 1, 11011 Berlin", "pii-address-de"],
+    ["Domicilio social: Calle Serrano 12, 28001 Madrid", "pii-address-es"],
+    ["公司地址：深圳市福田区深南大道6008号", "pii-address-cn"],
+    ["주소: 세종특별자치시 한누리대로 2130", "pii-address-kr"],
+  ])("%s is found by %s", (line, id) => {
+    expect(ruleIds(line)).toContain(id);
+  });
+});
+
 // A label in a table header reaches the cells under it, which a regex cannot
 // do. The header is CSV, TSV, a Markdown table or a SQL INSERT column list, and
 // the rows read are the ones directly under the header.
@@ -1380,6 +1822,12 @@ describe("every rule catches something", () => {
     "pii-date-of-birth": "DOB: 1990-05-06",
     "pii-customer-number": "会員番号：ABC-12345678",
     "pii-address-jp": "東京都渋谷区神宮前5-28-11",
+    "pii-address-cn": "北京市海淀区中关村大街1号",
+    "pii-address-kr": "서울특별시 강남구 테헤란로 123",
+    "pii-address-fr": "12 rue de la Paix, 75002 Paris",
+    "pii-address-it": "Via Roma 12, 00100 Roma",
+    "pii-address-de": "Hauptstraße 12, 10115 Berlin",
+    "pii-address-es": "Calle Mayor 10, 28001 Madrid",
     "pii-date-of-birth-zh": "出生日期：1985年3月12日",
     "pii-date-of-birth-ko": "생년월일: 1985. 3. 12.",
     "pii-date-of-birth-fr": "Date de naissance : 12/03/1985",
