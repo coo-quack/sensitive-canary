@@ -689,6 +689,21 @@ describe("isBirthDate", () => {
     ["令和元年5月1日", "令和 元 is year 1"],
     ["S63.7.21", "the one-letter Showa form"],
     ["h1.1.8", "the one-letter Heisei form, lower case"],
+    ["12. März 1985", "German day with a dot, written month"],
+    ["12 Maerz 1985", "German unaccented month"],
+    ["1 Mrz. 1985", "German abbreviation with a full stop"],
+    ["1er mars 1985", "French ordinal day"],
+    ["12 janv. 1985", "French abbreviated month"],
+    ["1º marzo 1985", "Italian ordinal sign"],
+    ["12 sett. 1985", "Italian abbreviated month"],
+    ["12 de marzo de 1985", "Spanish written form"],
+    ["12-mar-1985", "Spanish abbreviated month with dashes"],
+    ["12 MÄRZ 1985", "German month in upper case, accent kept"],
+    ["1985년 3월 12일", "Korean 년월일"],
+    ["1985년3월12일", "Korean 년월일 without spaces"],
+    ["1985. 3. 12.", "Korean official numeric form"],
+    ["1985.03.12", "dot form, two digits"],
+    ["1985年3月12号", "Chinese day counter 号"],
   ])("%s is a birth date (%s)", (text) => {
     expect(isBirthDate(text)).toBe(true);
   });
@@ -721,6 +736,11 @@ describe("isBirthDate", () => {
     ["昭和0年1月1日", "an era has no year 0"],
     ["S0.1.1", "the one-letter form has no year 0"],
     [`令和${thisYear - 2018 + 1}年1月1日`, "the 令和 year after this one"],
+    ["12 xyz 1985", "a word that is not a month"],
+    ["1985. 13. 12.", "no month 13 in the Korean form"],
+    ["1970년 1월 1일", "the Korean form of the epoch default"],
+    ["1. Januar 1900", "the 1900 default in German"],
+    ["12 de marzo de 2099", "a future date in the Spanish form"],
   ])("%s is not a birth date (%s)", (text) => {
     expect(isBirthDate(text)).toBe(false);
   });

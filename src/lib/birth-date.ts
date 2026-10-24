@@ -41,6 +41,109 @@ const MONTH_NAME =
 const monthNumber = (name: string): number =>
   MONTH_ABBREVIATIONS.indexOf(name.slice(0, 3).toLowerCase()) + 1;
 
+// Month names and abbreviations of German, French, Italian and Spanish, with
+// and without accents, as the localized date-of-birth rules capture them. A
+// short form shared by two languages (mar, set, ago, sep) means the same
+// month in both, so one flat table serves every rule.
+const LOCAL_MONTHS: Readonly<Record<string, number>> = {
+  jan: 1,
+  januar: 1,
+  janv: 1,
+  janvier: 1,
+  gen: 1,
+  genn: 1,
+  gennaio: 1,
+  ene: 1,
+  enero: 1,
+  feb: 2,
+  febr: 2,
+  februar: 2,
+  fevr: 2,
+  févr: 2,
+  fevrier: 2,
+  février: 2,
+  febb: 2,
+  febbraio: 2,
+  febrero: 2,
+  mär: 3,
+  märz: 3,
+  maer: 3,
+  maerz: 3,
+  mrz: 3,
+  mars: 3,
+  mar: 3,
+  marzo: 3,
+  apr: 4,
+  april: 4,
+  avr: 4,
+  avril: 4,
+  aprile: 4,
+  abr: 4,
+  abril: 4,
+  mai: 5,
+  mag: 5,
+  maggio: 5,
+  may: 5,
+  mayo: 5,
+  jun: 6,
+  juni: 6,
+  juin: 6,
+  giu: 6,
+  giugno: 6,
+  junio: 6,
+  jul: 7,
+  juli: 7,
+  juil: 7,
+  juill: 7,
+  juillet: 7,
+  lug: 7,
+  luglio: 7,
+  julio: 7,
+  aug: 8,
+  august: 8,
+  aout: 8,
+  août: 8,
+  ago: 8,
+  agosto: 8,
+  agto: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  septembre: 9,
+  set: 9,
+  sett: 9,
+  settembre: 9,
+  septiembre: 9,
+  setiembre: 9,
+  okt: 10,
+  oktober: 10,
+  oct: 10,
+  octobre: 10,
+  ott: 10,
+  ottobre: 10,
+  octubre: 10,
+  nov: 11,
+  november: 11,
+  novembre: 11,
+  noviembre: 11,
+  dez: 12,
+  dezember: 12,
+  dec: 12,
+  déc: 12,
+  decembre: 12,
+  décembre: 12,
+  dic: 12,
+  dicembre: 12,
+  diciembre: 12,
+};
+
+// "12. März 1985", "1er mars 1985", "1º marzo 1985", "12 de marzo de 1985",
+// "12-mar-1985". The day may carry a dot (German), "er" (French) or an
+// ordinal sign (Italian, Spanish); Spanish may put "de" before the month and
+// before the year.
+const DAY_MONTH_YEAR_LOCAL =
+  /^(\d{1,2})(?:\.|er|º|°)?(?:\s{1,3}de)?[\s-]{1,3}(\p{L}+)\.?,?(?:\s{1,3}de)?[\s-]{1,3}(\d{4})$/iu;
+
 // "YYYY-M-D" when the day exists in that month and the year is from 1900 to
 // this year. Date.UTC rolls an impossible day into the next month, so the
 // fields are read back and compared.
@@ -125,12 +228,15 @@ function eraCalendarKeys(
 }
 
 function birthDateKeys(str: string): string[] {
-  const iso = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(str);
+  // ISO, slash and dot, and the Korean official form "1985. 3. 12." with a
+  // space after each dot and a final dot.
+  const iso = /^(\d{4})\s?[-/.]\s?(\d{1,2})\s?[-/.]\s?(\d{1,2})\.?$/.exec(str);
   if (iso)
     return calendarKeys([Number(iso[1]), Number(iso[2]), Number(iso[3])]);
 
+  // 号 is the spoken-style day counter in Chinese, as 日 is in writing.
   const kanjiWestern =
-    /^([0-9〇一二三四五六七八九]{4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})日$/.exec(
+    /^([0-9〇一二三四五六七八九]{4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})[日号]$/.exec(
       str,
     );
   if (kanjiWestern)
@@ -138,6 +244,14 @@ function birthDateKeys(str: string): string[] {
       dateNumber(kanjiWestern[1]),
       dateNumber(kanjiWestern[2]),
       dateNumber(kanjiWestern[3]),
+    ]);
+
+  const korean = /^(\d{4})년\s?(\d{1,2})월\s?(\d{1,2})일$/.exec(str);
+  if (korean)
+    return calendarKeys([
+      Number(korean[1]),
+      Number(korean[2]),
+      Number(korean[3]),
     ]);
 
   const numericEnd = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(str);
@@ -169,6 +283,15 @@ function birthDateKeys(str: string): string[] {
       monthNumber(monthDay[1] ?? ""),
       Number(monthDay[2]),
     ]);
+
+  const local = DAY_MONTH_YEAR_LOCAL.exec(str);
+  if (local) {
+    // toLowerCase maps MÄRZ to märz, so the accented keys are reached from
+    // upper case too.
+    const month = LOCAL_MONTHS[(local[2] ?? "").toLowerCase()];
+    if (month === undefined) return [];
+    return calendarKeys([Number(local[3]), month, Number(local[1])]);
+  }
 
   const kanjiEra =
     /^(明治|大正|昭和|平成|令和)\s?(元|[0-9〇一二三四五六七八九十]{1,4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})日$/.exec(
