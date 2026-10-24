@@ -984,6 +984,48 @@
       "flags": "giu",
       "secretGroup": 1,
       "category": "pii"
+    },
+    {
+      "id": "pii-address-cn",
+      "description": "Chinese postal address: a province, city or district, a road and a number with 号 in sequence",
+      "regex": "(?:(?=[北天上重河山辽吉黑江浙安福湖广海四贵云陕甘青台内西宁新香澳])(?:北京|天津|上海|重庆|河(?:北|南)|山(?:西|东)|辽宁|吉林|黑龙江|江(?:苏|西)|浙江|安徽|福建|湖(?:北|南)|广(?:东|西)|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|西藏|宁夏|新疆|香港|澳门)(?:省|市|(?:壮族|回族|维吾尔)?自治区|特别行政区)?(?:(?=(?<a9>(?:(?![市区县旗盟镇乡]|街道)\\p{sc=Han}){1,7}))\\k<a9>(?:市|(?<![小社校景])(?<!(?<!工业)园)区|县|旗|盟|镇|乡|街道)){0,2}|(?:(?<!\\p{sc=Han})|(?<=[在到于为至往从]))(?=(?<a10>(?:(?![市区县旗盟镇乡]|街道)\\p{sc=Han}){1,7}))\\k<a10>(?:市|(?<![小社校景])(?<!(?<!工业)园)区|县|旗|盟|镇|乡|街道)(?:(?=(?<a11>(?:(?![市区县旗盟镇乡]|街道)\\p{sc=Han}){1,7}))\\k<a11>(?:市|(?<![小社校景])(?<!(?<!工业)园)区|县|旗|盟|镇|乡|街道)){0,2})(?=(?<a12>(?:(?![路街道巷弄]|胡同)\\p{sc=Han}){1,6}))\\k<a12>(?:路|街|道|胡同|巷|弄)(?:[东南西北中]{0,2}[一二三四五六七八九十0-9]{0,2}段)?\\s?(?:[0-9０-９]{1,5}弄)?[0-9０-９]{1,5}(?:[-－][0-9０-９]{1,4})?\\s?号(?![线码])(?:[0-9０-９]{1,4}(?:号楼|栋|幢|座))?(?:[0-9０-９]{1,3}单元)?(?:[0-9０-９]{1,5}(?:室|户))?",
+      "flags": "gu",
+      "category": "pii"
+    },
+    {
+      "id": "pii-address-kr",
+      "description": "Korean postal address: a 시/도 or 구/군, then a road name (로/길) and a building number, or a 동/리 and a lot number",
+      "regex": "(?<![가-힣])(?:(?:서울(?:특별시|시)?|부산(?:광역시|시)?|대구(?:광역시|시)?|인천(?:광역시|시)?|광주(?:광역시|시)?|대전(?:광역시|시)?|울산(?:광역시|시)?|세종(?:특별자치시|시)?|경기도?|강원(?:특별자치도|도)?|충청북도|충북|충청남도|충남|전라북도|전북(?:특별자치도)?|전라남도|전남|경상북도|경북|경상남도|경남|제주(?:특별자치도|도)?)\\s(?:(?=(?<a13>[가-힣]{2,9}))\\k<a13>(?<=[시군구])\\s){0,3}|(?:(?=(?<a15>[가-힣]{2,9}))\\k<a15>(?<=시)\\s)?(?=(?<a16>[가-힣]{2,9}))\\k<a16>(?<=[구군])\\s)(?:(?=(?<a14>[가-힣]{2,9}))\\k<a14>(?<=[읍면])\\s)?(?:(?=(?<a17>[가-힣]{2,11}))\\k<a17>(?<=로|길)(?:\\s?[0-9]{1,3}(?:번|안)?길)?\\s?[0-9]{1,4}(?:-[0-9]{1,3})?(?:(?![0-9가-힣])|(?=(?:에서|에|의|는|은|도|을|를|과|와|로|부터|까지|가|이)(?![가-힣])))(?!\\s?(?:번(?!지)|호선|명|개|년|월|일|시간|분|초|원|층|호|회|대|차|배|개월|주)(?![가-힣]))|(?=(?<a18>[가-힣]{2,9}))\\k<a18>(?<=[동리가])\\s?(?:산\\s?)?[0-9]{1,4}(?:-[0-9]{1,4})?(?:번지)?(?:(?![0-9가-힣])|(?=(?:에서|에|의|는|은|도|을|를|과|와|로|부터|까지|가|이)(?![가-힣])))(?!\\s?(?:번(?!지)|호선|명|개|년|월|일|시간|분|초|원|층|호|회|대|차|배|개월|주)(?![가-힣])))",
+      "flags": "gu",
+      "category": "pii"
+    },
+    {
+      "id": "pii-address-fr",
+      "description": "French postal address: a number, a street type and name, then a postal code and a town",
+      "regex": "(?<![A-Za-zÀ-ÖØ-öø-ɏ\\d/.-])(?!(?:19|20)\\d{2}(?!\\d))(\\d{1,4})(?:\\s?(?:bis|ter|quater|BIS|TER|[a-zA-Z](?![\\p{L}\\d])))?,?\\s{1,2}(?:(?=[rRaAbBcCpPiIqQfFsSeElLhH])(?:r(?:ue|ésidence|ond-point)|R(?:ue|UE|ésidence|ÉSIDENCE|ond-point|OND-POINT)|a(?:v(?:enue|\\.)|l(?:l(?:ée|ee)))|A(?:v(?:enue|\\.)|V(?:ENUE|\\.)|l(?:l(?:ée|ee))|L(?:L(?:ÉE|EE)))|b(?:oulevard|d(?:\\.|)|vd)|B(?:oulevard|OULEVARD|d(?:\\.|)|D(?:\\.|)|vd|VD)|c(?:h(?:emin|\\.|aussée)|ours|ité)|C(?:h(?:emin|\\.|aussée)|H(?:EMIN|\\.|AUSSÉE)|ours|OURS|ité|ITÉ)|p(?:l(?:ace|\\.)|a(?:ssage|rvis)|romenade)|P(?:l(?:ace|\\.)|L(?:ACE|\\.)|a(?:ssage|rvis)|A(?:SSAGE|RVIS)|romenade|ROMENADE)|i(?:m(?:p(?:asse|\\.)))|I(?:m(?:p(?:asse|\\.))|M(?:P(?:ASSE|\\.)))|quai|Q(?:uai|UAI)|faubourg|F(?:aubourg|AUBOURG)|sentier|S(?:entier|ENTIER)|esplanade|E(?:splanade|SPLANADE)|lotissement|L(?:otissement|OTISSEMENT)|hameau|H(?:ameau|AMEAU))(?![\\p{L}])\\s(?=\\p{Lu}|d[eu]\\s|des\\s|d['’]|l[ae]s?\\s|l['’]|aux?\\s)|(?=[rR])(?:r(?:oute|te)|R(?:oute|OUTE|te|TE))\\s(?:de|du|des|d['’]|nationale|départementale|[ND]\\s?\\d))(?:[^\\d]|\\d{1,4}(?!\\d)){1,60}?(?<![\\d-])(?:(?:0[1-9]|[1-8]\\d|9[0-8])\\d{3})(?!\\d)\\s{1,2}\\p{Lu}(?:[\\p{L}'’.-]+|(?=[ \\t]\\p{Lu}))(?:[ \\t][\\p{L}'’.()-]+){0,3}",
+      "flags": "gu",
+      "category": "pii"
+    },
+    {
+      "id": "pii-address-it",
+      "description": "Italian postal address: a street type and name, a civic number, then a CAP and a town",
+      "regex": "(?<![A-Za-zÀ-ÖØ-öø-ɏ\\d/.-])(?:(?:Via|VIA|(?=[vVpPcClLsSbBgGtTfF])(?:v(?:i(?:ale|c(?:o(?:lo|)))|\\.le)|V(?:i(?:ale|c(?:o(?:lo|)))|I(?:ALE|C(?:O(?:LO|)))|\\.(?:le|LE))|p(?:i(?:a(?:z(?:z(?:a(?:le|)|etta))))|\\.(?:z(?:za|a)|le))|P(?:i(?:a(?:z(?:z(?:a(?:le|)|etta))))|I(?:A(?:Z(?:Z(?:A(?:LE|)|ETTA))))|\\.(?:z(?:za|a)|Z(?:ZA|A)|le|LE))|c(?:o(?:rso|ntrada)|\\.(?:so|da)|alata|irconvallazione)|C(?:o(?:rso|ntrada)|O(?:RSO|NTRADA)|\\.(?:so|SO|da|DA)|alata|ALATA|irconvallazione|IRCONVALLAZIONE)|l(?:argo|u(?:n(?:g(?:o(?:mare|tevere)|arno)))|o(?:c(?:alità|\\.)))|L(?:argo|ARGO|u(?:n(?:g(?:o(?:mare|tevere)|arno)))|U(?:N(?:G(?:O(?:MARE|TEVERE)|ARNO)))|o(?:c(?:alità|\\.))|O(?:C(?:ALITÀ|\\.)))|s(?:trada|alita)|S(?:trada|TRADA|alita|ALITA)|borgo|B(?:orgo|ORGO)|galleria|G(?:alleria|ALLERIA)|traversa|T(?:raversa|RAVERSA)|f(?:r(?:a(?:z(?:ione|\\.))))|F(?:r(?:a(?:z(?:ione|\\.)))|R(?:A(?:Z(?:IONE|\\.))))))(?![\\p{L}])\\s{1,2}(?:\\d{1,2}[º°]?\\s(?=\\p{Lu}))?(?=\\p{Lu}|de[il]\\s|dell[ae]\\s|degli\\s|di\\s|d['’]|dell['’])(?=(?<a0>\\p{L}[^\\s,;|\\d]{0,20}))\\k<a0>(?:\\s(?=(?<a1>\\p{L}[^\\s,;|\\d]{0,20}))\\k<a1>){0,4},?\\s{0,2}(?:n\\.|N\\.|n[°º]|N[°º]|num\\.)?\\s{0,2}|via\\s(?=\\p{Lu}\\p{Ll})(?=(?<a2>\\p{L}[^\\s,;|\\d]{0,20}))\\k<a2>(?:\\s(?=(?<a3>\\p{L}[^\\s,;|\\d]{0,20}))\\k<a3>){0,4}\\s(?:n\\.|N\\.|n[°º]|N[°º]|num\\.)?\\s{0,2})(?!(?:19|20)\\d{2}(?!\\d))\\d{1,4}(?:\\s?[a-zA-Z](?![\\p{L}\\d])|\\s?(?:bis|ter|BIS|TER)(?![\\p{L}]))?(?:\\s?[-–/]\\s?\\d{1,4}(?:[a-zA-Z](?![\\p{L}\\d]))?)?(?!\\d)(?:[^\\d]|\\d{1,4}(?!\\d)){0,60}?(?<![\\d-])(?:(?:[0-8]\\d|9[0-8])\\d{3})(?!\\d)\\s{1,2}\\p{Lu}(?:[\\p{L}'’.-]+|(?=[ \\t]\\p{Lu}))(?:[ \\t][\\p{L}'’.()-]+){0,3}(?:\\s\\(?[A-Z]{2}\\)?(?![\\p{L}]))?",
+      "flags": "gu",
+      "category": "pii"
+    },
+    {
+      "id": "pii-address-de",
+      "description": "German postal address: a street and house number, then a postal code and a town",
+      "regex": "(?=[A-ZÄÖÜẞ])(?<![A-Za-zÀ-ÖØ-öø-ɏ\\d/.-])(?:(?=(?<a4>\\p{Lu}[\\p{L}-]{1,30}))\\k<a4>(?=\\s{1,2}\\d)(?<=[\\p{L}-](?:[sS]tra(?:ß|ss)e|[wW]eg|[pP]latz|[aA]llee|[gG]asse|[rR]ing|[dD]amm|[uU]fer|[sS]teig|[sS]tieg|[cC]haussee|[pP]romenade|[mM]arkt|[hH]of|[pP]fad|[wW]all|[gG]raben|[bB]erg|[wW]inkel|[aA]nger|[kK]amp|[rR]edder|[tT]wiete|[zZ]eile))|(?=(?<a5>\\p{Lu}[\\p{L}-]{1,30}))\\k<a5>(?<=[\\p{L}-][sS]tr)\\.(?=\\s{1,2}\\d)|(?:(?=(?<a6>\\p{Lu}[\\p{L}-]{1,30}))\\k<a6>\\s){1,2}(?:Straße|Strasse|Str\\.|Weg|Platz|Allee|Gasse|Ring|Damm|Ufer|Chaussee|Markt|Promenade|Steig|Stieg|Wall|Graben|Zeile)|(?:Straße|Strasse|Str\\.|Weg|Platz|Allee|Gasse|Ring|Damm|Ufer|Chaussee|Markt|Promenade|Steig|Stieg|Wall|Graben|Zeile)\\s(?:des|der|am|zum|zur|an\\sder|unter\\sden)\\s(?:\\d{1,2}\\.\\s)?\\p{Lu}[\\p{L}-]{2,30}|(?:Am|An\\sder|An\\sden|Auf\\sdem|Auf\\sder|Im|In\\sder|Unter\\sden|Zum|Zur|Hinter\\sdem|Bei\\sder|Vor\\sdem|Alter?|Alte|Neue[rs]?|Große[rn]?|Grosse[rn]?|Kleine[rn]?|Obere[rn]?|Untere[rn]?|Lange[rn]?|Breite[rn]?|Hohe[rn]?)\\s\\p{Lu}[\\p{L}-]{2,30})(?![\\p{L}])\\s{1,2}(?!(?:19|20)\\d{2}(?!\\d))\\d{1,4}(?:\\s?[a-zA-Z](?![\\p{L}\\d])|\\s?(?:bis|ter|BIS|TER)(?![\\p{L}]))?(?:\\s?[-–/]\\s?\\d{1,4}(?:[a-zA-Z](?![\\p{L}\\d]))?)?(?!\\d)[ \\t]{0,3}(?:[,;|–—\\n]|-\\s|[ \\t]{2,})(?:[^\\d]|\\d{1,4}(?!\\d)){0,60}?(?<![\\d-])(?:(?:D-)?(?:0[1-9]|[1-9]\\d)\\d{3})(?!\\d)\\s{1,2}\\p{Lu}(?:[\\p{L}'’.-]+|(?=[ \\t]\\p{Lu}))(?:[ \\t][\\p{L}'’.()-]+){0,3}",
+      "flags": "gu",
+      "category": "pii"
+    },
+    {
+      "id": "pii-address-es",
+      "description": "Spanish postal address: a street type and name, a number, then a postal code and a town",
+      "regex": "(?<![A-Za-zÀ-ÖØ-öø-ɏ\\d/.-])(?=[cCaApPrRtTgGuUbBvV])(?:c(?:a(?:l(?:l(?:e(?:j(?:ón|on)|)))|rretera|mino)|\\/|t(?:r(?:a(?:\\.|)))|no\\.|uesta)|C(?:a(?:l(?:l(?:e(?:j(?:ón|on)|)))|rretera|mino)|A(?:L(?:L(?:E(?:J(?:ÓN|ON)|)))|RRETERA|MINO)|\\/|t(?:r(?:a(?:\\.|)))|T(?:R(?:A(?:\\.|)))|no\\.|NO\\.|uesta|UESTA)|a(?:v(?:enida|d(?:a(?:\\.|))|\\.))|A(?:v(?:enida|d(?:a(?:\\.|))|\\.)|V(?:ENIDA|D(?:A(?:\\.|))|\\.))|p(?:l(?:a(?:z(?:a|uela))|za\\.|\\.)|z(?:a(?:\\.|))|a(?:s(?:eo|aje)|raje)|º|\\.º|°|o(?:l(?:ígono|igono|\\.)))|P(?:l(?:a(?:z(?:a|uela))|za\\.|\\.)|L(?:A(?:Z(?:A|UELA))|ZA\\.|\\.)|z(?:a(?:\\.|))|Z(?:A(?:\\.|))|a(?:s(?:eo|aje)|raje)|A(?:S(?:EO|AJE)|RAJE)|º|\\.º|°|o(?:l(?:ígono|igono|\\.))|O(?:L(?:ÍGONO|IGONO|\\.)))|r(?:onda|da\\.|ambla)|R(?:onda|ONDA|da\\.|DA\\.|ambla|AMBLA)|t(?:r(?:a(?:v(?:e(?:s(?:ía|ia))|\\.))))|T(?:r(?:a(?:v(?:e(?:s(?:ía|ia))|\\.)))|R(?:A(?:V(?:E(?:S(?:ÍA|IA))|\\.))))|g(?:lorieta|ta\\.)|G(?:lorieta|LORIETA|ta\\.|TA\\.)|u(?:r(?:b(?:a(?:n(?:i(?:z(?:a(?:c(?:i(?:ón|on)))))))|\\.)))|U(?:r(?:b(?:a(?:n(?:i(?:z(?:a(?:c(?:i(?:ón|on)))))))|\\.))|R(?:B(?:A(?:N(?:I(?:Z(?:A(?:C(?:I(?:ÓN|ON)))))))|\\.)))|bulevar|B(?:ulevar|ULEVAR)|vía|V(?:ía|ÍA))(?![\\p{L}])\\s{0,2}(?:\\d{1,2}\\s(?=\\p{Lu}|de\\s))?(?=\\p{Lu}|de\\s|del\\s|l[ao]s?\\s|el\\s|d['’])(?=(?<a7>\\p{L}[^\\s,;|\\d/]{0,20}))\\k<a7>(?:\\s(?=(?<a8>\\p{L}[^\\s,;|\\d/]{0,20}))\\k<a8>){0,4},?\\s{0,2}(?:n[º°]\\.?|N[º°]\\.?|n\\.[º°]|N\\.[º°]|n[úu]m\\.?|N[úu]m\\.?|número|Número|[kK]m\\.?)?\\s{0,2}(?:(?!(?:19|20)\\d{2}(?!\\d))\\d{1,4}(?:\\s?[a-zA-Z](?![\\p{L}\\d])|\\s?(?:bis|ter|BIS|TER)(?![\\p{L}]))?(?:\\s?[-–/]\\s?\\d{1,4}(?:[a-zA-Z](?![\\p{L}\\d]))?)?(?!\\d)|s/n|S/N)(?:[^\\d]|\\d{1,4}(?!\\d)){0,60}?(?<![\\d-])(?:(?:0[1-9]|[1-4]\\d|5[0-2])\\d{3})(?!\\d)\\s{1,2}\\p{Lu}(?:[\\p{L}'’.-]+|(?=[ \\t]\\p{Lu}))(?:[ \\t][\\p{L}'’.()-]+){0,3}",
+      "flags": "gu",
+      "category": "pii"
     }
   ]
 }
