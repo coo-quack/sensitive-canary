@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- The README's feature list and the docs site's landing page name the date of birth, member number and postal address rules. Only the rule tables listed them before.
+
 ## v0.16.0 (2026-10-24)
 
 ### Features

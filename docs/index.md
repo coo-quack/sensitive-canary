@@ -25,7 +25,7 @@ features:
     details: Catches AWS keys, GitHub PATs, Stripe keys, JWTs, Anthropic/OpenAI API keys, database connection strings, Replicate/Hugging Face/Groq/xAI tokens, DigitalOcean/Square/Sentry/Linear tokens, and 20+ more credential types.
   - icon: 🕵️
     title: PII Detection
-    details: Detects email addresses, credit card numbers (Luhn-validated), US SSNs, phone numbers (JP/US/FR/IT/DE/ES/KR/CN), national IDs with checksum validation (My Number, NIR, Codice Fiscale, Steuer-IdNr., DNI/NIE, RRN, BRN, Chinese Resident ID), postal codes, postal addresses (7 countries), dates of birth and member numbers after a label (8 languages), and public IP addresses.
+    details: Detects email addresses, credit card numbers (Luhn-validated), US SSNs, phone numbers (JP/US/FR/IT/DE/ES/KR/CN), national IDs with checksum validation (My Number, NIR, Codice Fiscale, Steuer-IdNr., DNI/NIE, RRN, BRN, Chinese Resident ID), postal codes, postal addresses (7 countries), dates of birth and customer or member numbers after a label (8 languages), and public IP addresses.
   - icon: 🛡️
     title: Pre-Tool-Use Hook
     details: Scans files before Claude reads them. Blocks .env files by name and any file whose contents contain secrets or PII.
@@ -56,7 +56,7 @@ Claude Code is a powerful development tool, but file reads and command execution
 - **Two hooks** — `UserPromptSubmit` and `PreToolUse` cover both directions of risk
 - **109 detection rules** — sourced from gitleaks and TruffleHog detector definitions
 - **Context gating** — the noisiest PII rules (non-US/JP phone numbers, postal codes, public IP addresses) only fire when a relevant label is nearby; US and JP phone numbers and JP postal codes are matched without one
-- **Labelled attributes and postal addresses** — dates of birth and member, customer or account numbers after a label in eight languages (English, Japanese, Chinese, Korean, French, Italian, German and Spanish), and postal addresses in seven countries (JP, CN, KR, FR, IT, DE and ES), recognised by place names and the shape of the address rather than by the value alone
+- **Dates of birth, member numbers and postal addresses** — dates of birth and member, customer or account numbers after a label, in 8 languages (English, Japanese, Chinese, Korean, French, Italian, German and Spanish); postal addresses by their shape, in 7 countries (JP, CN, KR, FR, IT, DE and ES), the French, Italian, German and Spanish ones with a postal code
 - **Entropy filtering** — reduces false positives on low-entropy values
 - **Luhn validation** — credit card numbers are validated, not just pattern-matched
 - **Optional model check** — a [pii-sentinel](/pii-sentinel) server you run yourself can judge whether a file or prompt is sensitive, catching what has no fixed shape
@@ -75,6 +75,6 @@ Claude Code is a powerful development tool, but file reads and command execution
 | **Cloud / IaaS** | DigitalOcean PAT, Supabase PAT |
 | **SaaS / Dev tools** | Mapbox, Sentry, Atlassian, Linear, Postman |
 | **Auth tokens** | JWT, database connection strings |
-| **PII** | Email, US SSN, phone (8 countries), national IDs (7 countries), postal codes, postal addresses (7 countries), dates of birth and member numbers after a label (8 languages), IP addresses |
+| **PII** | Email, US SSN, phone (8 countries), national IDs (7 countries), postal codes, postal addresses (7 countries), dates of birth and customer or member numbers after a label (8 languages), IP addresses |
 
 [View all detection rules →](/rules)
