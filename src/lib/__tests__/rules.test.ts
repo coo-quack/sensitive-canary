@@ -740,6 +740,13 @@ describe("scan — adversarial inputs", () => {
         "海区海区海区海区海区中山路".repeat(15_400),
       // pii-address-cn: a unit suffix at every position, with no name before it
       "han with 区": "区".repeat(200_000),
+      // pii-address-cn: a province-named run is refused at every character, so each start is one step
+      "chinese province after a particle": "我在北京市海淀区".repeat(24_000),
+      // pii-address-cn: a particle before every unit pair, and no road after it
+      "chinese particle before unit pairs": "在区区海区".repeat(50_000),
+      // pii-address-de: a capitalised town with particles and a run of capitalised words after it
+      "german towns with particles and capitals":
+        "Berlin Frankfurt am Main Hof ".repeat(8_000),
       // pii-address-kr: the unit suffix at every position, with no space after it
       "hangul with 구": "구".repeat(200_000),
       // pii-address-kr: a unit and a road at every position, and no number

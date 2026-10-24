@@ -50,7 +50,22 @@ const atomic = (run) => {
 };
 
 // ── shared pieces ────────────────────────────────────────────────────────────
-const TOWN = "\\p{Lu}(?:[\\p{L}'’.-]+|(?=[ \\t]\\p{Lu}))(?:[ \\t][\\p{L}'’.()-]+){0,3}";
+// A currency or unit word is not a town: `10000 Euro Berlin` and `10000 Pesos Mexico`
+// are a price. The lookahead is case-sensitive, so the list holds the capitalised
+// and the upper-case forms.
+const NOT_CURRENCY =
+  "(?!(?:Euros?|EURO|EUR|Pesos?|PESOS|Dollars?|DOLLARS?|USD|Franken|CHF|Lire|Lira|Stück|Meter|Metros|Metri|Kilo|Kg|Prozent|Pfund|Dólares|Libras)(?![\\p{L}]))";
+// The town is one capitalised word, then up to three more on the same line. Those
+// may be joined by a lower-case particle (`Frankfurt am Main`, `Monte di Procida`,
+// `Reggio d'Emilia`), and `Cedex` may carry its number (`Paris Cedex 08`). A lower-case
+// word that is not a particle ends the town, so `75001 Paris pour le concert` is `Paris`.
+const TOWN_PARTICLE = "(?:am|an der|an|sur|sous|de|du|des|di|del|della|los|las|la|le|les|im|vor|auf)";
+const TOWN_WORD = "\\p{Lu}[\\p{L}'’.()-]*";
+const TOWN_TAIL =
+  `(?:[ \\t]+[Cc]edex(?:[ \\t]+\\d{1,2}(?![\\p{L}\\d]))?` +
+  `|[ \\t]+(?:${TOWN_PARTICLE}[ \\t]+)?${NOT_CURRENCY}${TOWN_WORD}` +
+  `|[ \\t]+(?:d|dell|nell|sull)'${TOWN_WORD})`;
+const TOWN = `${NOT_CURRENCY}\\p{Lu}(?:[\\p{L}'’.-]+|(?=[ \\t]\\p{Lu}))${TOWN_TAIL}{0,3}`;
 // Latin letters only. `\\p{L}` in a lookbehind costs ~4 ms per 200k characters; the explicit
 // ranges cost ~0.6 ms. The address rules read Latin letters for the European countries.
 const START = "(?<![A-Za-zÀ-ÖØ-öø-ɏ\\d/.-])";
@@ -76,7 +91,7 @@ const FR_TYPES = cases([
 // a particle (`de`, `la`, `d'`). Any other lower-case word (`coûte`, `settings`)
 // ends the name, so a sentence after a number is not read as a street.
 const FR_START_NAME = "(?=\\s(?:\\p{Lu}|d[eu]\\s|des\\s|d['’]|l[ae]s?\\s|l['’]|aux?\\s))";
-const FR_ROUTE_NAME = "(?=\\s(?:de\\s|du\\s|des\\s|d['’]|nationale|départementale|[ND]\\s?\\d))";
+const FR_ROUTE_NAME = "(?=\\s(?:de\\s|du\\s|des\\s|d['’]|nationale|départementale|[ND]\\s?\\d|DE\\s|DU\\s|DES\\s|D['’]|NATIONALE|DÉPARTEMENTALE))";
 const FR_WORD =
   "(?:\\p{Lu}[\\p{L}'’.-]{0,30}|[0-9]{1,4}(?!\\d)|de|du|des|d['’]\\p{L}{1,30}|la|le|les|l['’]\\p{L}{1,30}|et|sur|sous|en|au|aux|à|lès|lez|nationale|départementale)";
 // What may stand between the street name and the postal code: separators, and the
@@ -126,7 +141,7 @@ const DE_CAP_WORD = "\\p{Lu}[\\p{L}-]{1,30}";
 const DE_TIME_WORD =
   "(?!(?:Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag|Wochenende|Abend|Morgen|Mittag|Nachmittag|Jahr|Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)(?![\\p{L}-]))";
 const DE_GAP_TOKEN =
-  "(?:\\d{1,2}\\.?\\s?(?:OG|UG|EG|Stock|Etage)|(?:Hinterhaus|Vorderhaus|Hof|Haus|Aufgang|Whg\\.?|Wohnung|Eingang)\\s?[0-9A-Za-z]{1,4})(?![\\p{L}])";
+  "(?:\\d{1,2}\\.?\\s?(?:OG|UG|EG|Stock|Etage)|(?:Hof|Haus|Aufgang|Whg\\.?|Wohnung|Eingang)\\s?[0-9A-Za-z]{1,4}|(?:Hinterhaus|Vorderhaus|Seitenflügel|Gartenhaus)(?:\\s?[0-9A-Za-z]{1,4})?)(?![\\p{L}])";
 // A form writes its label before the code: `PLZ: 24937`.
 const DE_GAP = `(?:[\\s,;|/\\n–-]|${DE_GAP_TOKEN}|(?:PLZ|Postleitzahl)\\s?:\\s?){0,12}?`;
 const DE_PIECES = {
@@ -177,14 +192,25 @@ export const es =
 // ~40 ms (`海区` repeated, each start walks a unit pair and a road).
 const HAN = "\\p{sc=Han}";
 const CN_PROV_FIRST = "[北天上重河山辽吉黑江浙安福湖广海四贵云陕甘青台内西宁新香澳]";
-const CN_PROV =
-  "(?:北京|天津|上海|重庆|河(?:北|南)|山(?:西|东)|辽宁|吉林|黑龙江|江(?:苏|西)|浙江|安徽|福建|湖(?:北|南)|广(?:东|西)|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|西藏|宁夏|新疆|香港|澳门)(?:省|市|(?:壮族|回族|维吾尔)?自治区|特别行政区)?";
+// The province-level names, without their suffix. The suffix is optional in the
+// address (`北京`, `广东省`), and required wherever a unit run must not start inside
+// a province name (`CN_PROV_NAMED`).
+const CN_PROV_NAMES =
+  "(?:北京|天津|上海|重庆|河(?:北|南)|山(?:西|东)|辽宁|吉林|黑龙江|江(?:苏|西)|浙江|安徽|福建|湖(?:北|南)|广(?:东|西)|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|西藏|宁夏|新疆|香港|澳门)";
+const CN_PROV_SUFFIX = "(?:省|市|(?:壮族|回族|维吾尔)?自治区|特别行政区)";
+const CN_PROV = `${CN_PROV_NAMES}${CN_PROV_SUFFIX}?`;
+// A province name with its suffix (`北京市`, `广东省`). A unit run may not contain one,
+// so `我在北京市海淀区` starts at 北京市 and not at 我: the run from 我 stops at 北京市.
+const CN_PROV_NAMED = `${CN_PROV_NAMES}${CN_PROV_SUFFIX}`;
 // A unit is a run of characters that are not a unit suffix, then the suffix
 // (市, 区, 县, 旗, 盟, or a 镇, 乡 or 街道 under the province), so each run has one
-// possible end and the atomic form never backs off into it. The list is at most
-// two units: a city and a district (`北京市海淀区`), or a district and a street
-// (`北京市朝阳区三里屯街道`); from a unit start, at most three.
-const cnUnit = () => atomic(`(?:(?![市区县旗盟镇乡]|街道)${HAN}){1,7}`) +
+// possible end and the atomic form never backs off into it. After a province there
+// are at most three units (`广东省深圳市南山区科技园南区`); from a unit start, three. The run also stops
+// at a place particle (在, 到, 为, 至, 往): no place name holds one, and a sentence
+// `我在北京市...` must not carry 我在 into the value. A unit start reads 于 as a
+// particle too (`位于海淀区`), but a unit after a province still reads 于洪区.
+const cnUnit = (startOfValue = false) => atomic(
+  `(?:(?![市区县旗盟镇乡在到为至往${startOfValue ? "于" : ""}]|街道|${CN_PROV_NAMED})${HAN}){1,7}`) +
   "(?:市|(?<![小社校景])(?<!(?<!工业)园)区|县|旗|盟|镇|乡|街道)";
 const cnRoad = () => atomic(`(?:(?![路街道巷弄]|胡同)${HAN}){1,6}`) + "(?:路|街|道|胡同|巷|弄)(?:[东南西北中]{0,2}[一二三四五六七八九十0-9]{0,2}段)?";
 // A space is allowed before the number (`南京路 35号`) and before 号 (`35 号`).
@@ -193,7 +219,7 @@ const CN_NUM =
   "(?:[0-9０-９]{1,4}(?:号楼|栋|幢|座))?(?:[0-9０-９]{1,3}单元)?(?:[0-9０-９]{1,5}(?:室|户))?";
 const CN_START_UNIT = `(?:(?<!${HAN})|(?<=[在到于为至往从]))`;
 export const cn =
-  `(?:(?=${CN_PROV_FIRST})${CN_PROV}(?:${cnUnit()}){0,2}|${CN_START_UNIT}${cnUnit()}(?:${cnUnit()}){0,2})` +
+  `(?:(?=${CN_PROV_FIRST})${CN_PROV}(?:${cnUnit()}){0,3}|${CN_START_UNIT}${cnUnit(true)}(?:${cnUnit()}){0,2})` +
   `${cnRoad()}${CN_NUM}`;
 
 // ── Korea ────────────────────────────────────────────────────────────────────
@@ -201,7 +227,7 @@ export const cn =
 // tried at every position, which is what made `구` repeated cost 11 ms.
 const KR_START = "(?<![가-힣])";
 const KR_SIDO =
-  "(?:서울(?:특별시|시)?|부산(?:광역시|시)?|대구(?:광역시|시)?|인천(?:광역시|시)?|광주(?:광역시|시)?|대전(?:광역시|시)?|울산(?:광역시|시)?|세종(?:특별자치시|시)?|경기도?|강원(?:특별자치도|도)?|충청북도|충북|충청남도|충남|전라북도|전북(?:특별자치도)?|전라남도|전남|경상북도|경북|경상남도|경남|제주(?:특별자치도|도)?)";
+  "(?:서울(?:특별시|시)?|부산(?:광역시|시)?|대구(?:광역시|시)?|인천(?:광역시|시)?|광주(?:광역시|시)?|대전(?:광역시|시)?|울산(?:광역시|시)?|세종(?:특별자치시|시)?|경기도?|강원(?:특별자치도|도)?|충청북도|충북|충청남도|충남|전라북도|전라북도|전북(?:특별자치도)?|전라남도|전남|경상북도|경북|경상남도|경남|제주(?:특별자치도|도)?)";
 const HANGUL = "[가-힣]";
 const KR_UNIT = `(?:${atomic(`${HANGUL}{2,9}`)}(?<=[시군구])\\s)`;
 const KR_EUPMYEON = `(?:${atomic(`${HANGUL}{2,9}`)}(?<=[읍면])\\s)?`;
