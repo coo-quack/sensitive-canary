@@ -775,6 +775,8 @@ describe("a postal address in France", () => {
     "15 rue Lepic\n75018 Paris\nFrance",
     "12 rue de la Paix (bât. 1990, lot 2024) 75002 Paris",
     "12 rue la Boétie, 75008 Paris",
+    "12 rue de la Paix, BP 123 75002 Paris",
+    "66 avenue Jean Jaurès\nCode postal : 35000 Rennes",
   ])("%s is found", (line) => {
     expect(ruleIds(line)).toContain("pii-address-fr");
   });
@@ -803,6 +805,10 @@ describe("a postal address in France", () => {
     "12 square meters, 10000 Users",
     "Le 12 place settings sold out at 10000 Guests",
     "port 8080 rue",
+    "Je vends 12 rue de la Paix pour 10000 Euros Paris",
+    "Il a acheté 12 rue Lepic avec 10000 Euros Paris",
+    "Le 12 rue Lepic coûte 10000 Euros Paris",
+    "Nous avons 12 place Vendôme pour 10000 Clients Lyon",
   ])("%s is not found", (line) => {
     expect(ruleIds(line)).not.toContain("pii-address-fr");
   });
@@ -827,6 +833,9 @@ describe("a postal address in Italy", () => {
     "Via Roma 12 bis, 00100 Roma",
     "Corso di Porta Romana 10, 20122 Milano",
     "via Roma 12 00100 Roma",
+    "VIA APPIA NUOVA 12, INTERNO 27 / 00183 ROMA RM",
+    "Via Garibaldi 5, scala B, piano 2, 10122 Torino",
+    "Via Cavour, 102\nCAP: 40123 Bologna",
   ])("%s is found", (line) => {
     expect(ruleIds(line)).toContain("pii-address-it");
   });
@@ -857,6 +866,19 @@ describe("a postal address in Italy", () => {
     "Via Roma 12 costa 12000 euro",
     "HTTP 404 via /api/v1, 10000 Requests",
     "Corso di laurea 2024, 10000 Studenti",
+    "deployed via Jenkins 12 times, 10000 Builds",
+    "We shipped via Docker 3 times, 20000 Users were affected",
+    "routed via Cloudflare 4 hops, 10000 Requests",
+    "The build ran via Maven 3 times, 20000 Tests passed",
+    "requests were proxied via Nginx 2 times, 30000 Users",
+    "the job was retried via Celery 5 times, 40000 Messages",
+    "pushed via Terraform 7 modules, 50000 Resources",
+    "served via Redis 2 replicas, 10000 Keys",
+    "sent via Slack 6 channels, 20000 Members",
+    "deployed via Helm 3 charts, 10000 Pods",
+    "fetched via Kafka 9 partitions, 10000 Records",
+    "forwarded via Envoy 2 filters, 90000 Connections",
+    "ran via Gradle 8 tasks, 10000 Tests",
   ])("%s is not found", (line) => {
     expect(ruleIds(line)).not.toContain("pii-address-it");
   });
@@ -881,6 +903,7 @@ describe("a postal address in Germany", () => {
     "Firmensitz: Platz der Republik 1, 11011 Berlin",
     "Musterweg 3  12345 Musterstadt",
     "Bahnhofstraße 86, 43408 Hamburg\nTelefon +49 030 1234567",
+    "Dorfstraße 27\nPLZ: 24937 Flensburg",
   ])("%s is found", (line) => {
     expect(ruleIds(line)).toContain("pii-address-de");
   });
@@ -914,6 +937,11 @@ describe("a postal address in Germany", () => {
     "Weg 1, 12345 Foo",
     "Port 8080, 12345 Requests",
     "Hauptstraße 12 10115 Berlin",
+    "Am Montag 12, 10000 Anrufe Berlin",
+    "Am Abend 8, 10000 Besucher Berlin",
+    "Im Mai 3, 10000 Gäste Hamburg",
+    "Am Freitag 5, 20000 Nutzer Hamburg",
+    "Die Bahnhofstraße 5 in 10000 Euro verkauft",
   ])("%s is not found", (line) => {
     expect(ruleIds(line)).not.toContain("pii-address-de");
   });
@@ -936,6 +964,8 @@ describe("a postal address in Spain", () => {
     "CALLE MAYOR 3\n28013 MADRID",
     "Pza. de España 4, 50001 Zaragoza",
     "Rambla de Catalunya 12 - 08007 Barcelona",
+    "Calle Real 3, piso 2, puerta B, 28013 Madrid",
+    "Calle Velázquez 88\nCódigo postal: 28001 Madrid",
   ])("%s is found", (line) => {
     expect(ruleIds(line)).toContain("pii-address-es");
   });
@@ -963,6 +993,11 @@ describe("a postal address in Spain", () => {
     "Camino 2024, 10000 Pasos",
     "calle mayor 3, 28013 Madrid",
     "HTTP 500 en la ronda 3, 10000 Requests",
+    "Calle Mayor 3 con 10000 Euros Madrid",
+    "Plaza Mayor 3 con 10000 Euros Madrid",
+    "Calle Mayor 3 tiene 10000 Clientes Madrid",
+    "Avenida 5 con 12000 Visitas Sevilla",
+    "Calle Mayor 3 cuesta 10000 Euros Madrid",
   ])("%s is not found", (line) => {
     expect(ruleIds(line)).not.toContain("pii-address-es");
   });
