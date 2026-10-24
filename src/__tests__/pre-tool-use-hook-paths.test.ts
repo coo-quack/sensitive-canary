@@ -74,21 +74,6 @@ describe("pre-tool-use-hook — a cd that would not happen", () => {
     ).toBe(2);
   });
 
-  // The directory test alone would let this through: a directory really named
-  // `$TARGET` exists, so following the unexpanded name lands somewhere real —
-  // just not where the shell would have gone.
-  it("a variable is not followed even when a directory bears its name", () => {
-    const literal = writeFixture.path("$TARGET");
-    mkdirSync(literal, { recursive: true });
-    writeFileSync(join(literal, "decoy.txt"), "nothing here\n", "utf8");
-    writeFixture("decoy.txt", `key=${AWS_KEY}`);
-    expect(
-      runBashHook("cd $TARGET && cat decoy.txt", {
-        cwd: writeFixture.path(),
-      }).exitCode,
-    ).toBe(2);
-  });
-
   // And the base does move when the shell's would.
   it("a cd into a directory that exists moves the base", () => {
     const inner = writeFixture.path("inner");

@@ -720,12 +720,75 @@ describe("scan — adversarial inputs", () => {
       // pii-address-jp: the block-number repeat takes each hyphen, then has to back off the last one
       "prefectures with a town and a dangling hyphen":
         "東京都千代田区丸の内1-".repeat(20_000),
+      // pii-address-fr: a number and a street word at every position, and the name-and-gap run is walked to its limit with no postal code
+      "numbers and rue": "12 rue de la Paix, ".repeat(10_600),
+      // pii-address-it: a street, a name and a number, then the gap is walked and no CAP follows
+      "via with a name and no cap": "Via Roma 12, ".repeat(15_400),
+      // pii-address-it: the lower-case branch, where the name is read as words and must end before a number
+      "lower-case via": "via Roma 12 ".repeat(16_700),
+      // pii-address-de: a compound street and a number with a delimiter, and no postal code after the gap
+      "german streets with no postal code": "Hauptstraße 12, ".repeat(12_500),
+      // pii-address-de: every word starts with a capital, so each is tried as a street and fails at its suffix
+      "capitalised words": "Abc ".repeat(50_000),
+      // pii-address-es: a street, a name and a number, then the gap is walked and no postal code follows
+      "calle with a name and no postal code": "Calle Mayor 3, ".repeat(13_400),
+      // pii-address-cn: a province, districts and a street with no number, at every position
+      "province, districts and a road with no number":
+        "北京市海淀区中山路".repeat(18_200),
+      // pii-address-cn: a unit pair and a road at every position, the unit start gated on what comes before it
+      "han units and a road with no number":
+        "海区海区海区海区海区中山路".repeat(15_400),
+      // pii-address-cn: a unit suffix at every position, with no name before it
+      "han with 区": "区".repeat(200_000),
+      // pii-address-cn: a province-named run is refused at every character, so each start is one step
+      "chinese province after a particle": "我在北京市海淀区".repeat(24_000),
+      // pii-address-cn: a particle before every unit pair, and no road after it
+      "chinese particle before unit pairs": "在区区海区".repeat(50_000),
+      // pii-address-de: a capitalised town with particles and a run of capitalised words after it
+      "german towns with particles and capitals":
+        "Berlin Frankfurt am Main Hof ".repeat(8_000),
+      // pii-address-kr: the unit suffix at every position, with no space after it
+      "hangul with 구": "구".repeat(200_000),
+      // pii-address-kr: a unit and a road at every position, and no number
+      "hangul units and a road with no number": "강남구 테헤란로 ".repeat(
+        22_000,
+      ),
+      // pii-address-kr: a lot and a counter, so the number is found and refused at every position
+      "hangul lots with a counter": "역삼동 123명 ".repeat(22_000),
       // pii-date-of-birth: the gap after each label is walked to its limit, with no date to end on
       "birth labels with no date": "DOB ".repeat(60_000),
       // pii-date-of-birth: the date fails on its last digit, and each label walks the gap before it
       "birth labels with a broken date": "DOB x: 1990-05-".repeat(15_000),
       // pii-customer-number: the separator class after each label is walked, then the value fails
       "customer labels with no number": "customer id ".repeat(20_000),
+      // pii-date-of-birth-de: the gap after each label is walked to its limit, with no date to end on
+      "german birth labels with no date": "Geburtsdatum ".repeat(15_400),
+      // pii-date-of-birth-fr: the day is found after each né le, then the month alternation fails
+      "french birth phrases with a day and no month": "né le 12 ".repeat(
+        22_000,
+      ),
+      // pii-date-of-birth-it: the lazy place name is walked to il, then the date fails
+      "italian birth phrases with a place and no date": "nato a x il ".repeat(
+        16_700,
+      ),
+      // pii-date-of-birth-es: after one label, "12 de " repeats and each day backs off its de
+      "spanish day and de with no month": `fecha nac. ${"12 de ".repeat(33_000)}`,
+      // pii-date-of-birth-ko: a dotted year and month, and the day never comes
+      "korean birth labels with a broken dotted date":
+        "출생일 1985. 3. ".repeat(13_300),
+      // pii-date-of-birth-zh: the gap after each label is walked, with no date
+      "chinese birth labels with no date": "出生日期 ".repeat(40_000),
+      // pii-customer-number-de/fr/it/es/zh/ko: the separator class after each label is walked, then the value fails
+      "german customer labels with no number": "Kundennummer ".repeat(15_400),
+      "french customer labels with no number": "n° client ".repeat(20_000),
+      "italian customer labels with no number": "numero cliente ".repeat(
+        13_300,
+      ),
+      "spanish customer labels with no number": "número de cliente ".repeat(
+        11_100,
+      ),
+      "chinese customer labels with no number": "会员编号 ".repeat(40_000),
+      "korean customer labels with no number": "회원 번호 ".repeat(33_000),
       // pii-email: the ssh exemption walks back over each run of spaces, bounded at sixteen
       spaces: " ".repeat(200_000),
       // pii-email: the same walk over a run of tabs

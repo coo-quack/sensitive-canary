@@ -41,6 +41,92 @@ const MONTH_NAME =
 const monthNumber = (name: string): number =>
   MONTH_ABBREVIATIONS.indexOf(name.slice(0, 3).toLowerCase()) + 1;
 
+// The month words that the localized date-of-birth rules read, per language, by
+// month: index 0 is January. Each rule's regex spells these same words, so a
+// word a rule captures is one the validator knows, and the reverse. A word may
+// appear in two languages when both use it for the same month. Only the words
+// that a language's own rule reads are listed here, so an English month name
+// is read by the English rule and not by these.
+export type LocalLanguage = "de" | "fr" | "it" | "es";
+
+export const LOCAL_MONTH_WORDS: Readonly<
+  Record<LocalLanguage, readonly (readonly string[])[]>
+> = {
+  de: [
+    ["jan", "januar"],
+    ["feb", "febr", "februar"],
+    ["märz", "mär", "maerz", "maer", "mrz"],
+    ["apr", "april"],
+    ["mai"],
+    ["jun", "juni"],
+    ["jul", "juli"],
+    ["aug", "august"],
+    ["sep", "sept", "september"],
+    ["okt", "oktober"],
+    ["nov", "november"],
+    ["dez", "dezember"],
+  ],
+  fr: [
+    ["janv", "janvier"],
+    ["févr", "fevr", "février", "fevrier"],
+    ["mars"],
+    ["avr", "avril"],
+    ["mai"],
+    ["juin"],
+    ["juil", "juill", "juillet"],
+    ["août", "aout"],
+    ["sept", "septembre"],
+    ["oct", "octobre"],
+    ["nov", "novembre"],
+    ["déc", "dec", "décembre", "decembre"],
+  ],
+  it: [
+    ["gen", "genn", "gennaio"],
+    ["feb", "febb", "febbraio"],
+    ["mar", "marzo"],
+    ["apr", "aprile"],
+    ["mag", "maggio"],
+    ["giu", "giugno"],
+    ["lug", "luglio"],
+    ["ago", "agosto"],
+    ["set", "sett", "settembre"],
+    ["ott", "ottobre"],
+    ["nov", "novembre"],
+    ["dic", "dicembre"],
+  ],
+  es: [
+    ["ene", "enero"],
+    ["feb", "febr", "febrero"],
+    ["mar", "marzo"],
+    ["abr", "abril"],
+    ["may", "mayo"],
+    ["jun", "junio"],
+    ["jul", "julio"],
+    ["ago", "agto", "agosto"],
+    ["sep", "sept", "set", "septiembre", "setiembre"],
+    ["oct", "octubre"],
+    ["nov", "noviembre"],
+    ["dic", "diciembre"],
+  ],
+};
+
+// The flat lookup from a lower-case word to its month, built from the lists.
+// A Map, so a word such as "constructor" is not found on the object prototype.
+const LOCAL_MONTHS: ReadonlyMap<string, number> = new Map(
+  (Object.keys(LOCAL_MONTH_WORDS) as LocalLanguage[]).flatMap((language) =>
+    LOCAL_MONTH_WORDS[language].flatMap((words, index) =>
+      words.map((word): [string, number] => [word, index + 1]),
+    ),
+  ),
+);
+
+// "12. März 1985", "1er mars 1985", "1º marzo 1985", "12 de marzo de 1985",
+// "12-mar-1985". The day may carry a dot (German), "er" (French) or an
+// ordinal sign (Italian, Spanish); Spanish may put "de" before the month and
+// before the year.
+const DAY_MONTH_YEAR_LOCAL =
+  /^(\d{1,2})(?:\.|er|º|°)?(?:\s{1,3}de)?[\s-]{1,3}(\p{L}+)\.?,?(?:\s{1,3}de)?[\s-]{1,3}(\d{4})$/iu;
+
 // "YYYY-M-D" when the day exists in that month and the year is from 1900 to
 // this year. Date.UTC rolls an impossible day into the next month, so the
 // fields are read back and compared.
@@ -125,12 +211,15 @@ function eraCalendarKeys(
 }
 
 function birthDateKeys(str: string): string[] {
-  const iso = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(str);
+  // ISO, slash and dot, and the Korean official form "1985. 3. 12." with a
+  // space after each dot and a final dot.
+  const iso = /^(\d{4})[-/.]\s?(\d{1,2})[-/.]\s?(\d{1,2})\.?$/.exec(str);
   if (iso)
     return calendarKeys([Number(iso[1]), Number(iso[2]), Number(iso[3])]);
 
+  // 号 is the spoken-style day counter in Chinese, as 日 is in writing.
   const kanjiWestern =
-    /^([0-9〇一二三四五六七八九]{4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})日$/.exec(
+    /^([0-9〇一二三四五六七八九]{4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})[日号]$/.exec(
       str,
     );
   if (kanjiWestern)
@@ -138,6 +227,14 @@ function birthDateKeys(str: string): string[] {
       dateNumber(kanjiWestern[1]),
       dateNumber(kanjiWestern[2]),
       dateNumber(kanjiWestern[3]),
+    ]);
+
+  const korean = /^(\d{4})년\s?(\d{1,2})월\s?(\d{1,2})일$/.exec(str);
+  if (korean)
+    return calendarKeys([
+      Number(korean[1]),
+      Number(korean[2]),
+      Number(korean[3]),
     ]);
 
   const numericEnd = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(str);
@@ -169,6 +266,15 @@ function birthDateKeys(str: string): string[] {
       monthNumber(monthDay[1] ?? ""),
       Number(monthDay[2]),
     ]);
+
+  const local = DAY_MONTH_YEAR_LOCAL.exec(str);
+  if (local) {
+    // toLowerCase maps MÄRZ to märz, so the accented keys are reached from
+    // upper case too.
+    const month = LOCAL_MONTHS.get((local[2] ?? "").toLowerCase());
+    if (month === undefined) return [];
+    return calendarKeys([Number(local[3]), month, Number(local[1])]);
+  }
 
   const kanjiEra =
     /^(明治|大正|昭和|平成|令和)\s?(元|[0-9〇一二三四五六七八九十]{1,4})年\s?([0-9〇一二三四五六七八九十]{1,3})月\s?([0-9〇一二三四五六七八九十]{1,3})日$/.exec(

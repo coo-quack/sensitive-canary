@@ -156,7 +156,7 @@ describe("the documents and the registry agree", () => {
 });
 
 describe("the shipped rules", () => {
-  it("are exactly these ninety-one", () => {
+  it("are exactly these one hundred and nine", () => {
     expect(DEFAULT_RULES.map((r) => r.id).sort()).toEqual([
       "anthropic-key",
       "atlassian-token",
@@ -199,12 +199,30 @@ describe("the shipped rules", () => {
       "password-netrc",
       "password-prose",
       "perplexity-key",
+      "pii-address-cn",
+      "pii-address-de",
+      "pii-address-es",
+      "pii-address-fr",
+      "pii-address-it",
       "pii-address-jp",
+      "pii-address-kr",
       "pii-brn-kr",
       "pii-codice-fiscale-it",
       "pii-credit-card",
       "pii-customer-number",
+      "pii-customer-number-de",
+      "pii-customer-number-es",
+      "pii-customer-number-fr",
+      "pii-customer-number-it",
+      "pii-customer-number-ko",
+      "pii-customer-number-zh",
       "pii-date-of-birth",
+      "pii-date-of-birth-de",
+      "pii-date-of-birth-es",
+      "pii-date-of-birth-fr",
+      "pii-date-of-birth-it",
+      "pii-date-of-birth-ko",
+      "pii-date-of-birth-zh",
       "pii-dni-nie-es",
       "pii-email",
       "pii-iban",
@@ -252,12 +270,12 @@ describe("the shipped rules", () => {
     ]);
   });
 
-  it("are split as the README says: 61 secret, 30 PII", () => {
+  it("are split as the README says: 61 secret, 48 PII", () => {
     const byCategory: Record<string, number> = {};
     for (const rule of DEFAULT_RULES) {
       byCategory[rule.category] = (byCategory[rule.category] ?? 0) + 1;
     }
-    expect(byCategory).toEqual({ secret: 61, pii: 30 });
+    expect(byCategory).toEqual({ secret: 61, pii: 48 });
   });
 
   it("each declare the fields the loader needs", () => {

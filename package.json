@@ -1,6 +1,6 @@
 {
   "name": "@coo-quack/sensitive-canary",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Claude Code hooks that block secrets and PII before they reach the Anthropic API",
   "license": "MIT",
   "author": "coo-quack",
@@ -36,11 +36,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "biome lint --error-on-warnings src vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
-    "format": "biome format --write src vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
-    "format:check": "biome ci --linter-enabled=false src vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
-    "fix": "biome check --write src vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
-    "ci": "tsc --noEmit && biome check --error-on-warnings src vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme && vitest run",
+    "lint": "biome lint --error-on-warnings src scripts vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
+    "format": "biome format --write src scripts vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
+    "format:check": "biome ci --linter-enabled=false src scripts vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
+    "fix": "biome check --write src scripts vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme",
+    "ci": "tsc --noEmit && biome check --error-on-warnings src scripts vitest.config.ts docs/.vitepress/config.ts docs/.vitepress/theme && vitest run",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
@@ -49,11 +49,11 @@
     "prepare": "pnpm run build"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.2",
     "@types/node": "25.9.9",
     "typescript": "7.0.2",
     "vitepress": "2.0.0-alpha.19",
     "vitest": "5.0.5"
   },
-  "packageManager": "pnpm@12.14.0"
+  "packageManager": "pnpm@12.15.0"
 }
