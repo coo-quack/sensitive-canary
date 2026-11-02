@@ -33,25 +33,39 @@ jobs:
         with:
           client-id: ${{ vars.BACKPORT_APP_CLIENT_ID }}
           private-key: ${{ secrets.BACKPORT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
-      - name: Update the ones that are behind develop
+      - name: Update the pull requests that are behind develop
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
+          APP_LOGIN: app/${{ steps.app-token.outputs.app-slug }}
         run: |
-          gh pr list -R "$REPO" --base develop --state open --limit 100 \
+          prs=$(gh pr list -R "$REPO" --base develop --state open --limit 1000 \
             --json number,headRefOid,author,isCrossRepository \
             --jq '.[]
               | select(.isCrossRepository | not)
-              | select(.author.login == "app/coo-quack-backport-bot" or .author.login == "app/dependabot")
-              | "\(.number) \(.headRefOid)"' |
+              | select(.author.login == env.APP_LOGIN or .author.login == "app/dependabot")
+              | "\(.number) \(.headRefOid)"')
+
+          failed=()
           while read -r number head; do
-            behind=$(gh api "repos/$REPO/compare/$head...develop" --jq .ahead_by)
-            if [ "$behind" -eq 0 ]; then
+            [ -n "$number" ] || continue
+            if ! behind=$(gh api "repos/$REPO/compare/develop...$head" --jq .behind_by); then
+              failed+=("#$number")
+              continue
+            fi
+            if [ "$behind" = 0 ]; then
               echo "#$number is up to date"
               continue
             fi
             echo "#$number is $behind commit(s) behind develop"
-            gh pr update-branch "$number" -R "$REPO" ||
-              echo "::warning::#$number could not be updated; it may conflict with develop"
-          done
+            gh pr update-branch "$number" -R "$REPO" || failed+=("#$number")
+          done <<< "$prs"
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::Could not update ${failed[*]}; the errors above say why (for example a conflict with develop). Update them by hand."
+            exit 1
+          fi
