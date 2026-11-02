@@ -1,0 +1,57 @@
+name: Update automated pull requests
+
+# develop requires branches to be up to date before they merge (coo-quack/iac#68).
+# Some automated pull requests do not update themselves, so each push to develop
+# brings the ones that fell behind up to date: those the backport App opens (the
+# main-to-develop sync from backport.yml, and in claude-code-marketplace the
+# plugin version sync), and Dependabot's. Renovate rebases its own branches and
+# is left alone: a merge commit pushed onto a Renovate branch stops Renovate from
+# rebasing it.
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: update-automated-prs
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      # The App token rather than GITHUB_TOKEN: a commit pushed with
+      # GITHUB_TOKEN starts no workflow, so the updated pull request would wait
+      # for required checks that never run.
+      - name: Mint app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BACKPORT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BACKPORT_APP_PRIVATE_KEY }}
+
+      - name: Update the ones that are behind develop
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr list -R "$REPO" --base develop --state open --limit 100 \
+            --json number,headRefOid,author,isCrossRepository \
+            --jq '.[]
+              | select(.isCrossRepository | not)
+              | select(.author.login == "app/coo-quack-backport-bot" or .author.login == "app/dependabot")
+              | "\(.number) \(.headRefOid)"' |
+          while read -r number head; do
+            behind=$(gh api "repos/$REPO/compare/$head...develop" --jq .ahead_by)
+            if [ "$behind" -eq 0 ]; then
+              echo "#$number is up to date"
+              continue
+            fi
+            echo "#$number is $behind commit(s) behind develop"
+            gh pr update-branch "$number" -R "$REPO" ||
+              echo "::warning::#$number could not be updated; it may conflict with develop"
+          done
