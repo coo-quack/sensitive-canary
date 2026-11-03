@@ -27,8 +27,8 @@ jobs:
       # The App token rather than GITHUB_TOKEN: a commit pushed with
       # GITHUB_TOKEN starts no workflow, so the updated pull request would wait
       # for required checks that never run.
-      # workflows: write lets the update bring in commits that change workflow
-      # files; GitHub refuses such a push from a token without it.
+      # workflows: write so that the update is not refused when develop has
+      # changed a workflow file that the pull request does not have yet.
       - name: Mint app token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
