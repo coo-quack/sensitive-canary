@@ -30,6 +30,7 @@ import {
   type Finding,
   scan,
   scanBudgetElapsed,
+  skipToolsFromEnv,
   USER_CONFIG_PATH,
 } from "./lib/rules.ts";
 import {
@@ -41,6 +42,7 @@ import {
 import {
   collectCommandFields,
   collectPathFields,
+  isSkippedTool,
   isWritingTool,
   TOOLS_WITHOUT_FILE_OUTPUT,
 } from "./lib/tool-inputs.ts";
@@ -99,6 +101,7 @@ const MAX_FILE_SCAN_BYTES = 1_048_576; // 1 MiB
 const MAX_TOTAL_SCAN_BYTES = 64 * 1_048_576; // 64 MiB
 
 const ENABLED_CATEGORIES = enabledCategoriesFromEnv();
+const SKIP_TOOLS = skipToolsFromEnv();
 
 // Mutable for one run of the process: what has been read, and what has already
 // been looked at. Overlapping globs name the same file several times over, and
@@ -1041,6 +1044,9 @@ async function main(raw: string): Promise<void> {
   const data = parsePayload(raw) as HookInput;
 
   const tool = typeof data.tool_name === "string" ? data.tool_name : "";
+  // Before the transcript is read or a path resolved: a listed tool is not
+  // looked at, whatever its input names.
+  if (isSkippedTool(tool, SKIP_TOOLS)) process.exit(0);
   // Before anything resolves a path: a relative path in a command is relative to
   // where Claude Code will run it, not to where this hook was started.
   if (typeof data.cwd === "string" && data.cwd) baseDirectory = data.cwd;

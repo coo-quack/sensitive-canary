@@ -102,6 +102,65 @@ export function enabledCategoriesFromEnv(): Set<Category> {
   return parseCategories(SENSITIVE_CANARY_CATEGORIES);
 }
 
+// One entry of SENSITIVE_CANARY_SKIP_TOOLS. With `prefix` unset, `tool` is the
+// whole tool part of the name and the entry matches that name only. With it set,
+// `tool` is the start of the tool part (possibly empty) and the entry matches
+// every tool of the server whose tool part starts with it.
+export interface SkipTool {
+  server: string;
+  tool: string;
+  prefix: boolean;
+}
+
+// `mcp__<server>__<tool>`, or `mcp__<server>__<prefix>*` with the star as the
+// last character and the only one. The server is read up to the first `__` and
+// cannot hold a star, so a star always sits after the server. No entry can match
+// a built-in tool, because every one starts with `mcp__`.
+const SKIP_TOOL_ENTRY =
+  /^mcp__(?<server>(?:(?!__)[^*])+)__(?<tool>[^*]*)(?<star>\*?)$/;
+
+// A tool name does not say where the server name ends: `mcp__srv___x` is the
+// tool `x` of `srv_` as much as `_x` of `srv`, and `mcp__srv__x__t` is `t` of
+// `srv__x` as much as `x__t` of `srv`. A prefix entry therefore only matches a
+// tool part that starts with no `_` and holds no `__`, which no other server
+// name can claim; a prefix that could never match such a part is refused. A
+// tool outside that shape is skipped by naming it in full.
+function parseSkipTool(entry: string): SkipTool | null {
+  const groups = SKIP_TOOL_ENTRY.exec(entry)?.groups;
+  if (!groups) return null;
+  const { server = "", tool = "", star = "" } = groups;
+  if (star === "") return tool === "" ? null : { server, tool, prefix: false };
+  if (tool.startsWith("_") || tool.includes("__")) return null;
+  return { server, tool, prefix: true };
+}
+
+// Parse the SENSITIVE_CANARY_SKIP_TOOLS env var: a comma-separated list of MCP
+// tools the PreToolUse hook does not scan, each an exact name or a name prefix
+// ending in `*`. An entry of any other shape is reported on stderr and ignored;
+// the rest are kept. Unset or empty means no tool is skipped.
+export function parseSkipTools(value: string | undefined): SkipTool[] {
+  const entries: SkipTool[] = [];
+  for (const token of (value ?? "").split(",")) {
+    const entry = token.trim();
+    if (entry === "") continue;
+    const parsed = parseSkipTool(entry);
+    if (parsed) {
+      entries.push(parsed);
+    } else {
+      process.stderr.write(
+        `sensitive-canary: invalid SENSITIVE_CANARY_SKIP_TOOLS entry ${JSON.stringify(entry)} (expected mcp__<server>__<tool> or mcp__<server>__<prefix>*, where a prefix neither starts with _ nor contains __), ignoring\n`,
+      );
+    }
+  }
+  return entries;
+}
+
+// MCP tools skipped by this process, from SENSITIVE_CANARY_SKIP_TOOLS.
+export function skipToolsFromEnv(): SkipTool[] {
+  const { SENSITIVE_CANARY_SKIP_TOOLS } = process.env;
+  return parseSkipTools(SENSITIVE_CANARY_SKIP_TOOLS);
+}
+
 // ── Context enhancement ──────────────────────────────────────────────────────
 
 // Set from the default config during module initialisation (see buildRules).
