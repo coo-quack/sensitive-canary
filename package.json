@@ -1,6 +1,6 @@
 {
   "name": "@coo-quack/sensitive-canary",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Claude Code hooks that block secrets and PII before they reach the Anthropic API",
   "license": "MIT",
   "author": "coo-quack",
@@ -49,11 +49,11 @@
     "prepare": "pnpm run build"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
-    "@types/node": "25.9.9",
+    "@biomejs/biome": "2.6.7",
+    "@types/node": "26.6.6",
     "typescript": "7.0.2",
     "vitepress": "2.0.0-alpha.19",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
-  "packageManager": "pnpm@12.15.0"
+  "packageManager": "pnpm@12.18.0"
 }

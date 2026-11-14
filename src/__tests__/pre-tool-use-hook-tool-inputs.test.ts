@@ -639,4 +639,227 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(runToolHook("SomeOtherTool", { path: file }).exitCode).toBe(2);
     });
   });
+
+  // SENSITIVE_CANARY_SKIP_TOOLS names MCP tools the hook does not look at. The
+  // call is let through before any field is read, so a tool that hands a file to
+  // a local model is not stopped for naming the file.
+  describe("SENSITIVE_CANARY_SKIP_TOOLS", () => {
+    const skip = (value: string) => ({
+      env: { SENSITIVE_CANARY_SKIP_TOOLS: value },
+    });
+
+    it("blocks an MCP tool naming a secret-bearing file when nothing is listed", () => {
+      const file = writeFixture("skip_unset.txt", `key=${AWS_KEY}`);
+      const result = runToolHook("mcp__srv__ask", { path: file });
+      expect(result.blocked).toBe(true);
+    });
+
+    it("lets an exactly listed tool through", () => {
+      const file = writeFixture("skip_exact.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv__ask",
+        { path: file },
+        skip("mcp__srv__ask"),
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("does not let a sibling of an exactly listed tool through", () => {
+      const file = writeFixture("skip_sibling.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv__other",
+        { path: file },
+        skip("mcp__srv__ask"),
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    it("lets every tool of a server through with mcp__srv__*", () => {
+      const file = writeFixture("skip_server.txt", `key=${AWS_KEY}`);
+      for (const tool of ["mcp__srv__ask", "mcp__srv__other", "mcp__srv__x"]) {
+        const result = runToolHook(tool, { path: file }, skip("mcp__srv__*"));
+        expect(result.exitCode, tool).toBe(0);
+      }
+    });
+
+    it("lets through only the tools starting with the prefix", () => {
+      const file = writeFixture("skip_prefix.txt", `key=${AWS_KEY}`);
+      const options = skip("mcp__srv__local_*");
+      expect(
+        runToolHook("mcp__srv__local_ask", { path: file }, options).exitCode,
+      ).toBe(0);
+      expect(
+        runToolHook("mcp__srv__remote_ask", { path: file }, options).blocked,
+      ).toBe(true);
+      expect(
+        runToolHook("mcp__srv__my_local_ask", { path: file }, options).blocked,
+      ).toBe(true);
+    });
+
+    it("accepts spaces around entries and several entries", () => {
+      const file = writeFixture("skip_spaces.txt", `key=${AWS_KEY}`);
+      const options = skip("  mcp__a__x , mcp__b__* ");
+      expect(runToolHook("mcp__a__x", { path: file }, options).exitCode).toBe(
+        0,
+      );
+      expect(runToolHook("mcp__b__y", { path: file }, options).exitCode).toBe(
+        0,
+      );
+      expect(runToolHook("mcp__a__y", { path: file }, options).blocked).toBe(
+        true,
+      );
+    });
+
+    it("is case-sensitive", () => {
+      const file = writeFixture("skip_case.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__SRV__ask",
+        { path: file },
+        skip("mcp__srv__*"),
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    // A server whose name merely starts with the listed one is another server.
+    it.each(["mcp__srv-2__x", "mcp__srv_extra__x", "mcp__srv2__x"])(
+      "still blocks %s when mcp__srv__* is listed",
+      (tool) => {
+        const file = writeFixture(`skip_other_${tool}.txt`, `key=${AWS_KEY}`);
+        const result = runToolHook(tool, { path: file }, skip("mcp__srv__*"));
+        expect(result.blocked).toBe(true);
+      },
+    );
+
+    // The server is not recoverable from the tool name: `mcp__srv___x` is the
+    // tool `x` of `srv_` as much as `_x` of `srv`, and `mcp__srv__x__t` is the
+    // tool `t` of `srv__x` as much as `x__t` of `srv`. A prefix entry does not
+    // reach either, so a server the user did not name is not skipped.
+    it.each(["mcp__srv___x", "mcp__srv__x__t"])(
+      "still blocks %s when mcp__srv__* is listed",
+      (tool) => {
+        const file = writeFixture(
+          `skip_ambiguous_${tool}.txt`,
+          `key=${AWS_KEY}`,
+        );
+        const result = runToolHook(tool, { path: file }, skip("mcp__srv__*"));
+        expect(result.blocked).toBe(true);
+      },
+    );
+
+    it("still blocks a tool that only contains the listed server's prefix", () => {
+      const file = writeFixture("skip_infix.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__other__mcp__srv__ask",
+        { path: file },
+        skip("mcp__srv__*"),
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    it("still blocks a tool whose name only starts with an exactly listed name", () => {
+      const file = writeFixture("skip_longer.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv__asking",
+        { path: file },
+        skip("mcp__srv__ask"),
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    it("lets through an exactly listed name whose tool part holds __", () => {
+      const file = writeFixture("skip_double.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv__a__b",
+        { path: file },
+        skip("mcp__srv__a__b"),
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("lets through an exactly listed name whose tool part starts with _", () => {
+      const file = writeFixture("skip_underscore.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv___x",
+        { path: file },
+        skip("mcp__srv___x"),
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("still blocks a tool of a server that is not listed", () => {
+      const file = writeFixture("skip_unlisted.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__other__ask",
+        { path: file },
+        skip("mcp__srv__*"),
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    // The built-in tools cannot be listed whatever is written: the entry is
+    // refused, so the setting cannot switch off the protection that matters.
+    it.each(["Read", "Bash", "*", "mcp__*"])(
+      "listing %s does not exempt Read, Bash or an MCP tool",
+      (entry) => {
+        const file = writeFixture("skip_builtin.txt", `key=${AWS_KEY}`);
+        const options = skip(entry);
+        expect(runToolHook("Read", { file_path: file }, options).blocked).toBe(
+          true,
+        );
+        expect(
+          runToolHook("Bash", { command: `cat ${file}` }, options).blocked,
+        ).toBe(true);
+        expect(
+          runToolHook("mcp__srv__ask", { path: file }, options).blocked,
+        ).toBe(true);
+      },
+    );
+
+    // The tool is skipped whole: a command field is not read either.
+    it("does not read the command fields of a listed tool", () => {
+      const file = writeFixture("skip_command.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv__run",
+        { command: `cat ${file}` },
+        skip("mcp__srv__run"),
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("reads the command fields of a tool that is not listed", () => {
+      const file = writeFixture("skip_command_unlisted.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv__run",
+        { command: `cat ${file}` },
+        skip("mcp__srv__other"),
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    it("warns on stderr for an entry it refuses, one line each, and keeps the valid ones", () => {
+      const file = writeFixture("skip_warn.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv__ask",
+        { path: file },
+        skip("Read, *, mcp__srv__ask"),
+      );
+      expect(result.exitCode).toBe(0);
+      const warnings = result.stderr
+        .split("\n")
+        .filter((line) => line.includes("SENSITIVE_CANARY_SKIP_TOOLS"));
+      expect(warnings).toHaveLength(2);
+      expect(warnings[0]).toContain('"Read"');
+      expect(warnings[1]).toContain('"*"');
+    });
+
+    it("prints no warning when every entry is valid", () => {
+      const file = writeFixture("skip_nowarn.txt", "nothing here");
+      const result = runToolHook(
+        "mcp__srv__ask",
+        { path: file },
+        skip("mcp__srv__ask,mcp__b__*"),
+      );
+      expect(result.stderr).toBe("");
+    });
+  });
 });

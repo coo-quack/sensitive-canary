@@ -4,6 +4,8 @@
 // name and the shape of its input object: the fields that carry a path, and the
 // names that say the tool writes rather than reads.
 
+import type { SkipTool } from "./rules.ts";
+
 // Tools that never surface the contents of a file they name. Scanning these
 // would block writing to a file that already holds a secret, which is not a leak.
 export const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
@@ -18,6 +20,33 @@ export const TOOLS_WITHOUT_FILE_OUTPUT = new Set([
   "ExitPlanMode",
   "AskUserQuestion",
 ]);
+
+// A tool the user has listed in SENSITIVE_CANARY_SKIP_TOOLS: the hook lets the
+// call through without reading any of its input. Matched on the tool name alone,
+// like the write-verb exemption below, so what runs behind that name is not
+// checked: a server registered under a listed name is trusted as much as the one
+// the user meant. The entries are `mcp__…` names, so none of them can match
+// `Read`, `Bash`, `Grep` or `NotebookRead`.
+//
+// A prefix entry reads only a tool part with no leading `_` and no `__`, because
+// the name does not say which of `srv` and `srv_` owns `mcp__srv___x`, or which
+// of `srv` and `srv__x` owns `mcp__srv__x__t`. A tool it cannot place is left to
+// the scan; an exact entry names it in full.
+export function isSkippedTool(
+  tool: string,
+  entries: readonly SkipTool[],
+): boolean {
+  return entries.some((entry) => {
+    const head = `mcp__${entry.server}__`;
+    if (!tool.startsWith(head)) return false;
+    const part = tool.slice(head.length);
+    return entry.prefix
+      ? !part.startsWith("_") &&
+          !part.includes("__") &&
+          part.startsWith(entry.tool)
+      : part === entry.tool;
+  });
+}
 
 // A tool whose name says it writes is treated like the built-in Write and Edit:
 // naming a file it does not read is not a leak. Matched on the tool name because

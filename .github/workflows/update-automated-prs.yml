@@ -1,0 +1,74 @@
+name: Update automated pull requests
+
+# develop requires branches to be up to date before they merge (coo-quack/iac#68).
+# Some automated pull requests do not update themselves, so each push to develop
+# brings the ones that fell behind up to date: those the backport App opens (the
+# main-to-develop sync from backport.yml, and in claude-code-marketplace the
+# plugin version sync), and Dependabot's. Renovate rebases its own branches and
+# is left alone: a merge commit pushed onto a Renovate branch stops Renovate from
+# rebasing it.
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: update-automated-prs
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      # The App token rather than GITHUB_TOKEN: a commit pushed with
+      # GITHUB_TOKEN starts no workflow, so the updated pull request would wait
+      # for required checks that never run.
+      # workflows: write so that the update is not refused when develop has
+      # changed a workflow file that the pull request does not have yet.
+      - name: Mint app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BACKPORT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BACKPORT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Update the pull requests that are behind develop
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          APP_LOGIN: app/${{ steps.app-token.outputs.app-slug }}
+        run: |
+          prs=$(gh pr list -R "$REPO" --base develop --state open --limit 1000 \
+            --json number,headRefOid,author,isCrossRepository \
+            --jq '.[]
+              | select(.isCrossRepository | not)
+              | select(.author.login == env.APP_LOGIN or .author.login == "app/dependabot")
+              | "\(.number) \(.headRefOid)"')
+
+          failed=()
+          while read -r number head; do
+            [ -n "$number" ] || continue
+            if ! behind=$(gh api "repos/$REPO/compare/develop...$head" --jq .behind_by); then
+              failed+=("#$number")
+              continue
+            fi
+            if [ "$behind" = 0 ]; then
+              echo "#$number is up to date"
+              continue
+            fi
+            echo "#$number is $behind commit(s) behind develop"
+            gh pr update-branch "$number" -R "$REPO" || failed+=("#$number")
+          done <<< "$prs"
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::Could not update ${failed[*]}; the errors above say why (for example a conflict with develop). Update them by hand."
+            exit 1
+          fi
