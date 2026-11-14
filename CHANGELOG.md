@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- `SENSITIVE_CANARY_SKIP_TOOLS` names MCP tools the PreToolUse hook does not scan, for a tool that keeps a file's contents local and so was blocked for naming the file it was given. Each comma-separated entry is an exact name, `mcp__<server>__<tool>`, or a prefix, `mcp__<server>__<prefix>*`, with the `*` only as the last character. A prefix entry (`mcp__srv__*` included) skips only tools whose part after the server holds no `__` and does not start with `_`, since `mcp__srv___x` and `mcp__srv__x__t` could belong to another server (`srv_`, `srv__x`) and are named in full to be skipped; a prefix that starts with `_` or holds `__` is refused. A listed tool is let through before its input is read, command fields included. Any other entry (`*`, `mcp__*`, `Read`, `Bash`, `mcp__local*`) is refused with a warning on stderr and ignored, so `Read`, `NotebookRead`, `Bash` and `Grep` cannot be listed. Neither the input nor the output of a listed tool is checked, the match is on the tool name alone, and a trusted project's `.claude/settings.json` can set it (#399)
+
 ### Documentation
 
 - The README's feature list and the docs site's landing page name the date of birth, member number and postal address rules. Only the rule tables listed them before.

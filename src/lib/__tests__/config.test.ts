@@ -5,7 +5,9 @@ import {
   compileRule,
   enabledCategoriesFromEnv,
   parseCategories,
+  parseSkipTools,
   scan,
+  skipToolsFromEnv,
 } from "../rules.ts";
 import { VALIDATOR_NAMES } from "../validators.ts";
 import { DEFAULT_RULES } from "./rule-fixtures.ts";
@@ -72,6 +74,134 @@ describe("enabledCategoriesFromEnv", () => {
   it("returns the parsed categories when the env var is set", () => {
     process.env[ENV_KEY] = "pii";
     expect(enabledCategoriesFromEnv()).toEqual(new Set(["pii"]));
+  });
+});
+
+// ── parseSkipTools ────────────────────────────────────────────────────────────
+
+const exact = (server: string, tool: string) => ({
+  server,
+  tool,
+  prefix: false,
+});
+const prefix = (server: string, start: string) => ({
+  server,
+  tool: start,
+  prefix: true,
+});
+
+describe("parseSkipTools", () => {
+  const warnings = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map((call) => String(call[0]));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns nothing when unset or empty", () => {
+    const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    expect(parseSkipTools(undefined)).toEqual([]);
+    expect(parseSkipTools("")).toEqual([]);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("accepts an exact tool name", () => {
+    expect(parseSkipTools("mcp__srv__ask")).toEqual([exact("srv", "ask")]);
+  });
+
+  it("accepts a whole server with a trailing star", () => {
+    expect(parseSkipTools("mcp__srv__*")).toEqual([prefix("srv", "")]);
+  });
+
+  it("accepts a prefix with a trailing star", () => {
+    expect(parseSkipTools("mcp__srv__pre*")).toEqual([prefix("srv", "pre")]);
+  });
+
+  it("trims spaces around entries", () => {
+    expect(parseSkipTools("  mcp__a__x  ,\tmcp__b__*  ")).toEqual([
+      exact("a", "x"),
+      prefix("b", ""),
+    ]);
+  });
+
+  it("accepts several entries", () => {
+    expect(parseSkipTools("mcp__a__x,mcp__b__*,mcp__c__pre*")).toEqual([
+      exact("a", "x"),
+      prefix("b", ""),
+      prefix("c", "pre"),
+    ]);
+  });
+
+  it("accepts an exact name whose tool part holds __", () => {
+    expect(parseSkipTools("mcp__srv__a__b")).toEqual([exact("srv", "a__b")]);
+  });
+
+  it("accepts a server name with single underscores and hyphens", () => {
+    expect(parseSkipTools("mcp__plugin_calc-mcp_calc-mcp__base")).toEqual([
+      exact("plugin_calc-mcp_calc-mcp", "base"),
+    ]);
+  });
+
+  it.each([
+    "*",
+    "mcp__*",
+    "R*",
+    "Read",
+    "Bash",
+    "Grep",
+    "NotebookRead",
+    "mcp__local*",
+    "mcp__srv__a*b",
+    "mcp__srv__**",
+    "mcp__*__x",
+    "mcp__sr*v__x",
+    "mcp____x",
+    "mcp____*",
+    "mcp__srv__",
+    "MCP__srv__x",
+    "mcp__srv___p*",
+    "mcp__srv__a__b*",
+  ])("refuses %j with one warning", (entry) => {
+    const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    expect(parseSkipTools(entry)).toEqual([]);
+    const [line, ...rest] = warnings(write);
+    expect(rest).toHaveLength(0);
+    expect(line).toMatch(/^sensitive-canary: .*SENSITIVE_CANARY_SKIP_TOOLS/);
+    expect(line).toContain(JSON.stringify(entry));
+    expect(line).toMatch(/ignoring\n$/);
+    expect(line?.trimEnd().split("\n")).toHaveLength(1);
+  });
+
+  it("keeps the valid entries when others are refused", () => {
+    const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    expect(parseSkipTools("Read, mcp__a__x, *, mcp__b__*, mcp__*")).toEqual([
+      exact("a", "x"),
+      prefix("b", ""),
+    ]);
+    expect(warnings(write)).toHaveLength(3);
+  });
+});
+
+describe("skipToolsFromEnv", () => {
+  const ENV_KEY = "SENSITIVE_CANARY_SKIP_TOOLS";
+  const original = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = original;
+    }
+  });
+
+  it("returns nothing when the env var is unset", () => {
+    delete process.env[ENV_KEY];
+    expect(skipToolsFromEnv()).toEqual([]);
+  });
+
+  it("returns the parsed entries when the env var is set", () => {
+    process.env[ENV_KEY] = "mcp__srv__*";
+    expect(skipToolsFromEnv()).toEqual([prefix("srv", "")]);
   });
 });
 

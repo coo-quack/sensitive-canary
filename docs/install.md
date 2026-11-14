@@ -221,16 +221,17 @@ node --version
 
 ## Configuration
 
-Two environment variables change what the hooks scan. Set them in the `env` block of your Claude Code `settings.json`:
+Three environment variables change what the hooks scan. Set them in the `env` block of your Claude Code `settings.json`:
 
 | Variable | Effect |
 |----------|--------|
 | `SENSITIVE_CANARY_CATEGORIES` | Limit which rule categories are active: `secret`, `pii`, or `secret,pii` / `all` (default) |
 | `SENSITIVE_CANARY_CONFIG` | Path to a custom rules file that adds rules or overrides built-in ones |
+| `SENSITIVE_CANARY_SKIP_TOOLS` | Comma-separated MCP tools the PreToolUse hook does not scan: `mcp__<server>__<tool>` or `mcp__<server>__<prefix>*`. Built-in tools cannot be listed |
 
 The same config file can also point the hooks at a [pii-sentinel](/pii-sentinel) server you run yourself, for a model's judgement on top of the rules.
 
-A typical use of `SENSITIVE_CANARY_CATEGORIES` is `secret`, when the PII rules are too noisy against test fixtures. There is no per-rule or per-path exclusion environment variable: narrowing the scan means a category, or a config file that overrides the rule. See [Detection Rules](/rules) for both variables.
+A typical use of `SENSITIVE_CANARY_CATEGORIES` is `secret`, when the PII rules are too noisy against test fixtures. There is no per-rule or per-path exclusion environment variable: narrowing the scan means a category, or a config file that overrides the rule. The one exclusion that exists is per tool, for MCP tools only: `SENSITIVE_CANARY_SKIP_TOOLS` lets the tools it names skip the check entirely, input included. See the README for its forms (an exact name, or a prefix ending in `*`) and what it trusts, and [Detection Rules](/rules) for the other variables.
 
 ## What Happens
 

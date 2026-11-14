@@ -277,6 +277,29 @@ Values are comma-separated and case-insensitive. Unset, empty, or containing no 
 
 This is a persistent filter, unlike allow tags which apply per prompt. The category filter is applied first, then allow tags. A typical use is setting `secret` when PII rules (credit card numbers, phone numbers, …) are too noisy against test fixtures.
 
+### `SENSITIVE_CANARY_SKIP_TOOLS`
+
+Name MCP tools the PreToolUse hook does not scan. A listed tool is let through before any of its input is read, so a tool that keeps a file's contents local (a server that hands the file to a model on your own machine and returns only a filtered answer) is not blocked for naming that file. Set it in the `env` block of your Claude Code `settings.json`:
+
+```json
+{
+  "env": {
+    "SENSITIVE_CANARY_SKIP_TOOLS": "mcp__local-llm-guard__*"
+  }
+}
+```
+
+| Entry | Skips |
+|---|---|
+| `mcp__<server>__<tool>` | That tool only (an exact name) |
+| `mcp__<server>__<prefix>*` | The tools of that server whose name starts with `<prefix>` (a prefix ending in `*`) |
+
+`mcp__<server>__*` is the prefix form with an empty prefix, so it skips every tool of that server whose name does not start with `_` and holds no `__`. A tool whose name does, such as `mcp__srv___x` or `mcp__srv__x__t`, is not skipped by a `*` entry and is still scanned, because the server name cannot be told apart from the tool name there: `mcp__srv__x__t` is the tool `x__t` of `srv` or the tool `t` of `srv__x`. To skip such a tool, list it by its full name. A prefix that starts with `_` or holds `__` (`mcp__srv___p*`, `mcp__srv__a__b*`) could never match, so it is refused like any other bad entry.
+
+Entries are comma-separated, surrounding spaces are ignored and case matters. These are the only two forms: the `*` is allowed only as the last character, after the server name. Any other entry (`*`, `mcp__*`, `Read`, `mcp__local*`, `mcp__srv__a*b`) is refused with a warning on stderr and ignored, and the valid entries in the same value still apply. Because every entry starts with `mcp__`, `Read`, `NotebookRead`, `Bash` and `Grep` cannot be listed. Unset or empty means no tool is skipped.
+
+This is a persistent setting, unlike allow tags, which apply per prompt and to every tool. Listing a tool does not lift the block on a plain `Read` of the same file.
+
 ### pii-sentinel (optional)
 
 The rules find personal data by its shape: an e-mail address, a card number, a phone number. They cannot tell that a
@@ -619,7 +642,7 @@ The `/` is what separates a path from a word, and it is there so that a search p
 
 Values are found up to four levels down and inside arrays, both of strings and of objects, so `{ "path": "…" }`, `{ "paths": ["…"] }`, `{ "args": ["/abs/…"] }` and `{ "args": { "paths": [{ "path": "…" }] } }` are all covered. A field naming a directory is left alone.
 
-Which tools reach the hook at all is the matcher's business, and the default (`Read|NotebookRead|Bash|Grep|mcp__.*`) sends it `Read`, `NotebookRead`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives.
+Which tools reach the hook at all is the matcher's business, and the default (`Read|NotebookRead|Bash|Grep|mcp__.*`) sends it `Read`, `NotebookRead`, `Bash`, `Grep` and every MCP tool. Widen the matcher and the same field search applies to whatever else arrives. A tool listed in `SENSITIVE_CANARY_SKIP_TOOLS` still reaches the hook, which lets it through before reading its input.
 
 What the matcher leaves out is not scanned. `WebFetch` and `WebSearch` are not in the default matcher, so the hook never runs for them and a URL carrying a key (`https://example.com/api?key=…`) goes out unchecked. The default matcher does include `mcp__.*`, but for an MCP tool the hook reads only the fields that name an existing file (a value containing `/` counts as a path) and the text of its command fields. A body, a message or a query argument is not scanned, so `mcp__x__post_message` with a key in `body` is allowed.
 
@@ -641,6 +664,9 @@ The terminal also receives a direct message (via `/dev/tty`).
 - **Only the first and last 1 MiB of a file are scanned** — a file larger than the cut is read at both ends rather than to its end, because a hook that does not return is killed by the PreToolUse timeout, and a killed hook does not block the call. The cut is in bytes, so a file of multi-byte characters gives up sooner in characters. What is missed is the middle of a file larger than both windows, and a secret straddling either edge, since the cut lands mid-match; the search of the transcript for allow tags, which stops 8 MiB back, makes the same trade. What the cut does *not* bound is the work done on what it read: that is a property of each rule's pattern, and `docs/rules.md` covers why three of them carry length bounds.
 - **A write-named tool that also returns contents** — the exemption reads a tool's name, and assumes a name led by a write verb means the tool surfaces no file contents. `update` and `copy` are where those two things come apart: `mcp__*__update_file` and `mcp__*__copy_file` open a file to do their work, and one that returned the result would not be scanned. Scanning them instead would block writing to a file that already holds a secret, which is not a leak, so the exemption stays as it is.
 - **A bare filename under an unlisted field name** — a value is treated as a path when its field name says so or when it contains a `/`. A tool passing `{ "target": "secrets.txt" }` satisfies neither, so it is not scanned. Requiring the `/` is deliberate: without it, a search for the text `.env` would be blocked as though the file had been read.
+- **A tool listed in `SENSITIVE_CANARY_SKIP_TOOLS` is not checked at all** — neither its input nor its output is inspected, and there is no `PostToolUse` hook to look at what it returns. The listed tool is trusted to keep the contents of what it is given away from the conversation.
+- **A skip entry trusts a name** — `SENSITIVE_CANARY_SKIP_TOOLS` matches the tool name and nothing else. The hook cannot tell what implementation answers to that name, so a different server registered under the same server name, or a tool whose behaviour changes in an update, is skipped as well. An exact entry whose tool part holds `__` (`mcp__srv__a__b`) matches both the tool `a__b` of the server `srv` and the tool `b` of the server `srv__a`.
+- **The skip list can come from a project** — Claude Code reads `env` from a project's `.claude/settings.json` as well as from your own settings, so a project you have trusted can set `SENSITIVE_CANARY_SKIP_TOOLS` and exempt its own tools. Check the `env` block of a project's settings before trusting it.
 - **git history references** — `git show HEAD:.env` and similar references to objects in git history (not on disk) are not scanned, since the object does not exist as a file path.
 - **Unlisted commands** — the set of commands known to print file contents is a list, not an analysis of the command. A printing command that is not on the list is not caught.
 - **A template holding a real credential is blocked** — `.env.example` and its siblings are exempt from the name guard, not from the scan. Placeholders (`your-token-here`, `REPLACE_ME`, `changeme`, `<token>`, `postgres://user:password@localhost/db`) are recognised and left alone, but a template committed with a live key is blocked like any other file, through printing commands (`grep KEY .env.example`) as much as through `Read`. Use `[allow-secret]` if that is deliberate.
