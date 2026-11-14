@@ -776,6 +776,16 @@ describe("pre-tool-use-hook — Grep and MCP tool inputs", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    it("lets through an exactly listed name whose tool part starts with _", () => {
+      const file = writeFixture("skip_underscore.txt", `key=${AWS_KEY}`);
+      const result = runToolHook(
+        "mcp__srv___x",
+        { path: file },
+        skip("mcp__srv___x"),
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
     it("still blocks a tool of a server that is not listed", () => {
       const file = writeFixture("skip_unlisted.txt", `key=${AWS_KEY}`);
       const result = runToolHook(

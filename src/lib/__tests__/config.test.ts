@@ -160,6 +160,7 @@ describe("parseSkipTools", () => {
     "mcp__srv__",
     "MCP__srv__x",
     "mcp__srv___p*",
+    "mcp__srv___*",
     "mcp__srv__a__b*",
   ])("refuses %j with one warning", (entry) => {
     const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
